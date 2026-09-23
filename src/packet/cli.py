@@ -20,7 +20,24 @@ def main(argv: list[str] | None = None) -> int:
     parse.add_argument("-o", "--output", default="-")
     parse.add_argument("--no-split", action="store_true", help="force a single logical document")
 
+    ev = sub.add_parser("eval", help="run built-in packet fixtures")
+    ev.add_argument("--json", action="store_true")
+    ev.add_argument("--dir", default=None, help="cache dir for generated PDFs")
+
+    plan = sub.add_parser("eval-plan", help="plan DocLayNet synthetic packets from a catalog")
+    plan.add_argument("--catalog", required=True)
+    plan.add_argument("--slice", default="poly-seq")
+    plan.add_argument("--split", default="val")
+    plan.add_argument("--out", default="evals/generated")
+    plan.add_argument("--count", type=int, default=8)
+
     args = parser.parse_args(argv)
+
+    if args.cmd == "eval":
+        return _cmd_eval(args)
+    if args.cmd == "eval-plan":
+        return _cmd_eval_plan(args)
+
     path = Path(args.path)
     if not path.exists():
         print(f"not found: {path}", file=sys.stderr)
@@ -44,6 +61,48 @@ def main(argv: list[str] | None = None) -> int:
         out = Path(args.output)
         out.write_text(text)
         print(f"wrote {out} ({packet.document_count()} document(s), {packet.origin.page_count} pages)")
+    return 0
+
+
+def _cmd_eval(args) -> int:
+    from packet.eval.run import results_as_dict, run_named_fixtures
+
+    root = Path(args.dir) if args.dir else None
+    results = run_named_fixtures(root)
+    if args.json:
+        print(json.dumps(results_as_dict(results), indent=2))
+        return 0 if all(r.passed_gate() for r in results) else 1
+    print(f"{'fixture':16} {'cond':14} pages gold pred   P     R    F1  gate")
+    for r in results:
+        gate = "PASS" if r.passed_gate() else "FAIL"
+        print(
+            f"{r.name:16} {r.condition:14} {r.pages:5} {r.gold_docs:4} {r.pred_docs:4} "
+            f"{r.boundary.precision:5.2f} {r.boundary.recall:5.2f} {r.boundary.f1:5.2f}  {gate}"
+        )
+    return 0 if all(r.passed_gate() for r in results) else 1
+
+
+def _cmd_eval_plan(args) -> int:
+    from packet.eval.doclaynet import load_catalog, materialize_placeholder_packet, plan_packets, write_manifest
+
+    catalog = Path(args.catalog)
+    if not catalog.exists():
+        print(f"not found: {catalog}", file=sys.stderr)
+        return 2
+    grouped = load_catalog(catalog)
+    records = grouped.get(args.split, [])
+    if not records:
+        print(f"no records for split={args.split}", file=sys.stderr)
+        return 2
+    specs = plan_packets(
+        records, slice_name=args.slice, split=args.split, packet_count=args.count
+    )
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    write_manifest(out / "manifest.json", specs)
+    for spec in specs:
+        materialize_placeholder_packet(spec, out)
+    print(f"planned {len(specs)} packets under {out}")
     return 0
 
 
