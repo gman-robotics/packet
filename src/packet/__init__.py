@@ -1,5 +1,7 @@
 """Packet: streaming, domain-agnostic document language understanding."""
 
+from packet.events import Event, EventKind
+from packet.pipeline import Pipeline, PipelineConfig
 from packet.types import (
     Block,
     BlockKind,
@@ -11,8 +13,6 @@ from packet.types import (
     Section,
     SourceKind,
 )
-from packet.events import Event, EventKind
-from packet.pipeline import Pipeline, PipelineConfig
 
 __all__ = [
     "Block",

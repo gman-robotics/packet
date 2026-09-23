@@ -1,16 +1,33 @@
 # Packet v0 eval definitions
 
-Status: **plan only.** Nothing in this file is implemented as a runnable
-harness yet — this is the concrete spec so QA can build one without having
-to guess at metric semantics. See `DESIGN.md` → Eval (generic) for the
-one-line summary this file expands on.
+Status: **live harness, partial metric coverage.** A runnable harness
+exists at `src/packet/eval/` (`fixtures.py`, `metrics.py`, `run.py`,
+`pdfutil.py`, `doclaynet.py`), is exercised by `tests/test_eval_fixtures.py`
+and `tests/test_eval_metrics.py`, and is wired to the CLI as `packet eval`
+/ `packet eval-plan` (`src/packet/cli.py`; see `evals/README.md` for
+command examples). This file is still the fuller spec — not every metric
+named below is implemented yet, and the definitions here are what a metric
+must mean *when* it lands, not just what it meant when this was plan-only.
+See `DESIGN.md` → Eval (generic) for the one-line summary this file
+expands on.
+
+**What `packet eval` computes today**, against the four built-in fixtures
+below: **§1 Boundary P/R/F1** and the **§5 False-OCR hard-fail gate**.
+Those are the two numbers in the CLI table and the only thing `gate_pass`
+checks. `citation_integrity` (§4) is implemented as a library function in
+`packet.eval.metrics` but nothing calls it from `run.py` or the CLI yet —
+treat it as available, not wired in. **Heading-path accuracy (§2)** and
+**reading-order quality (§3)** have no implementation at all yet (no
+function in `packet.eval.metrics`); both sections below are spec only
+until that lands.
 
 All metrics are computed per-packet and then aggregated (macro-average
 across packets, not micro-average across pages) unless stated otherwise.
 Always report results sliced by page condition — `born-digital`,
 `clean-scan`, `dirty-scan`, `handwriting` — in addition to the pooled
 number, because a single pooled score hides regressions that only show up
-on scans.
+on scans. (Today's built-in fixtures only cover `born-digital` and
+`clean-scan` — see the fixture pack below.)
 
 ## 1. Boundary P/R — how a boundary match is scored
 
@@ -122,12 +139,16 @@ is a **false-OCR hard-fail**.
 
 ## Named fixture pack
 
-Each fixture is a small PDF (or PDF-per-case, kept under a few pages so
-gold labeling stays cheap) plus a hand-authored gold `Packet` (or at least
-gold `document_count`, per-document `page_start`/`page_end`, and one
-labeled section tree per document). Fixtures live under
-`tests/fixtures/eval/<name>/` once built (not present yet — this is the
-spec, see Status above).
+Each fixture is a small PDF (a few pages, so gold labeling stays cheap)
+plus a hand-authored gold `Packet` — at minimum `document_count` and each
+document's `page_start`/`page_end`. In v0 these are not static files
+checked into git: `packet.eval.fixtures.build_builtin()` generates the
+four PDFs below on the fly (via `packet.eval.pdfutil`) and pairs each with
+its gold `Packet` in code, so the fixture *and* its label stay in sync by
+construction. `packet eval` writes the generated PDFs to
+`.packet-eval/builtin/` by default (override with `--dir` or
+`PACKET_EVAL_DIR`; see `evals/README.md`) — that directory is generated
+output, not a fixture source, and is gitignored.
 
 1. **`text-layer`** — single born-digital document, 3-5 pages, consistent
    header/footer, no scanned pages. Control case: gold has **zero**
@@ -143,12 +164,32 @@ spec, see Status above).
 3. **`shared-header`** — 2 documents concatenated where both share the
    *same* header/footer template (e.g. two chapters of the same report
    exported separately, or a template-generated form) but each restarts
-   page numbering. This is the accepted false-merge fail mode named in
-   `DESIGN.md` → Boundary policy: `header_changed` will not fire because
-   the header is identical, so this fixture's gold boundary must still be
-   recoverable primarily from `page_number_reset` alone, and is expected
-   to be the hardest fixture for boundary recall. Track its Boundary
-   recall separately — do not let it get averaged away by `multi-doc`.
+   page numbering. This names the accepted false-merge fail mode from
+   `DESIGN.md` → Boundary policy: if the header/footer signal genuinely
+   compared header/footer text, it would not fire here (the header is
+   identical), and recovery would depend on `page_number_reset` alone —
+   which, at its solo score of `0.45`, sits *below*
+   `boundary_min_confidence` (`0.55`), so this fixture is designed to be
+   the hardest one for boundary recall.
+   In today's v0 this is a documentation caveat, not yet a clean
+   demonstration of that fail mode: `BoundaryDetector`'s header signal
+   (`src/packet/boundary.py::_fingerprint`) only ever inspects
+   `BlockKind.HEADER` blocks, but `NativeTextExtractor` never tags any
+   block `HEADER` (see `DESIGN.md` → What v0 implements) — every page in
+   this generated fixture is one `PARAGRAPH` block, so `_fingerprint`
+   always returns `""` and the detector falls back to
+   `_leading_fingerprint` (the leading block's first 80 characters). That
+   fallback captures body text, not just the header, so it happens to
+   differ page-to-page here and fires `header_changed` anyway — the
+   fixture currently passes boundary P/R for the wrong reason (a body-text
+   diff, not real header-fingerprint invariance) rather than exercising
+   the documented degraded-recall case. Fixing that for real needs
+   `NativeTextExtractor` (or a successor) to actually tag `HEADER` /
+   `FOOTER` / `PAGE_NUMBER` blocks — out of scope for this pass; flagged
+   here so a future fixture/extractor change does not "fix" a P/R
+   regression that is in fact this fixture starting to test what it always
+   claimed to. Track this fixture's boundary recall separately regardless
+   — do not let it get averaged away by `multi-doc`.
 4. **`scan`** — pages with no extractable text layer at all
    (`has_text_ops=False`), no OCR ground truth needed for text content;
    the assertion this fixture drives is behavioral, not textual: under

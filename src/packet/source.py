@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Self
 
 import pypdfium2 as pdfium
 
@@ -65,7 +66,7 @@ class PdfPageSource:
     def close(self) -> None:
         self._doc.close()
 
-    def __enter__(self) -> PdfPageSource:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
