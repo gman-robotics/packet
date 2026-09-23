@@ -1,0 +1,29 @@
+# Packet eval policy. PDFs are generated or cached locally — never committed.
+version: 1
+frozen_benches:
+  - name: omnidocbench
+    role: frozen-parse
+    train: false
+  - name: olmocr-bench
+    role: frozen-unit
+    train: false
+develop:
+  - name: doclaynet
+    role: train-dev-layout
+    splits: [train, val]
+    license: CDLA-Permissive-1.0
+    holdout_split: test
+synth:
+  generator: packet.eval.doclaynet
+  slices: [mono-seq, poly-seq, poly-gap, mono-hard]
+  seed: 20260922
+  split: val
+  report_as: packet-dlnet-synth
+builtin:
+  - text-layer
+  - multi-doc
+  - shared-header
+  - scan
+gates:
+  false_ocr: hard-fail
+  boundary_tolerance: 0
