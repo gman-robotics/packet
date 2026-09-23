@@ -5,6 +5,12 @@ Streaming document language understanding for files of unknown length.
 Repo: [gman-robotics/packet](https://github.com/gman-robotics/packet)  
 Name lock (2026-09-22): product **Packet**, package **packet-dl**, CLI **packet**.
 
+**Not to be confused with:** "evidence-packet-protocol" is a separate,
+unrelated agent-workflow skill name. This repository — product **Packet**,
+package `packet-dl` — is a document language-understanding pipeline, not
+an agent protocol. If a link brought you here looking for the protocol,
+this is the wrong project.
+
 A PDF (or a folder of page images) is a **packet**, not a document. Packet
 classifies each page, extracts only what that page needs, detects logical
 document boundaries as pages arrive, and assembles a semantic tree.
@@ -60,9 +66,22 @@ contract — not a particular model.
 ## Status
 
 v0 is the schema, event contract, page source, heuristic classifier, native
-text extractor, and a single-document assembler. Multi-document boundary
-detection and backend adapters (Docling, pdf-inspector, PaddleOCR-VL) come
-next.
+text extractor, and a section assembler. Boundary splitting is **on by
+default** (`split_on_boundary=True` in `PipelineConfig`) — a default run
+already produces multiple `LogicalDocument`s per packet whenever the
+built-in signals (page-number reset, header change, media-box jump,
+title-like block) cross a confidence threshold. Pass `--no-split` on the
+CLI (or set `split_on_boundary=False`) to force single-document behavior
+instead.
+
+That splitting is **eager-commit, not look-ahead**: a document closes the
+moment its boundary signal clears threshold, with no confirmation from
+later pages. See `DESIGN.md` for the accepted fail modes that follow from
+that (false splits on mid-document titles, false merges on shared headers,
+flush-at-EOF for the tail). Real backend adapters (Docling, pdf-inspector,
+PaddleOCR-VL) are stubs today — see `DESIGN.md`'s Escalation policy
+section — so scanned (`SCAN`-classified) pages currently come back empty
+rather than OCR'd.
 
 ## Install
 
