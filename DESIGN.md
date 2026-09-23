@@ -109,6 +109,17 @@ and drives the fail-closed behavior below.
   `NotImplementedError` if called — they are not wired into the default
   `Router`.
 
+- **`NativeTextExtractor` never tags furniture.** It only emits
+  `BlockKind.TITLE`, `HEADING`, `PARAGRAPH`, `LIST_ITEM`, or `UNKNOWN`
+  (`src/packet/extract.py::_guess_kind`) — never `HEADER`, `FOOTER`, or
+  `PAGE_NUMBER`. Those three kinds exist in the schema and
+  `Assembler._split_furniture` (`src/packet/assemble.py`) knows how to
+  strip them from the body, but nothing in the default pipeline produces
+  a block of those kinds yet, so furniture stripping is reachable code
+  with no live input today. `Section.blocks` on real output currently
+  includes whatever the extractor emitted, unfiltered by furniture kind.
+  This also affects the boundary detector's header signal — see below.
+
 In short: today's real routing table is `{TEXT, MIXED, UNKNOWN} →
 NativeTextExtractor`, `SCAN → nothing (empty result)`. The class→backend
 table above is the target, not the current behavior.
@@ -121,6 +132,16 @@ Signals (domain-free, `src/packet/boundary.py`, `BoundaryDetector.observe`):
 - Header / footer fingerprint change — score `+0.25`
 - Media box or rotation jump — score `+0.2`
 - Title-like block on a non-first page of the current document — score `+0.25`
+
+The header/footer signal only compares `BlockKind.HEADER` blocks; when a
+page has none — true today, since `NativeTextExtractor` never emits
+`HEADER` (see What v0 implements below) — it falls back to comparing the
+leading block's text instead. That fallback is a coarse page-content diff,
+not a real header/footer fingerprint, so it can fire on ordinary body-text
+changes between pages of the *same* document, not only on an actual
+template change. See `docs/EVAL.md`'s `shared-header` fixture note for a
+concrete case where this makes a fixture pass for a different reason than
+the one it names.
 
 Scores add. `observe()` emits a `BoundarySignal` (as the `boundary_proposed`
 event) when the combined score is `>= 0.4`; the reported confidence is

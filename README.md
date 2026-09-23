@@ -89,7 +89,12 @@ rather than OCR'd.
 pip install -e ".[dev]"
 packet inspect path/to/file.pdf
 packet parse  path/to/file.pdf -o packet.json
+packet eval                        # run built-in fixtures (boundary P/R, false-OCR gate)
+pytest
 ```
+
+See [`docs/EVAL.md`](docs/EVAL.md) and [`evals/README.md`](evals/README.md)
+for what `packet eval` checks and how to point it at DocLayNet.
 
 ## Design rules
 
