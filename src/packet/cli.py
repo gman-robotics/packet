@@ -83,7 +83,12 @@ def _cmd_eval(args) -> int:
 
 
 def _cmd_eval_plan(args) -> int:
-    from packet.eval.doclaynet import load_catalog, materialize_placeholder_packet, plan_packets, write_manifest
+    from packet.eval.doclaynet import (
+        load_catalog,
+        materialize_placeholder_packet,
+        plan_packets,
+        write_manifest,
+    )
 
     catalog = Path(args.catalog)
     if not catalog.exists():

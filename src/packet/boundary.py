@@ -71,9 +71,9 @@ class BoundaryDetector:
 
 def _extract_page_number(blocks: list[Block]) -> int | None:
     for block in blocks:
-        if block.kind not in {BlockKind.PAGE_NUMBER, BlockKind.FOOTER, BlockKind.HEADER}:
-            if block.kind not in {BlockKind.PARAGRAPH} or len(block.text) > 40:
-                continue
+        is_furniture = block.kind in {BlockKind.PAGE_NUMBER, BlockKind.FOOTER, BlockKind.HEADER}
+        if not is_furniture and (block.kind is not BlockKind.PARAGRAPH or len(block.text) > 40):
+            continue
         match = _PAGE_NUM.search(block.text)
         if match:
             return int(match.group(1))
