@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# Verification harness for the packet CLI. Invoked from .cursor/skills/verify-packet/SKILL.md.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+export PACKET_VERIFY_RUN_ID="${PACKET_VERIFY_RUN_ID:-$$}"
+export PACKET_VERIFY_ROOT="${PACKET_VERIFY_ROOT:-/tmp/packet-verify-${PACKET_VERIFY_RUN_ID}}"
+ARTIFACTS_DIR="${PACKET_VERIFY_ARTIFACTS:-$PACKET_VERIFY_ROOT/artifacts}"
+CACHE_DIR="${PACKET_VERIFY_CACHE:-$PACKET_VERIFY_ROOT/cache}"
+
+packet_bin() {
+  if command -v packet >/dev/null 2>&1; then
+    command -v packet
+    return
+  fi
+  if [[ -x "${HOME}/.local/bin/packet" ]]; then
+    echo "${HOME}/.local/bin/packet"
+    return
+  fi
+  echo "packet CLI not found on PATH (run: pip install -e \".[dev]\")" >&2
+  return 127
+}
+
+ensure_path() {
+  export PATH="${HOME}/.local/bin:${PATH}"
+}
+
+cmd_doctor() {
+  ensure_path
+  local pkt
+  pkt="$(packet_bin)" || return 1
+  if [[ ! -f "$REPO_ROOT/pyproject.toml" ]]; then
+    echo "FAIL: expected repo root at $REPO_ROOT (missing pyproject.toml)" >&2
+    return 1
+  fi
+  if ! "$pkt" --help >/dev/null 2>&1; then
+    echo "FAIL: packet --help failed" >&2
+    return 1
+  fi
+  local ver
+  ver="$(python3 -c "import importlib.metadata as m; print(m.version('packet-dl'))" 2>/dev/null || echo unknown)"
+  mkdir -p "$ARTIFACTS_DIR" "$CACHE_DIR"
+  cat <<EOF
+ok: true
+repo_root: $REPO_ROOT
+packet: $pkt
+package_version: $ver
+verify_root: $PACKET_VERIFY_ROOT
+artifacts_dir: $ARTIFACTS_DIR
+cache_dir: $CACHE_DIR
+run_id: $PACKET_VERIFY_RUN_ID
+EOF
+}
+
+cmd_launch() {
+  ensure_path
+  cd "$REPO_ROOT"
+  if ! packet_bin >/dev/null 2>&1; then
+    python3 -m pip install -e ".[dev]" -q
+    ensure_path
+  fi
+  mkdir -p "$ARTIFACTS_DIR" "$CACHE_DIR"
+  cmd_doctor
+}
+
+cmd_cli() {
+  ensure_path
+  local pkt
+  pkt="$(packet_bin)"
+  mkdir -p "$ARTIFACTS_DIR"
+  if [[ $# -lt 1 ]]; then
+    echo "usage: control-packet cli -- <packet-args...>" >&2
+    return 2
+  fi
+  if [[ "$1" != "--" ]]; then
+    echo "usage: control-packet cli -- <packet-args...>" >&2
+    return 2
+  fi
+  shift
+  local label="${PACKET_VERIFY_CMD_LABEL:-packet}"
+  local out_base="$ARTIFACTS_DIR/${label}"
+  set +e
+  "$pkt" "$@" >"${out_base}.stdout" 2>"${out_base}.stderr"
+  local ec=$?
+  set -e
+  echo "$ec" >"${out_base}.exitcode"
+  echo "exit_code=$ec"
+  echo "stdout=${out_base}.stdout"
+  echo "stderr=${out_base}.stderr"
+  return "$ec"
+}
+
+cmd_materialize_fixtures() {
+  ensure_path
+  mkdir -p "$CACHE_DIR"
+  local pkt
+  pkt="$(packet_bin)"
+  "$pkt" eval --dir "$CACHE_DIR" >/dev/null
+  echo "cache_dir=$CACHE_DIR"
+  ls -1 "$CACHE_DIR/builtin/"*.pdf 2>/dev/null || true
+}
+
+cmd_fixture() {
+  local name="${1:-text-layer}"
+  if [[ ! -d "$CACHE_DIR/builtin" ]]; then
+    cmd_materialize_fixtures >/dev/null
+  fi
+  local pdf="$CACHE_DIR/builtin/${name}.pdf"
+  if [[ ! -f "$pdf" ]]; then
+    echo "not found: $pdf (known: text-layer multi-doc shared-header scan)" >&2
+    return 2
+  fi
+  echo "$pdf"
+}
+
+cmd_env() {
+  mkdir -p "$ARTIFACTS_DIR" "$CACHE_DIR"
+  printf 'export PACKET_VERIFY_RUN_ID=%q\n' "$PACKET_VERIFY_RUN_ID"
+  printf 'export PACKET_VERIFY_ROOT=%q\n' "$PACKET_VERIFY_ROOT"
+  printf 'export PACKET_VERIFY_ARTIFACTS=%q\n' "$ARTIFACTS_DIR"
+  printf 'export PACKET_VERIFY_CACHE=%q\n' "$CACHE_DIR"
+}
+
+cmd_cleanup() {
+  # Remove generated cache/scratch; never delete proof artifacts.
+  if [[ -d "$CACHE_DIR" ]]; then
+    rm -rf "$CACHE_DIR"
+  fi
+  local scratch="${PACKET_VERIFY_ROOT}/scratch"
+  if [[ -d "$scratch" ]]; then
+    rm -rf "$scratch"
+  fi
+  if [[ -n "${PACKET_VERIFY_DELETE_ROOT:-}" && "$PACKET_VERIFY_DELETE_ROOT" == "1" ]]; then
+    if [[ "$ARTIFACTS_DIR" == "$PACKET_VERIFY_ROOT/artifacts" ]]; then
+      # Keep artifacts subtree when wiping the run root.
+      find "$PACKET_VERIFY_ROOT" -mindepth 1 -maxdepth 1 ! -name artifacts -exec rm -rf {} +
+    fi
+  fi
+  echo "cleanup: cache removed; artifacts preserved at $ARTIFACTS_DIR"
+}
+
+usage() {
+  cat <<EOF
+usage: control-packet <doctor|launch|env|cli|materialize-fixtures|fixture|cleanup> [args]
+
+Environment:
+  PACKET_VERIFY_RUN_ID   unique run id (default: shell pid)
+  PACKET_VERIFY_ROOT     scratch root (default: /tmp/packet-verify-\$RUN_ID)
+  PACKET_VERIFY_ARTIFACTS proof output dir (default: \$ROOT/artifacts)
+  PACKET_VERIFY_CACHE    eval PDF cache (default: \$ROOT/cache)
+  PACKET_VERIFY_CMD_LABEL basename for cli capture files (default: packet)
+EOF
+}
+
+main() {
+  local sub="${1:-}"
+  case "$sub" in
+    doctor) shift; cmd_doctor "$@" ;;
+    launch) shift; cmd_launch "$@" ;;
+    cli) shift; cmd_cli "$@" ;;
+    materialize-fixtures) shift; cmd_materialize_fixtures "$@" ;;
+    fixture) shift; cmd_fixture "$@" ;;
+    cleanup) shift; cmd_cleanup "$@" ;;
+    env) shift; cmd_env "$@" ;;
+    -h|--help|"") usage ;;
+    *) echo "unknown subcommand: $sub" >&2; usage >&2; return 2 ;;
+  esac
+}
+
+main "$@"
