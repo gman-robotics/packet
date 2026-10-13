@@ -2,8 +2,8 @@
 then run Packet's own BoundaryDetector over the multi-doc pages. usage: to_blocks.py RUN_DIR [RUN_DIR...]"""
 import json, re, sys
 from pathlib import Path
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "packet" / "src"))
+ROOT = Path(__file__).resolve().parents[2]  # repo root; testset/ and src/ live here
+sys.path.insert(0, str(ROOT / "src"))
 from PIL import Image
 from packet.types import BBox, Block, BlockKind as K, PageRef, PageClass, SourceKind
 from packet.boundary import BoundaryDetector

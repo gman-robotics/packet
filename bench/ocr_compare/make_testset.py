@@ -79,13 +79,14 @@ def add(name, im, gold, kind, doc=None, scan=False):
 
 T1 = [["Item", "Qty", "Unit price", "Amount"], ["Widget A", "4", "$12.50", "$50.00"], ["Gadget B", "2", "$7.25", "$14.50"], ["Service fee", "1", "$30.00", "$30.00"], ["Total", "", "", "$94.50"]]
 T2 = [["Unit", "Bedrooms", "Rent", "Status"], ["101", "2", "$1,850", "Occupied"], ["102", "1", "$1,420", "Vacant"], ["201", "3", "$2,300", "Occupied"], ["202", "2", "$1,900", "Notice"]]
+T3 = [["Date", "Description", "Amount"], ["10/01", "Opening balance", "$5,210.33"], ["10/05", "Rent deposit", "$1,850.00"], ["10/31", "Closing balance", "$7,060.33"]]
 # Multi-doc packet: doc0 invoice 2pp, doc1 lease 3pp, doc2 statement 1pp. Page numbers restart; furniture differs.
 add("md-00", *page("Northwind Traders | Invoice #4471", "Northwind Invoice", BODY[5:7], "Northwind Traders, 10 Market St, Denver CO", "Page 1 of 2", T1), "multidoc", doc=0, scan=True)
 add("md-01", *page("Northwind Traders | Invoice #4471", None, [BODY[1], "Thank you for your business."], "Northwind Traders, 10 Market St, Denver CO", "Page 2 of 2"), "multidoc", doc=0, scan=True)
 add("md-02", *page("Contoso Property Lease", "Residential Lease Agreement", BODY[0:3], "Contoso Leasing LLC - Confidential", "1", None), "multidoc", doc=1)
 add("md-03", *page("Contoso Property Lease", "Section 4. Maintenance", [BODY[3], BODY[7]], "Contoso Leasing LLC - Confidential", "2", T2), "multidoc", doc=1, scan=True)
 add("md-04", *page("Contoso Property Lease", None, [BODY[4], "Signatures follow on the next page."], "Contoso Leasing LLC - Confidential", "3"), "multidoc", doc=1)
-add("md-05", *page("Fabrikam Bank", "Monthly Account Statement", [BODY[6], BODY[5]], "Member FDIC", "Page 1 of 1", [["Date", "Description", "Amount"], ["10/01", "Opening balance", "$5,210.33"], ["10/05", "Rent deposit", "$1,850.00"], ["10/31", "Closing balance", "$7,060.33"]]), "multidoc", doc=2, scan=True)
+add("md-05", *page("Fabrikam Bank", "Monthly Account Statement", [BODY[6], BODY[5]], "Member FDIC", "Page 1 of 1", T3), "multidoc", doc=2, scan=True)
 pages[0].save(OUT / "multidoc.pdf", save_all=True, append_images=pages[1:6], resolution=150)
 # hard-scan variants: 100 dpi-equivalent downsample, 3 deg skew, heavy noise, JPEG q=30
 import io
@@ -98,7 +99,7 @@ for src, (args, nm) in {"md-00": ((None,), "hs-00"), "md-03": ((None,), "hs-03")
     pass
 HARD = [("hs-00", page("Northwind Traders | Invoice #4471", "Northwind Invoice", BODY[5:7], "Northwind Traders, 10 Market St, Denver CO", "Page 1 of 2", T1)),
         ("hs-03", page("Contoso Property Lease", "Section 4. Maintenance", [BODY[3], BODY[7]], "Contoso Leasing LLC - Confidential", "2", T2)),
-        ("hs-05", page("Fabrikam Bank", "Monthly Account Statement", [BODY[6], BODY[5]], "Member FDIC", "Page 1 of 1", None))]
+        ("hs-05", page("Fabrikam Bank", "Monthly Account Statement", [BODY[6], BODY[5]], "Member FDIC", "Page 1 of 1", T3))]
 for i, (nm, (im, g)) in enumerate(HARD):
     p = OUT / f"{nm}.png"; hard(im, 100+i).convert("RGB").save(p)
     g.update(name=nm, kind="hard-scan", scan=True, doc=None); (OUT / f"{nm}.json").write_text(json.dumps(g, indent=1)); manifest.append({"name": nm, "kind": "hard-scan", "scan": True})

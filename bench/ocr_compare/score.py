@@ -7,7 +7,7 @@ as header/footer/page_number by the model's own labels - grounding/Paddle only).
 import json, re, sys, html
 from pathlib import Path
 import jiwer
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]  # repo root; testset/ lives here
 TAG = re.compile(r"!\[([a-z_]+\+?)\]\((\d+),(\d+),(\d+),(\d+)\)")
 
 def strip(t):
