@@ -4,23 +4,193 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+CONTROL_PACKET="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
 
-export PACKET_VERIFY_RUN_ID="${PACKET_VERIFY_RUN_ID:-$$}"
-export PACKET_VERIFY_ROOT="${PACKET_VERIFY_ROOT:-/tmp/packet-verify-${PACKET_VERIFY_RUN_ID}}"
-ARTIFACTS_DIR="${PACKET_VERIFY_ARTIFACTS:-$PACKET_VERIFY_ROOT/artifacts}"
-CACHE_DIR="${PACKET_VERIFY_CACHE:-$PACKET_VERIFY_ROOT/cache}"
+PACKET_VERIFY_MARKER=".packet-verify-owned"
+VERIFY_TMP_PREFIX="/tmp/packet-verify-"
+
+ARTIFACTS_DIR=""
+CACHE_DIR=""
+
+realpath_safe() {
+  local path="$1"
+  if [[ -e "$path" ]]; then
+    realpath "$path"
+  else
+    realpath -m "$path"
+  fi
+}
+
+is_under_verify_tmp_root() {
+  local real="$1"
+  [[ "$real" == "${VERIFY_TMP_PREFIX}"* ]] || return 1
+  local rest="${real#${VERIFY_TMP_PREFIX}}"
+  [[ -n "$rest" ]] || return 1
+  [[ "$rest" != *".."* ]] || return 1
+  # Require a run segment: /tmp/packet-verify-<run-id>/...
+  [[ "$rest" == */* ]] || return 1
+  local run_segment="${rest%%/*}"
+  [[ -n "$run_segment" ]] || return 1
+  return 0
+}
+
+run_root_for_path() {
+  local real="$1"
+  if ! is_under_verify_tmp_root "$real"; then
+    return 1
+  fi
+  local rest="${real#${VERIFY_TMP_PREFIX}}"
+  local run_segment="${rest%%/*}"
+  echo "${VERIFY_TMP_PREFIX}${run_segment}"
+}
+
+marker_path_for_root() {
+  echo "$1/$PACKET_VERIFY_MARKER"
+}
+
+read_run_id_from_marker() {
+  local root="$1"
+  local marker
+  marker="$(marker_path_for_root "$root")"
+  [[ -f "$marker" ]] || return 1
+  local line
+  line="$(grep -E '^run_id=' "$marker" | head -1 || true)"
+  [[ -n "$line" ]] || return 1
+  PACKET_VERIFY_RUN_ID="${line#run_id=}"
+  export PACKET_VERIFY_RUN_ID
+}
+
+write_ownership_marker() {
+  local root="$1"
+  mkdir -p "$root"
+  cat >"$(marker_path_for_root "$root")" <<EOF
+run_id=${PACKET_VERIFY_RUN_ID}
+repo_root=${REPO_ROOT}
+created_by=control-packet
+EOF
+}
+
+establish_verify_paths() {
+  local sub="${1:-}"
+
+  if [[ -n "${PACKET_VERIFY_RUN_ID:-}" ]]; then
+    local expected_root="${VERIFY_TMP_PREFIX}${PACKET_VERIFY_RUN_ID}"
+    if [[ -z "${PACKET_VERIFY_ROOT:-}" ]]; then
+      export PACKET_VERIFY_ROOT="$expected_root"
+    else
+      local root_real expected_real
+      root_real="$(realpath_safe "$PACKET_VERIFY_ROOT")"
+      expected_real="$(realpath_safe "$expected_root")"
+      if [[ "$root_real" != "$expected_real" ]]; then
+        export PACKET_VERIFY_ROOT="$expected_real"
+      else
+        export PACKET_VERIFY_ROOT="$root_real"
+      fi
+    fi
+  elif [[ -n "${PACKET_VERIFY_ROOT:-}" ]]; then
+    local root_real
+    root_real="$(realpath_safe "$PACKET_VERIFY_ROOT")"
+    if ! read_run_id_from_marker "$root_real"; then
+      if [[ "$sub" == launch ]]; then
+        PACKET_VERIFY_RUN_ID="$(date +%s)-$$"
+        export PACKET_VERIFY_RUN_ID
+      else
+        echo "FAIL: PACKET_VERIFY_RUN_ID unset and no ownership marker under $PACKET_VERIFY_ROOT (run launch first)" >&2
+        return 1
+      fi
+    fi
+    export PACKET_VERIFY_ROOT="$root_real"
+  elif [[ "$sub" == launch ]]; then
+    PACKET_VERIFY_RUN_ID="$(date +%s)-$$"
+    export PACKET_VERIFY_RUN_ID
+    export PACKET_VERIFY_ROOT="${VERIFY_TMP_PREFIX}${PACKET_VERIFY_RUN_ID}"
+  else
+    echo "FAIL: set PACKET_VERIFY_RUN_ID or run launch / eval \"\$(${CONTROL_PACKET} env)\"" >&2
+    return 1
+  fi
+
+  local root_real default_artifacts default_cache
+  root_real="$(realpath_safe "$PACKET_VERIFY_ROOT")"
+  export PACKET_VERIFY_ROOT="$root_real"
+  default_artifacts="$root_real/artifacts"
+  default_cache="$root_real/cache"
+
+  if [[ -n "${PACKET_VERIFY_ARTIFACTS:-}" ]]; then
+    ARTIFACTS_DIR="${PACKET_VERIFY_ARTIFACTS}"
+  else
+    ARTIFACTS_DIR="$default_artifacts"
+  fi
+
+  if [[ -n "${PACKET_VERIFY_CACHE:-}" ]]; then
+    local cache_real
+    cache_real="$(realpath_safe "$PACKET_VERIFY_CACHE")"
+    if [[ "$cache_real" == "$root_real"/* ]]; then
+      CACHE_DIR="$cache_real"
+    else
+      echo "WARN: ignoring PACKET_VERIFY_CACHE outside verify root ($cache_real)" >&2
+      CACHE_DIR="$default_cache"
+    fi
+  else
+    CACHE_DIR="$default_cache"
+  fi
+}
+
+assert_owned_deletable_path() {
+  local label="$1"
+  local path="$2"
+  if [[ -z "$path" ]]; then
+    echo "cleanup: refuse empty $label path" >&2
+    return 1
+  fi
+  local real
+  real="$(realpath_safe "$path")"
+  if ! is_under_verify_tmp_root "$real"; then
+    echo "cleanup: refuse $label outside ${VERIFY_TMP_PREFIX}*: $real" >&2
+    return 1
+  fi
+  local run_root
+  run_root="$(run_root_for_path "$real")"
+  local marker
+  marker="$(marker_path_for_root "$run_root")"
+  if [[ ! -f "$marker" ]]; then
+    echo "cleanup: refuse $label without ownership marker at $marker" >&2
+    return 1
+  fi
+  return 0
+}
 
 packet_bin() {
   if command -v packet >/dev/null 2>&1; then
     command -v packet
-    return
+    return 0
   fi
   if [[ -x "${HOME}/.local/bin/packet" ]]; then
     echo "${HOME}/.local/bin/packet"
-    return
+    return 0
   fi
   echo "packet CLI not found on PATH (run: pip install -e \".[dev]\")" >&2
   return 127
+}
+
+packet_resolves_to_repo() {
+  local _pkt="$1"
+  local editable_root
+  editable_root="$(python3 -c "
+import json
+import pathlib
+import importlib.metadata as m
+
+dist = m.distribution('packet-dl')
+raw = dist.read_text('direct_url.json')
+data = json.loads(raw)
+url = data.get('url', '')
+if not url.startswith('file://'):
+    raise SystemExit(1)
+print(pathlib.Path(url.removeprefix('file://')).resolve())
+" 2>/dev/null)" || return 1
+  local repo_real
+  repo_real="$(realpath_safe "$REPO_ROOT")"
+  [[ "$editable_root" == "$repo_real" ]]
 }
 
 ensure_path() {
@@ -39,9 +209,12 @@ cmd_doctor() {
     echo "FAIL: packet --help failed" >&2
     return 1
   fi
+  if ! packet_resolves_to_repo "$pkt"; then
+    echo "FAIL: packet import does not resolve to this checkout ($REPO_ROOT/src/packet)" >&2
+    return 1
+  fi
   local ver
   ver="$(python3 -c "import importlib.metadata as m; print(m.version('packet-dl'))" 2>/dev/null || echo unknown)"
-  mkdir -p "$ARTIFACTS_DIR" "$CACHE_DIR"
   cat <<EOF
 ok: true
 repo_root: $REPO_ROOT
@@ -61,14 +234,21 @@ cmd_launch() {
     python3 -m pip install -e ".[dev]" -q
     ensure_path
   fi
+  local pkt
+  pkt="$(packet_bin)" || return 1
+  if ! packet_resolves_to_repo "$pkt"; then
+    echo "FAIL: packet on PATH is not this checkout; use pip install -e \".[dev]\" from $REPO_ROOT" >&2
+    return 1
+  fi
   mkdir -p "$ARTIFACTS_DIR" "$CACHE_DIR"
+  write_ownership_marker "$PACKET_VERIFY_ROOT"
   cmd_doctor
 }
 
 cmd_cli() {
   ensure_path
   local pkt
-  pkt="$(packet_bin)"
+  pkt="$(packet_bin)" || return 1
   mkdir -p "$ARTIFACTS_DIR"
   if [[ $# -lt 1 ]]; then
     echo "usage: control-packet cli -- <packet-args...>" >&2
@@ -89,6 +269,7 @@ cmd_cli() {
   echo "exit_code=$ec"
   echo "stdout=${out_base}.stdout"
   echo "stderr=${out_base}.stderr"
+  # Exit with the same code as packet so shell && / set -e honor failures.
   return "$ec"
 }
 
@@ -96,7 +277,7 @@ cmd_materialize_fixtures() {
   ensure_path
   mkdir -p "$CACHE_DIR"
   local pkt
-  pkt="$(packet_bin)"
+  pkt="$(packet_bin)" || return 1
   "$pkt" eval --dir "$CACHE_DIR" >/dev/null
   echo "cache_dir=$CACHE_DIR"
   ls -1 "$CACHE_DIR/builtin/"*.pdf 2>/dev/null || true
@@ -117,6 +298,9 @@ cmd_fixture() {
 
 cmd_env() {
   mkdir -p "$ARTIFACTS_DIR" "$CACHE_DIR"
+  if [[ ! -f "$(marker_path_for_root "$PACKET_VERIFY_ROOT")" ]]; then
+    write_ownership_marker "$PACKET_VERIFY_ROOT"
+  fi
   printf 'export PACKET_VERIFY_RUN_ID=%q\n' "$PACKET_VERIFY_RUN_ID"
   printf 'export PACKET_VERIFY_ROOT=%q\n' "$PACKET_VERIFY_ROOT"
   printf 'export PACKET_VERIFY_ARTIFACTS=%q\n' "$ARTIFACTS_DIR"
@@ -124,20 +308,53 @@ cmd_env() {
 }
 
 cmd_cleanup() {
-  # Remove generated cache/scratch; never delete proof artifacts.
-  if [[ -d "$CACHE_DIR" ]]; then
-    rm -rf "$CACHE_DIR"
-  fi
-  local scratch="${PACKET_VERIFY_ROOT}/scratch"
-  if [[ -d "$scratch" ]]; then
-    rm -rf "$scratch"
-  fi
-  if [[ -n "${PACKET_VERIFY_DELETE_ROOT:-}" && "$PACKET_VERIFY_DELETE_ROOT" == "1" ]]; then
-    if [[ "$ARTIFACTS_DIR" == "$PACKET_VERIFY_ROOT/artifacts" ]]; then
-      # Keep artifacts subtree when wiping the run root.
-      find "$PACKET_VERIFY_ROOT" -mindepth 1 -maxdepth 1 ! -name artifacts -exec rm -rf {} +
+  # Always delete canonical paths under the verify root (never honor external CACHE overrides).
+  local cache="${PACKET_VERIFY_ROOT}/cache"
+  if [[ -n "${PACKET_VERIFY_CACHE:-}" ]]; then
+    local env_cache_real canonical_cache_real
+    env_cache_real="$(realpath_safe "$PACKET_VERIFY_CACHE")"
+    canonical_cache_real="$(realpath_safe "$cache")"
+    if [[ "$env_cache_real" != "$canonical_cache_real" ]]; then
+      assert_owned_deletable_path "PACKET_VERIFY_CACHE" "$env_cache_real" || return 1
+      if [[ -d "$env_cache_real" ]]; then
+        rm -rf "$env_cache_real"
+      fi
     fi
   fi
+
+  if [[ -d "$cache" ]]; then
+    assert_owned_deletable_path "cache" "$cache" || return 1
+    rm -rf "$cache"
+  fi
+
+  local scratch="${PACKET_VERIFY_ROOT}/scratch"
+  if [[ -d "$scratch" ]]; then
+    assert_owned_deletable_path "scratch" "$scratch" || return 1
+    rm -rf "$scratch"
+  fi
+
+  if [[ -n "${PACKET_VERIFY_DELETE_ROOT:-}" && "$PACKET_VERIFY_DELETE_ROOT" == "1" ]]; then
+    assert_owned_deletable_path "verify root" "$PACKET_VERIFY_ROOT" || return 1
+    local root_real
+    root_real="$(realpath_safe "$PACKET_VERIFY_ROOT")"
+    local deleted_any=0
+    local entry
+    for entry in "$root_real"/*; do
+      [[ -e "$entry" ]] || continue
+      local base
+      base="$(basename "$entry")"
+      if [[ "$base" == "artifacts" ]]; then
+        continue
+      fi
+      rm -rf "$entry"
+      deleted_any=1
+    done
+    if [[ "$deleted_any" -eq 0 ]]; then
+      echo "cleanup: PACKET_VERIFY_DELETE_ROOT=1 but nothing removed under $root_real" >&2
+      return 1
+    fi
+  fi
+
   echo "cleanup: cache removed; artifacts preserved at $ARTIFACTS_DIR"
 }
 
@@ -146,16 +363,20 @@ usage() {
 usage: control-packet <doctor|launch|env|cli|materialize-fixtures|fixture|cleanup> [args]
 
 Environment:
-  PACKET_VERIFY_RUN_ID   unique run id (default: shell pid)
+  PACKET_VERIFY_RUN_ID   unique run id (set before launch, or read from ownership marker)
   PACKET_VERIFY_ROOT     scratch root (default: /tmp/packet-verify-\$RUN_ID)
   PACKET_VERIFY_ARTIFACTS proof output dir (default: \$ROOT/artifacts)
   PACKET_VERIFY_CACHE    eval PDF cache (default: \$ROOT/cache)
   PACKET_VERIFY_CMD_LABEL basename for cli capture files (default: packet)
+  PACKET_VERIFY_DELETE_ROOT when 1, remove non-artifacts under verify root (containment-checked)
+
+cli -- runs packet and writes stdout/stderr/exitcode files; the subcommand exits with packet's code.
 EOF
 }
 
 main() {
   local sub="${1:-}"
+  establish_verify_paths "$sub"
   case "$sub" in
     doctor) shift; cmd_doctor "$@" ;;
     launch) shift; cmd_launch "$@" ;;

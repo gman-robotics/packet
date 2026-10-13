@@ -18,15 +18,15 @@ export PATH="${HOME}/.local/bin:${PATH}"
 eval "$(.cursor/skills/verify-packet/control-packet env)"
 ```
 
-`launch` runs `pip install -e ".[dev]"` when `packet` is missing, creates `$PACKET_VERIFY_ROOT` (default `/tmp/packet-verify-$PACKET_VERIFY_RUN_ID`), and prints doctor fields.
+`launch` runs `pip install -e ".[dev]"` when `packet` is missing, creates `$PACKET_VERIFY_ROOT` (default `/tmp/packet-verify-$PACKET_VERIFY_RUN_ID`), writes an ownership marker under that root, and prints doctor fields. Always `eval "$(.cursor/skills/verify-packet/control-packet env)"` in the same shell so later invocations reuse the persisted `PACKET_VERIFY_RUN_ID`.
 
-**Ready** when `control-packet doctor` prints `ok: true` with a resolved `packet` path and `package_version` matching `pyproject.toml`.
+**Ready** when `.cursor/skills/verify-packet/control-packet doctor` prints `ok: true` with a resolved `packet` path and `package_version` matching `pyproject.toml`.
 
-**Teardown:** run `control-packet cleanup` after each verification session (see Cleanup). There is no daemon to keep alive between drives.
+**Teardown:** run `.cursor/skills/verify-packet/control-packet cleanup` after each verification session (see Cleanup). There is no daemon to keep alive between drives.
 
 ## Doctor
 
-Read-only health check before driving:
+Health check before driving (does not create cache directories; run `launch` first):
 
 ```bash
 export PATH="${HOME}/.local/bin:${PATH}"
@@ -42,16 +42,18 @@ Harness: **`control-packet`** in this directory. It wraps the real `packet` entr
 Conventions:
 
 - Set `PACKET_VERIFY_RUN_ID` so concurrent agents do not share cache dirs.
-- Materialize built-in eval PDFs once per run: `control-packet materialize-fixtures` (writes under `$PACKET_VERIFY_CACHE`, default `$PACKET_VERIFY_ROOT/cache`).
-- Resolve a fixture path: `control-packet fixture text-layer` (also `multi-doc`, `shared-header`, `scan`).
+- Materialize built-in eval PDFs once per run: `.cursor/skills/verify-packet/control-packet materialize-fixtures` (writes under `$PACKET_VERIFY_CACHE`, default `$PACKET_VERIFY_ROOT/cache`).
+- Resolve a fixture path: `.cursor/skills/verify-packet/control-packet fixture text-layer` (also `multi-doc`, `shared-header`, `scan`).
 - Run CLI commands with captured evidence:
 
 ```bash
 PACKET_VERIFY_CMD_LABEL=inspect-text-layer \
-  .cursor/skills/verify-packet/control-packet cli -- inspect "$(control-packet fixture text-layer)" | head -20
+  .cursor/skills/verify-packet/control-packet cli -- inspect \
+  "$(.cursor/skills/verify-packet/control-packet fixture text-layer)"
+head -20 "$PACKET_VERIFY_ARTIFACTS/inspect-text-layer.stdout"
 ```
 
-Each `cli --` invocation writes `$ARTIFACTS_DIR/<label>.{stdout,stderr,exitcode}`.
+Each `cli --` invocation writes `$ARTIFACTS_DIR/<label>.{stdout,stderr,exitcode}` and exits with the same code as `packet` (paths are printed on stdout).
 
 Feature recipes live under `features/`. Start from `features/README.md`, drive **every entry point listed** for the feature under test (not only the happiest path).
 
@@ -98,7 +100,7 @@ test -f "$PACKET_VERIFY_ARTIFACTS/proof.txt" && ls -la "$PACKET_VERIFY_ARTIFACTS
 | `.cursor/skills/verify-packet/control-packet doctor` | Read-only readiness YAML |
 | `.cursor/skills/verify-packet/control-packet materialize-fixtures` | Run `packet eval --dir $CACHE` to build PDFs |
 | `.cursor/skills/verify-packet/control-packet fixture <name>` | Print path to a builtin PDF |
-| `.cursor/skills/verify-packet/control-packet cli -- <args>` | Run `packet` with captured stdout/stderr/exit |
+| `.cursor/skills/verify-packet/control-packet cli -- <args>` | Run `packet` with captured stdout/stderr/exit; exit code matches `packet` |
 | `.cursor/skills/verify-packet/control-packet cleanup` | Drop cache/scratch; keep artifacts |
 
-Maintenance: run `/maintain-verification-skill` when CLI flags or fixtures change.
+Maintenance: when CLI flags or fixtures change, update this skill and the `features/` recipes to match (optional: pstack `/create-verification-skill` flow if you use it elsewhere).

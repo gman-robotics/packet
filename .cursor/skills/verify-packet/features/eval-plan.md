@@ -15,10 +15,10 @@ Eval-plan reads a DocLayNet-style catalog on disk and writes a manifest plus pla
 
 Preconditions:
 
-- `control-packet doctor` reports `ok: true`.
+- `.cursor/skills/verify-packet/control-packet doctor` reports `ok: true`.
 - A DocLayNet catalog JSON file is available on disk (not vendored in this repository).
 
-- **Plan when catalog exists.** Run `PACKET_VERIFY_CMD_LABEL=eval-plan .cursor/skills/verify-packet/control-packet cli -- eval-plan --catalog "$CATALOG" --out "$PACKET_VERIFY_ROOT/scratch/generated" --count 2`. Exit code `0`. Stdout contains `planned`. Output directory contains `manifest.json` and packet subfolders.
+- **Plan when catalog exists.** Run `PACKET_VERIFY_CMD_LABEL=eval-plan .cursor/skills/verify-packet/control-packet cli -- eval-plan --catalog "$CATALOG" --out "$PACKET_VERIFY_ROOT/scratch/generated" --count 2`. Exit code `0`. Stdout contains `planned`. Output directory contains `manifest.json` and flat placeholder PDFs (`<packet-name>.pdf`).
 - **Proof.** When preconditions are met, append `feature=eval-plan catalog=$CATALOG` to `proof.txt` and keep stdout capture.
 
 ## Gotchas

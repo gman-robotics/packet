@@ -16,9 +16,9 @@ This directory is the maintained source for verifying user-facing **Packet CLI**
 
 - Start every recipe from the baseline unless its feature file says otherwise.
 - Pass PDF paths as positional arguments exactly as the CLI expects.
-- Use `control-packet cli --` for commands whose output is proof; set `PACKET_VERIFY_CMD_LABEL` to a stable basename.
-- Use `control-packet fixture <name>` to resolve builtin PDF paths (`text-layer`, `multi-doc`, `shared-header`, `scan`).
-- Run `control-packet cleanup` when finished; do not delete files under `$PACKET_VERIFY_ARTIFACTS`.
+- Use `.cursor/skills/verify-packet/control-packet cli --` for commands whose output is proof; set `PACKET_VERIFY_CMD_LABEL` to a stable basename.
+- Use `.cursor/skills/verify-packet/control-packet fixture <name>` to resolve builtin PDF paths (`text-layer`, `multi-doc`, `shared-header`, `scan`).
+- Run `.cursor/skills/verify-packet/control-packet cleanup` when finished; do not delete files under `$PACKET_VERIFY_ARTIFACTS`.
 
 ## Proof and skip reporting
 

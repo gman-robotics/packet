@@ -15,8 +15,8 @@ Inspect streams the pipeline event log for each page of a PDF: classification, b
 
 Preconditions:
 
-- `control-packet doctor` reports `ok: true`.
-- Builtin fixture `text-layer` exists (`control-packet materialize-fixtures`).
+- `.cursor/skills/verify-packet/control-packet doctor` reports `ok: true`.
+- Builtin fixture `text-layer` exists (`.cursor/skills/verify-packet/control-packet materialize-fixtures`).
 
 - **Stream events.** Run `PACKET_VERIFY_CMD_LABEL=inspect-text-layer .cursor/skills/verify-packet/control-packet cli -- inspect "$(.cursor/skills/verify-packet/control-packet fixture text-layer)"`. Exit code `0`. Stdout contains at least one line starting with `page_classified` and one with `block_emitted`.
 - **Missing file.** Run `PACKET_VERIFY_CMD_LABEL=inspect-missing .cursor/skills/verify-packet/control-packet cli -- inspect /tmp/packet-verify-no-such-file.pdf`. Exit code `2`. Stderr contains `not found`.

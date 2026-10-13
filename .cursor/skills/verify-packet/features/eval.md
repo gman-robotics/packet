@@ -18,7 +18,7 @@ Eval regenerates synthetic builtin PDFs (if needed), runs the pipeline with gold
 
 Preconditions:
 
-- `control-packet doctor` reports `ok: true`.
+- `.cursor/skills/verify-packet/control-packet doctor` reports `ok: true`.
 - `$PACKET_VERIFY_CACHE` is empty or owned by this `PACKET_VERIFY_RUN_ID`.
 
 - **Builtin gates.** Run `PACKET_VERIFY_CMD_LABEL=eval-builtin .cursor/skills/verify-packet/control-packet cli -- eval --dir "$PACKET_VERIFY_CACHE"`. Exit code `0`. Stdout lists fixtures `text-layer`, `multi-doc`, `shared-header`, `scan` each with gate `PASS`.

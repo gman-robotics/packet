@@ -18,10 +18,10 @@ Parse runs the full pipeline on a PDF and emits a PacketTree as JSON, either to 
 
 Preconditions:
 
-- `control-packet doctor` reports `ok: true`.
+- `.cursor/skills/verify-packet/control-packet doctor` reports `ok: true`.
 - Fixture `multi-doc` materialized (expects **two** logical documents by default).
 
-- **Write JSON file.** Set `OUT="$PACKET_VERIFY_ROOT/scratch/multi-doc.json"` and `mkdir -p "$(dirname "$OUT")"`. Run `PACKET_VERIFY_CMD_LABEL=parse-multi-doc .cursor/skills/verify-packet/control-packet cli -- parse "$(.cursor/skills/verify-packet/control-packet fixture multi-doc)" -o "$OUT"`. Exit code `0`. Stderr/stdout summary mentions `2 document(s)` and `4 pages`. File `$OUT` contains a top-level `"documents"` array with length 2.
+- **Write JSON file.** Set `OUT="$PACKET_VERIFY_ROOT/scratch/multi-doc.json"` and `mkdir -p "$(dirname "$OUT")"`. Run `PACKET_VERIFY_CMD_LABEL=parse-multi-doc .cursor/skills/verify-packet/control-packet cli -- parse "$(.cursor/skills/verify-packet/control-packet fixture multi-doc)" -o "$OUT"`. Exit code `0`. The summary line is on **stdout only** (captured in `parse-multi-doc.stdout`) and mentions `2 document(s)` and `4 pages`. File `$OUT` contains a top-level `"documents"` array with length 2.
 - **No-split.** Run the same with `--no-split` and assert the summary reports `1 document(s)` when boundary splitting is disabled.
 - **Proof.** Copy or reference `$OUT` under `$PACKET_VERIFY_ARTIFACTS/parse-multi-doc.json`. Append `feature=parse fixture=multi-doc run_id=$PACKET_VERIFY_RUN_ID` to `proof.txt`.
 
