@@ -23,12 +23,14 @@ class BoundaryDetector:
     """Generic, domain-free boundary hints."""
 
     lookback: int = 3
+    last_page_number: int | None = None
     _page_nums: list[tuple[int, int | None]] = field(default_factory=list)
     _headers: list[str] = field(default_factory=list)
     _sizes: list[tuple[float | None, float | None, int]] = field(default_factory=list)
 
     def observe(self, ref: PageRef, blocks: list[Block]) -> BoundarySignal | None:
         page_num = _extract_page_number(blocks)
+        self.last_page_number = page_num
         header = _fingerprint(blocks, BlockKind.HEADER) or _leading_fingerprint(blocks)
         self._page_nums.append((ref.index, page_num))
         self._headers.append(header)

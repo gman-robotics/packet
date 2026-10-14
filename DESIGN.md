@@ -127,7 +127,7 @@ In short: today's real routing table is `{TEXT, MIXED, UNKNOWN} →
 NativeTextExtractor`, `SCAN → nothing (empty result)`. The class→backend
 table above is the target, not the current behavior.
 
-## Boundary policy: v0 is eager-commit (not look-ahead)
+## Boundary policy: look-ahead commit
 
 Signals (domain-free, `src/packet/boundary.py`, `BoundaryDetector.observe`):
 
@@ -150,30 +150,29 @@ Scores add. `observe()` emits a `BoundarySignal` (as the `boundary_proposed`
 event) when the combined score is `>= 0.4`; the reported confidence is
 `min(score, 0.95)`.
 
-**What v0 actually does with that signal is eager commit, not look-ahead
-deferral.** In `Pipeline.stream` (`src/packet/pipeline.py`):
+**Commit is look-ahead, not eager** (`src/packet/lookahead.py`,
+`LookaheadSplitter`, driven by `Pipeline.stream`):
 
-```python
-should_split = (
-    self.config.split_on_boundary
-    and signal is not None
-    and signal.confidence >= self.config.boundary_min_confidence  # 0.55
-    and current_blocks
-)
-if should_split:
-    doc = self._close_document(...)   # closes and appends the LogicalDocument now
-```
+- confidence `>= boundary_commit_confidence` (default `0.75`): split at once;
+- `0.4 <= confidence < 0.75`: wait for up to `lookahead_window` (default
+  `2`) following pages, then decide on page-number evidence:
+  - a following page continues the new numbering (`num(p) + k`): split
+    (`lookahead_numbering`);
+  - a following page resumes the old numbering (`num(p-1) + k` or
+    `+ k + 1`): no split, the page was an insert (`old_sequence_continues`);
+  - a following page has a stronger signal: no split here
+    (`superseded`); that page is decided on its own;
+  - no evidence in the window or end of file: the old eager rule,
+    split iff confidence `>= boundary_min_confidence` (`0.55`).
+- `lookahead_window=0` reproduces v0 eager commit exactly.
 
-The moment a page's signal clears `boundary_min_confidence` (default
-`0.55`), the pipeline calls `_close_document` for the *current* page —
-there is no waiting for subsequent pages to agree, no re-open, and no
-retraction. `boundary_proposed` and `document_closed` happen on the same
-iteration of the page loop. An earlier draft of this document described a
-look-ahead-confirmed commit; that behavior does not exist in v0 and the
-claim has been removed. Look-ahead commit is tracked as future work
-(see Next).
+Streaming: `page_classified`, `block_emitted` and `boundary_proposed`
+are still emitted as each page is read. `document_opened` /
+`document_closed` for a page can lag by up to `lookahead_window` pages
+while a mid-confidence boundary is pending. Decisions are applied
+strictly in page order.
 
-### Accepted v0 fail modes (documented, not silently swallowed)
+### Remaining fail modes (documented, not silently swallowed)
 
 Because commit is eager and irrevocable:
 
