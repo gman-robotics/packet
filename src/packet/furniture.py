@@ -126,7 +126,8 @@ class FurnitureTagger:
             blocks = _tag_edge(blocks, "bottom", e.bottom, BlockKind.PAGE_NUMBER)
         if e.footer and self._repeats(page, lambda x: _footer_key(x.footer), _footer_key(e.footer)):
             blocks = _tag_edge(blocks, "bottom", e.footer, BlockKind.FOOTER)
-        if e.top != e.footer and self._repeats(page, lambda x: x.top, e.top):
+        # Top and footer are always different lines, so one letterhead can be both.
+        if self._repeats(page, lambda x: x.top, e.top):
             blocks = _tag_edge(blocks, "top", e.top, BlockKind.HEADER)
         for order, b in enumerate(blocks):
             b.reading_order = order

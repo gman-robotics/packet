@@ -206,3 +206,14 @@ def test_header_changed_fires_when_a_running_header_stops():
     assert sigs[1] is None and sigs[2] is None
     reasons = [s.reason for s in sigs if s]
     assert not any("header_changed" in r for r in reasons[:-1])
+
+
+def test_letterhead_repeated_as_header_and_footer_is_tagged_both():
+    # The same letterhead prints at the top and again above the page number. The top
+    # line and the footer line are different lines, so both are furniture.
+    t = FurnitureTagger()
+    pages = [t.tag_page(_ref(i), _native(i, f"ACME Corp\nBody {i} text.\nACME Corp\nPage {i+1} of 3"))
+             for i in range(3)]
+    kinds = [(b.kind, b.text) for b in pages[2]]
+    assert kinds == [(K.HEADER, "ACME Corp"), (K.PARAGRAPH, "Body 2 text."),
+                     (K.FOOTER, "ACME Corp"), (K.PAGE_NUMBER, "Page 3 of 3")], kinds
