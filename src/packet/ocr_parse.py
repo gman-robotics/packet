@@ -25,7 +25,7 @@ PADDLE_LABELS: dict[str, K] = {
     "reference": K.PARAGRAPH, "reference_content": K.PARAGRAPH, "header_image": K.HEADER,
     "footer_image": K.FOOTER,
 }
-_TAG = re.compile(r"!\[([a-z_]+)(\+?)\]\((\d+),(\d+),(\d+),(\d+)\)[ \t]*\n?")
+_TAG = re.compile(r"!\[([a-z_]+)(\+?)\]\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)[ \t]*\n?")
 _HASHES = re.compile(r"^(#+)\s*")
 
 
@@ -42,8 +42,13 @@ def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
     if not tags:
         return _markdown_blocks(raw, ref)
     out: list[Block] = []
-    for i, m in enumerate(tags):
-        end = tags[i + 1].start() if i + 1 < len(tags) else len(raw)
+    pre = raw[: tags[0].start()].strip()
+    if pre:  # text the model emitted before its first tag
+        out.extend(_markdown_blocks(pre, ref))
+    base = len(out)
+    for j, m in enumerate(tags):
+        i = base + j
+        end = tags[j + 1].start() if j + 1 < len(tags) else len(raw)
         text = raw[m.end():end].strip()
         label, cont = m.group(1), m.group(2) == "+"
         kind = LIGHTON_LABELS.get(label, K.UNKNOWN)
@@ -54,7 +59,9 @@ def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
             text = _HASHES.sub("", text, count=1)
             if level == 1:
                 kind = K.TITLE
-        x0, y0, x1, y1 = (int(m.group(j)) for j in range(3, 7))
+        x0, y0, x1, y1 = (min(1000, max(0, int(m.group(k)))) for k in range(3, 7))
+        x0, x1 = min(x0, x1), max(x0, x1)
+        y0, y1 = min(y0, y1), max(y0, y1)
         extra: dict[str, Any] = {"label": label, "continuation": cont, "engine": "lighton"}
         if kind == K.TABLE or label == "chart":
             extra["html"] = text

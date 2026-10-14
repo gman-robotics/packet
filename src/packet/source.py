@@ -65,7 +65,7 @@ class PdfPageSource:
 
     def render(self, index: int, longest_px: int = 1540):
         """Render page ``index`` to a PIL image whose longest side is ``longest_px``
-        (LightOnOCR's recommended input: ~200 DPI, longest side 1540 px)."""
+        (LightOnOCR's recommended input size; about 140 DPI for US Letter)."""
         page = self._doc[index]
         try:
             width, height = page.get_size()

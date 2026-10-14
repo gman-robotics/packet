@@ -41,7 +41,28 @@ def _need_image(image: ImageThunk | None):
     return image() if callable(image) else image
 
 
-class LightOnExtractor:
+class _LazyEngine:
+    """Load once on first use; a failed load is cached so it is not retried per page."""
+
+    _loaded: Any = None
+    _load_error: OcrUnavailable | None = None
+
+    def _load(self):
+        if self._loaded is None:
+            if self._load_error is not None:
+                raise self._load_error
+            try:
+                self._loaded = self._load_impl()
+            except OcrUnavailable as exc:
+                self._load_error = exc
+                raise
+        return self._loaded
+
+    def _load_impl(self):  # pragma: no cover - overridden
+        raise NotImplementedError
+
+
+class LightOnExtractor(_LazyEngine):
     """LightOnOCR-3-1B, grounding mode, on MLX (mlx-vlm). Default OCR engine."""
 
     needs_image = True
@@ -52,27 +73,26 @@ class LightOnExtractor:
 
     def __init__(self, max_tokens: int = 4096):
         self.max_tokens = max_tokens
-        self._loaded: tuple[Any, Any, Any] | None = None
+        self._loaded = None
+        self._load_error = None
 
     def supports(self, page_class: PageClass) -> bool:
         return page_class in _OCR_CLASSES
 
-    def _load(self):
-        if self._loaded is None:
-            try:
-                from huggingface_hub import snapshot_download
-                from mlx_vlm import generate, load
-                from mlx_vlm.prompt_utils import apply_chat_template
-            except ImportError as exc:  # mlx only exists on Apple silicon
-                raise OcrUnavailable(f"LightOnOCR needs mlx-vlm: {exc}") from exc
-            try:
-                path = snapshot_download(self.model, revision=self.revision)
-                model, processor = load(path, trust_remote_code=False)
-            except Exception as exc:
-                raise OcrUnavailable(f"LightOnOCR weights unavailable: {exc}") from exc
-            prompt = apply_chat_template(processor, model.config, self.mode, num_images=1)
-            self._loaded = (model, processor, (generate, prompt))
-        return self._loaded
+    def _load_impl(self):
+        try:
+            from huggingface_hub import snapshot_download
+            from mlx_vlm import generate, load
+            from mlx_vlm.prompt_utils import apply_chat_template
+        except ImportError as exc:  # mlx only exists on Apple silicon
+            raise OcrUnavailable(f"LightOnOCR needs mlx-vlm: {exc}") from exc
+        try:
+            path = snapshot_download(self.model, revision=self.revision)
+            model, processor = load(path, trust_remote_code=False)
+        except Exception as exc:
+            raise OcrUnavailable(f"LightOnOCR weights unavailable: {exc}") from exc
+        prompt = apply_chat_template(processor, model.config, self.mode, num_images=1)
+        return (model, processor, (generate, prompt))
 
     def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
         img = _need_image(image)
@@ -83,7 +103,7 @@ class LightOnExtractor:
         return parse_lighton_grounding(raw, ref)
 
 
-class PaddleExtractor:
+class PaddleExtractor(_LazyEngine):
     """PaddleOCR-VL-1.6 page pipeline (PP-DocLayoutV3 layout + VL recognizer). Fallback engine."""
 
     needs_image = True
@@ -91,22 +111,23 @@ class PaddleExtractor:
 
     def __init__(self, device: str = "cpu"):
         self.device = device
-        self._pipe = None
+        self._loaded = None
+        self._load_error = None
 
     def supports(self, page_class: PageClass) -> bool:
         return page_class in _OCR_CLASSES
 
-    def _load(self):
-        if self._pipe is None:
-            try:
-                from paddleocr import PaddleOCRVL
-            except ImportError as exc:
-                raise OcrUnavailable(f"PaddleOCR-VL needs paddleocr: {exc}") from exc
-            try:
-                self._pipe = PaddleOCRVL(pipeline_version=self.pipeline_version, device=self.device)
-            except Exception as exc:
-                raise OcrUnavailable(f"PaddleOCR-VL failed to load: {exc}") from exc
-        return self._pipe
+    def _load_impl(self):
+        try:
+            from paddleocr import PaddleOCRVL
+        except ImportError as exc:
+            raise OcrUnavailable(f"PaddleOCR-VL needs paddleocr: {exc}") from exc
+        try:
+            # Orientation/unwarping stay off so bboxes refer to the image we pass in.
+            return PaddleOCRVL(pipeline_version=self.pipeline_version, device=self.device,
+                               use_doc_orientation_classify=False, use_doc_unwarping=False)
+        except Exception as exc:
+            raise OcrUnavailable(f"PaddleOCR-VL failed to load: {exc}") from exc
 
     def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
         img = _need_image(image)
@@ -128,8 +149,12 @@ class PaddleExtractor:
 
 
 class FallbackExtractor:
-    """Try ``primary``; on failure or an empty result, use ``fallback``.
-    Raises ``OcrUnavailable`` only when neither engine can run."""
+    """Try ``primary``; if it cannot run or crashes, use ``fallback``.
+
+    An empty result from an engine that ran is final (a blank page stays blank and
+    does not load the second engine). If neither engine produced a result, raise
+    ``OcrUnavailable`` with both reasons, so a scanned page never comes back empty
+    silently."""
 
     needs_image = True
 
@@ -137,29 +162,21 @@ class FallbackExtractor:
         self.primary = primary
         self.fallback = fallback
         self.last_used = None
-        self.errors: list[str] = []
 
     def supports(self, page_class: PageClass) -> bool:
         return self.primary.supports(page_class) or self.fallback.supports(page_class)
 
     def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
-        unavailable = 0
+        errors: list[str] = []
         for engine in (self.primary, self.fallback):
             try:
                 blocks = call_extractor(engine, ref, text, image)
-            except OcrUnavailable as exc:
-                unavailable += 1
-                self.errors.append(f"{type(engine).__name__}: {exc}")
-                continue
-            except Exception as exc:  # noqa: BLE001 - engine crashed on this page
-                self.errors.append(f"{type(engine).__name__}: {exc!r}")
+            except Exception as exc:  # noqa: BLE001 - unavailable or crashed: try the next one
+                errors.append(f"{type(engine).__name__}: {exc}")
                 continue
             self.last_used = engine
-            if blocks or engine is self.fallback:
-                return blocks
-        if unavailable == 2:
-            raise OcrUnavailable("; ".join(self.errors[-2:]))
-        return []
+            return blocks
+        raise OcrUnavailable("; ".join(errors))
 
 
 class EscalatingExtractor:
@@ -195,8 +212,8 @@ class EscalatingExtractor:
                     return blocks
             except OcrUnavailable as exc:
                 if not self.unavailable:
-                    print(f"packet: OCR unavailable, scanned pages will be empty: {exc}",
-                          file=sys.stderr)
+                    print(f"packet: OCR unavailable; scanned pages will be empty and mixed "
+                          f"pages keep only their text layer: {exc}", file=sys.stderr)
                 self.unavailable.append(str(exc))
         if self.native.supports(ref.page_class) or self.force_inspect:
             return self.native.extract(ref, text)

@@ -51,4 +51,4 @@ def test_no_page_image_means_ocr_unavailable_without_loading_models():
     ext = default_ocr_extractor()
     with pytest.raises(OcrUnavailable):
         ext.extract(REF, "")
-    assert ext.primary._loaded is None and ext.fallback._pipe is None
+    assert ext.primary._loaded is None and ext.fallback._loaded is None

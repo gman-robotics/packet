@@ -130,9 +130,80 @@ def test_fallback_uses_paddle_when_lighton_unavailable():
     assert ext.last_used is f
 
 
-def test_fallback_used_when_primary_returns_nothing():
+def test_empty_primary_result_is_final_blank_page_does_not_load_paddle():
     p, f = _SpyOcr(blocks=[]), _SpyOcr(blocks=["paddle"])
+    assert FallbackExtractor(p, f).extract(SCAN, "", image=lambda: "IMG") == []
+    assert f.calls == []
+
+
+def test_fallback_used_when_primary_crashes():
+    p, f = _SpyOcr(exc=RuntimeError("oom")), _SpyOcr(blocks=["paddle"])
     assert FallbackExtractor(p, f).extract(SCAN, "", image=lambda: "IMG") == ["paddle"]
+
+
+@pytest.mark.parametrize("a,b", [(RuntimeError("crash"), OcrUnavailable("none")),
+                                 (OcrUnavailable("none"), RuntimeError("crash"))])
+def test_no_engine_result_raises_never_silent_empty(a, b):
+    ext = FallbackExtractor(_SpyOcr(exc=a), _SpyOcr(exc=b))
+    with pytest.raises(OcrUnavailable, match="crash"):
+        ext.extract(SCAN, "", image=lambda: "IMG")
+
+
+def test_failed_load_is_cached_not_retried_per_page(monkeypatch):
+    calls = []
+
+    def boom(self):
+        calls.append(1)
+        raise OcrUnavailable("offline")
+
+    monkeypatch.setattr(LightOnExtractor, "_load_impl", boom)
+    ext = LightOnExtractor()
+    for _ in range(3):
+        with pytest.raises(OcrUnavailable):
+            ext.extract(SCAN, "", image=lambda: "IMG")
+    assert calls == [1]
+
+
+def test_lighton_extract_with_mocked_model(monkeypatch):
+    ext = LightOnExtractor()
+    seen = {}
+
+    def gen(model, proc, prompt, image, **kw):
+        seen["prompt"], seen["image"] = prompt, image
+        return GROUNDING
+
+    monkeypatch.setattr(LightOnExtractor, "_load_impl", lambda self: ("M", "P", (gen, "PROMPT")))
+    blocks = ext.extract(SCAN, "", image=lambda: "IMG")
+    assert seen == {"prompt": "PROMPT", "image": ["IMG"]} and len(blocks) == 7
+
+
+def test_paddle_extract_with_mocked_pipeline(monkeypatch):
+    class _Res:
+        json = {"res": {"parsing_res_list": [  # noqa: RUF012
+            {"block_label": "doc_title", "block_bbox": [0, 0, 100, 20], "block_content": "Lease"}]}}
+
+    class _Pipe:
+        def predict(self, path):
+            assert Path(path).exists()
+            return [_Res()]
+
+    monkeypatch.setattr(PaddleExtractor, "_load_impl", lambda self: _Pipe())
+    img = Image.new("RGB", (1190, 1540), "white")  # 612pt wide -> ~140 dpi
+    blocks = PaddleExtractor().extract(SCAN, "", image=lambda: img)
+    assert [b.text for b in blocks] == ["Lease"] and blocks[0].kind == BlockKind.TITLE
+    assert blocks[0].bbox.x1 == pytest.approx(100 * 612 / 1190)
+
+
+def test_mixed_page_with_empty_ocr_keeps_native_text():
+    esc, _ocr = _esc([])
+    ref = SCAN.model_copy(update={"page_class": PageClass.MIXED})
+    assert [b.text for b in esc.extract(ref, "p. 3", image=lambda: "IMG")] == ["p. 3"]
+
+
+def test_parse_keeps_text_before_first_tag_and_clamps_bbox():
+    blocks = parse_lighton_grounding("Stray preamble\n![text](-5,0,1200,50)\nBody", SCAN)
+    assert [b.text for b in blocks] == ["Stray preamble", "Body"]
+    assert blocks[1].bbox.x0 == 0 and blocks[1].bbox.x1 == pytest.approx(612.0)
 
 
 def test_both_engines_unavailable_raises_ocr_unavailable():

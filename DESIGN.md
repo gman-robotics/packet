@@ -90,24 +90,27 @@ and drives the fail-closed behavior below.
   confirmation window described for boundaries (see below) and any
   VLM-based reclassification of mid-confidence pages are both future
   work. No VLM classifier exists in this codebase today.
-- **`--force-inspect` CLI flag**: **not implemented.** There is no way
-  today to force a page or file through pdf-inspector or a VLM from the
-  CLI (`packet inspect` / `packet parse` only expose `--no-split` and
-  `-o/--output`). This flag is planned; see Next.
-- **Router and fail-closed behavior**: `Pipeline` builds its `Router`
-  with `[NativeTextExtractor()]` by default (`src/packet/pipeline.py`).
-  `NativeTextExtractor.supports()` only claims `TEXT`, `MIXED`, and
-  `UNKNOWN` pages. A page classified `SCAN` matches no extractor in the
-  default router, so `Router.extract()` falls through its loop and
-  returns `[]` — **zero blocks, silently, no error, no OCR fallback.**
-  This is intentionally fail-closed with respect to the "never OCR a
-  trustworthy text layer" rule (a `SCAN` page has no text layer to
-  protect), but it also means a v0 default `Pipeline` run over a
-  scanned document produces an empty (or near-empty) `LogicalDocument`
-  today, not an OCR'd one. `PaddleExtractor` and `DoclingExtractor`
-  (`src/packet/backends.py`) exist as seams and both raise
-  `NotImplementedError` if called — they are not wired into the default
-  `Router`.
+- **`--force-inspect` CLI flag**: `packet inspect` / `packet parse
+  --force-inspect` sends every page, text pages included, through OCR.
+- **OCR and the escalate policy** (`src/packet/backends.py`): the CLI
+  builds its router from `default_extractors()`, one
+  `EscalatingExtractor`:
+  - `TEXT` / `UNKNOWN`: native text layer only (never OCR a trustworthy
+    text layer).
+  - `SCAN` / `SUSPECT_ENCODING`: OCR on the rendered page image
+    (`PdfPageSource.render`, longest side 1540 px, rendered lazily only
+    when an OCR engine runs).
+  - `MIXED`: OCR; if OCR is unavailable or finds nothing, keep the native
+    text so the page is never dropped.
+  - OCR engine: `LightOnOCR-3-1B` in grounding mode on MLX (default),
+    `PaddleOCR-VL-1.6` page pipeline as fallback when LightOn cannot run
+    or crashes (per `bench/ocr_compare/REPORT.md`). Weights download
+    lazily at first use (LightOn pinned to a revision), never bundled; see
+    `docs/LICENSE_CHECKLIST.md`.
+  - If neither engine can run, `packet` prints one warning to stderr and
+    scanned pages come back empty; `PACKET_OCR=off` disables OCR.
+  - The Python `Pipeline()` default is still `[NativeTextExtractor()]`
+    (no model loads); pass `extractors=default_extractors()` to get OCR.
 
 - **`NativeTextExtractor` never tags furniture.** It only emits
   `BlockKind.TITLE`, `HEADING`, `PARAGRAPH`, `LIST_ITEM`, or `UNKNOWN`
@@ -272,15 +275,15 @@ The hard checklist lives in
 - `InspectorClassifier` seam that currently delegates to
   `HeuristicClassifier` (not a real pdf-inspector integration)
 - `NativeTextExtractor`, routed to `TEXT` / `MIXED` / `UNKNOWN` pages only
-- Fail-closed (empty-result, not OCR fallback) for `SCAN` pages under the
-  default `Router`
+- OCR for `SCAN` / `MIXED` pages in the CLI (LightOnOCR-3-1B grounding on
+  MLX, PaddleOCR-VL-1.6 fallback) via the escalate policy
 - `BoundaryDetector` scoring (page numbers, headers, media box, titles)
   feeding an **eager-commit** split in `Pipeline` (no look-ahead — see
   Boundary policy above)
 - Section assembler with intra-document heading repair
 - Domain adapter protocol
-- CLI: `packet inspect`, `packet parse` (`--no-split`, `-o/--output`); no
-  `--force-inspect` yet
+- CLI: `packet inspect`, `packet parse` (`--no-split`, `-o/--output`,
+  `--force-inspect`)
 
 ## Next
 
@@ -288,12 +291,12 @@ The hard checklist lives in
    stub with an actual pdf-inspector call)
 2. Docling PageIR adapter (wire `DoclingExtractor`, currently
    `NotImplementedError`)
-3. Scan backend (PaddleOCR-VL) on routed pages only (wire
+3. ~~Scan backend on routed pages only~~ (shipped: LightOnOCR-3-1B default, PaddleOCR-VL-1.6 fallback; wire
    `PaddleExtractor`, currently `NotImplementedError`), so `SCAN` pages
    stop returning empty results
 4. Mid-band VLM confirm window (3-page) for both classification and
    boundary confirmation
-5. `--force-inspect` CLI flag
+5. ~~`--force-inspect` CLI flag~~ (shipped)
 6. **Look-ahead commit for boundaries** — defer `_close_document` until
    subsequent pages agree or EOF, replacing today's eager commit. This is
    deferred deliberately: it is a design decision (propose vs. commit)
