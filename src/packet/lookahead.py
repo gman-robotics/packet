@@ -43,7 +43,7 @@ class Decision:
 @dataclass
 class _Seq:
     index: int
-    num: int | None
+    num: int
     total: int | None
 
 
@@ -59,7 +59,7 @@ class LookaheadSplitter:
         self.commit = max(commit, fallback)  # never split more eagerly than v0
         self.propose = propose
         self._obs: list[PageObs] = []  # undecided pages + lookahead only
-        self._seq: _Seq | None = None  # numbering anchor of the current document
+        self._seq: _Seq | None = None  # last accepted numbered page of the current doc
 
     def push(self, obs: PageObs) -> list[Decision]:
         self._obs.append(obs)
@@ -96,16 +96,14 @@ class LookaheadSplitter:
 
     def _record(self, o: PageObs, d: Decision) -> None:
         if d.split:
-            # An unnumbered split still opens a document. Keep the anchor so the
-            # next printed run is that document's sequence, not a new boundary.
-            self._seq = _Seq(o.index, o.page_num, o.page_total)
+            self._seq = _Seq(o.index, o.page_num, o.page_total) if o.page_num is not None else None
         elif d.reason == "old_sequence_continues":
             pass  # an insert: keep comparing against the real sequence
         elif o.page_num is not None:
             self._seq = _Seq(o.index, o.page_num, o.page_total)
 
     def _continues(self, num: int | None, total: int | None, index: int) -> bool:
-        """``num`` continues the current sequence at page ``index`` (inserts in
+        """``num`` continues the current sequence at page ``index`` (an insert in
         between may or may not have been counted)."""
         s = self._seq
         if s is None or num is None or not _same_total(s.total, total):
@@ -113,12 +111,7 @@ class LookaheadSplitter:
         if s.total is not None and num > s.total:
             return False
         gap = index - s.index
-        if s.num is None:
-            # Opened on an unnumbered page. The first printed number belongs to
-            # this document when it fits the pages since the split (the opening
-            # page may or may not have been counted).
-            return gap >= 1 and 1 <= num <= gap + 1
-        return s.num < num <= s.num + gap
+        return num in (s.num + gap, s.num + gap - 1) and num > s.num
 
     def _decide_mid(self, o: PageObs) -> Decision:
         if self._continues(o.page_num, o.page_total, o.index):
