@@ -9,6 +9,16 @@ from packet.backends import default_extractors
 from packet.pipeline import Pipeline
 
 
+def _unit_interval(value: str) -> float:
+    try:
+        x = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {value!r}") from None
+    if not (0.0 <= x <= 1.0):  # rejects nan, inf, negatives, > 1
+        raise argparse.ArgumentTypeError(f"must be within [0, 1]: {value!r}")
+    return x
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="packet", description="Document language understanding")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -26,10 +36,12 @@ def main(argv: list[str] | None = None) -> int:
     ev = sub.add_parser("eval", help="run built-in packet fixtures")
     ev.add_argument("--json", action="store_true")
     ev.add_argument("--dir", default=None, help="cache dir for generated PDFs")
-    ev.add_argument("--min-f1", type=float, default=None,
-                    help="per-fixture boundary F1 floor (tolerance 0); default 1.0")
-    ev.add_argument("--min-macro-f1", type=float, default=None,
-                    help="macro-average boundary F1 floor; default = --min-f1")
+    ev.add_argument("--min-f1", type=_unit_interval, default=None,
+                    help="per-fixture boundary F1 floor in [0,1] (tolerance 0); default 1.0, "
+                         "which suits the deterministic built-in fixtures; lower it for "
+                         "real-model or DocLayNet runs")
+    ev.add_argument("--min-macro-f1", type=_unit_interval, default=None,
+                    help="macro-average boundary F1 floor in [0,1]; default = --min-f1")
 
     plan = sub.add_parser("eval-plan", help="plan DocLayNet synthetic packets from a catalog")
     plan.add_argument("--catalog", required=True)

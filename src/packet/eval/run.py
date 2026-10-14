@@ -24,8 +24,17 @@ class EvalResult:
     false_ocr_pages: list[int]
     notes: str = ""
 
+    def failures(self, min_f1: float = DEFAULT_MIN_F1) -> list[str]:
+        """Per-fixture gate failures (the single source for row marks and the gate)."""
+        out: list[str] = []
+        if self.false_ocr_pages:
+            out.append(f"{self.name}: false-OCR on text-layer pages {self.false_ocr_pages}")
+        if not (self.boundary.f1 >= min_f1):  # also catches NaN
+            out.append(f"{self.name}: boundary F1 {self.boundary.f1:.2f} < {min_f1:.2f}")
+        return out
+
     def passed_gate(self, min_f1: float = DEFAULT_MIN_F1) -> bool:
-        return not self.false_ocr_pages and self.boundary.f1 >= min_f1
+        return not self.failures(min_f1)
 
 
 @dataclass
@@ -48,20 +57,18 @@ def evaluate_gate(
     floor = min_f1 if min_macro_f1 is None else min_macro_f1
     failures: list[str] = []
     for r in results:
-        if r.false_ocr_pages:
-            failures.append(f"{r.name}: false-OCR on text-layer pages {r.false_ocr_pages}")
-        if r.boundary.f1 < min_f1:
-            failures.append(f"{r.name}: boundary F1 {r.boundary.f1:.2f} < {min_f1:.2f}")
-    macro = sum(r.boundary.f1 for r in results) / len(results) if results else 0.0
+        failures.extend(r.failures(min_f1))
+    macro = sum(r.boundary.f1 for r in results) / len(results) if results else float("nan")
     if not results:
         failures.append("no fixtures ran")
-    elif macro < floor:
+    elif not (macro >= floor):
         failures.append(f"macro boundary F1 {macro:.2f} < {floor:.2f}")
     return GateResult(not failures, failures, macro, min_f1, floor)
 
 
 def text_layer_pages(pdf: Path, min_chars: int | None = None) -> set[int]:
-    """Pages whose native text sample is at least ``min_chars`` (EVAL.md section 5)."""
+    """Pages whose native text sample is at least ``min_chars`` (EVAL.md section 5).
+    ``min_chars`` > 0 implies the page has text operators (``has_text_ops``)."""
     threshold = HeuristicClassifier().min_chars if min_chars is None else min_chars
     with PdfPageSource(pdf) as src:
         return {

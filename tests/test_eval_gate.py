@@ -94,3 +94,41 @@ def test_short_text_page_is_not_false_ocr(tmp_path):
 
 def test_builtin_fixtures_pass_default_gate(tmp_path):
     assert cli.main(["eval", "--dir", str(tmp_path)]) == 0
+
+
+# ---- round-1 review cases ----
+
+def test_f1_exactly_at_threshold_passes():
+    assert evaluate_gate([_res(f1=0.9)], min_f1=0.9).passed
+
+
+def test_nan_f1_fails_the_gate():
+    assert not evaluate_gate([_res(f1=float("nan"))], min_f1=0.0).passed
+
+
+def test_empty_results_fail():
+    g = evaluate_gate([], min_f1=0.0)
+    assert not g.passed and g.failures == ["no fixtures ran"]
+
+
+@pytest.mark.parametrize("bad", ["nan", "1.5", "-0.1", "inf", "abc"])
+def test_cli_rejects_bad_thresholds(bad):
+    with pytest.raises(SystemExit) as e:
+        cli.main(["eval", "--min-f1", bad])
+    assert e.value.code == 2
+    with pytest.raises(SystemExit):
+        cli.main(["eval", "--min-macro-f1", bad])
+
+
+def test_row_marks_come_from_the_gate(monkeypatch, capsys):
+    monkeypatch.setattr("packet.eval.run.run_named_fixtures",
+                        lambda root=None, pipeline=None: [_res("ok"), _res("weak", f1=0.5)])
+    assert cli.main(["eval", "--json", "--min-f1", "0.9"]) == 1
+    rows = {r["name"]: r["gate_pass"] for r in json.loads(capsys.readouterr().out)["fixtures"]}
+    assert rows == {"ok": True, "weak": False}
+
+
+def test_json_reports_default_threshold(monkeypatch, capsys):
+    monkeypatch.setattr("packet.eval.run.run_named_fixtures", lambda root=None, pipeline=None: [_res()])
+    cli.main(["eval", "--json"])
+    assert json.loads(capsys.readouterr().out)["gate"]["min_f1"] == 1.0
