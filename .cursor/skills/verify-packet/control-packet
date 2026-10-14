@@ -8,6 +8,8 @@ CONTROL_PACKET="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
 
 PACKET_VERIFY_MARKER=".packet-verify-owned"
 VERIFY_TMP_PREFIX="/tmp/packet-verify-"
+# On macOS /tmp is a symlink to /private/tmp; compare realpaths against the resolved prefix.
+VERIFY_TMP_PREFIX_REAL="$(cd /tmp && pwd -P)/packet-verify-"
 
 ARTIFACTS_DIR=""
 CACHE_DIR=""
@@ -16,32 +18,53 @@ realpath_safe() {
   local path="$1"
   if [[ -e "$path" ]]; then
     realpath "$path"
-  else
+  elif realpath -m / >/dev/null 2>&1; then
     realpath -m "$path"
+  else
+    # BSD realpath (macOS) has no -m; resolve the non-existent path portably.
+    python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$path"
   fi
 }
 
+# strip_verify_prefix PATH: print PATH with the verify prefix removed, or fail.
+strip_verify_prefix() {
+  local real="$1"
+  if [[ "$real" == "${VERIFY_TMP_PREFIX_REAL}"* ]]; then
+    echo "${real#${VERIFY_TMP_PREFIX_REAL}}"
+  elif [[ "$real" == "${VERIFY_TMP_PREFIX}"* ]]; then
+    echo "${real#${VERIFY_TMP_PREFIX}}"
+  else
+    return 1
+  fi
+}
+
+# is_under_verify_tmp_root PATH [allow_root]
+# True when PATH is strictly inside /tmp/packet-verify-<run-id>/. With allow_root=1 the
+# run root itself (/tmp/packet-verify-<run-id>) also passes; cache/scratch never pass it.
 is_under_verify_tmp_root() {
   local real="$1"
-  [[ "$real" == "${VERIFY_TMP_PREFIX}"* ]] || return 1
-  local rest="${real#${VERIFY_TMP_PREFIX}}"
+  local allow_root="${2:-0}"
+  local rest
+  rest="$(strip_verify_prefix "$real")" || return 1
   [[ -n "$rest" ]] || return 1
   [[ "$rest" != *".."* ]] || return 1
-  # Require a run segment: /tmp/packet-verify-<run-id>/...
-  [[ "$rest" == */* ]] || return 1
   local run_segment="${rest%%/*}"
   [[ -n "$run_segment" ]] || return 1
+  if [[ "$rest" != */* ]]; then
+    [[ "$allow_root" == "1" ]] || return 1
+  fi
   return 0
 }
 
 run_root_for_path() {
   local real="$1"
-  if ! is_under_verify_tmp_root "$real"; then
+  if ! is_under_verify_tmp_root "$real" 1; then
     return 1
   fi
-  local rest="${real#${VERIFY_TMP_PREFIX}}"
+  local rest
+  rest="$(strip_verify_prefix "$real")" || return 1
   local run_segment="${rest%%/*}"
-  echo "${VERIFY_TMP_PREFIX}${run_segment}"
+  echo "${real%"$rest"}${run_segment}"
 }
 
 marker_path_for_root() {
@@ -138,13 +161,14 @@ establish_verify_paths() {
 assert_owned_deletable_path() {
   local label="$1"
   local path="$2"
+  local allow_root="${3:-0}"
   if [[ -z "$path" ]]; then
     echo "cleanup: refuse empty $label path" >&2
     return 1
   fi
   local real
   real="$(realpath_safe "$path")"
-  if ! is_under_verify_tmp_root "$real"; then
+  if ! is_under_verify_tmp_root "$real" "$allow_root"; then
     echo "cleanup: refuse $label outside ${VERIFY_TMP_PREFIX}*: $real" >&2
     return 1
   fi
@@ -334,7 +358,7 @@ cmd_cleanup() {
   fi
 
   if [[ -n "${PACKET_VERIFY_DELETE_ROOT:-}" && "$PACKET_VERIFY_DELETE_ROOT" == "1" ]]; then
-    assert_owned_deletable_path "verify root" "$PACKET_VERIFY_ROOT" || return 1
+    assert_owned_deletable_path "verify root" "$PACKET_VERIFY_ROOT" 1 || return 1
     local root_real
     root_real="$(realpath_safe "$PACKET_VERIFY_ROOT")"
     local deleted_any=0
@@ -350,8 +374,8 @@ cmd_cleanup() {
       deleted_any=1
     done
     if [[ "$deleted_any" -eq 0 ]]; then
-      echo "cleanup: PACKET_VERIFY_DELETE_ROOT=1 but nothing removed under $root_real" >&2
-      return 1
+      # cache/scratch were already removed above; nothing else left is not an error.
+      echo "cleanup: PACKET_VERIFY_DELETE_ROOT=1: nothing else to remove under $root_real" >&2
     fi
   fi
 
