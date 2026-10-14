@@ -21,10 +21,13 @@ W_PAGE_RESET = 0.45
 W_SEQUENCE_COMPLETED = 0.2
 W_HEADER_CHANGED = 0.25
 W_MEDIA_BOX = 0.2
-W_TITLE_TOP = 0.6  # a title that opens the page (below any running header)
+W_TITLE_TOP = 0.45  # a title that opens the page (below any running header): proposes alone
 W_TITLE = 0.25  # a title lower on the page
 PROPOSE = 0.4
 COMBINED = 0.6
+# Without a page-number reset, no combination may reach the splitter's immediate
+# commit level (0.75): look-ahead numbering must always get a chance to veto.
+CAP_WITHOUT_RESET = 0.74
 
 
 @dataclass
@@ -100,6 +103,8 @@ class BoundaryDetector:
         independent = [r for r in reasons if r != "sequence_completed"]
         if len(independent) >= 2:
             score = max(score, COMBINED)
+        if "page_number_reset" not in reasons:
+            score = min(score, CAP_WITHOUT_RESET)
         if score < PROPOSE:
             return None
         return BoundarySignal(

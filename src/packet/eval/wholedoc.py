@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import time
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -63,17 +64,26 @@ def _download(url: str) -> bytes:
         return resp.read()
 
 
-def fetch(m: Manifest, cache: Path, opener: Callable[[str], bytes] = _download) -> list[Path]:
-    """Download missing docs into ``cache``; every file (cached or new) must match its sha256."""
+def fetch(m: Manifest, cache: Path, opener: Callable[[str], bytes] = _download,
+          pause: float = 1.0) -> list[Path]:
+    """Download missing docs into ``cache`` (``pause`` seconds between downloads, to be
+    polite to arXiv); every file, cached or new, must match its pinned sha256. A
+    mismatch means the host re-rendered the PDF: re-pin the manifest, do not skip."""
     cache.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
+    downloaded = 0
     for d in m.docs:
         path = cache / d.file
         if not (path.exists() and _sha(path.read_bytes()) == d.sha256):
+            if downloaded and pause:
+                time.sleep(pause)
             data = opener(d.url)
+            downloaded += 1
             if _sha(data) != d.sha256:
-                raise FetchError(f"{d.name}: sha256 mismatch for {d.url}")
-            path.write_bytes(data)
+                raise FetchError(f"{d.name}: sha256 mismatch for {d.url} (re-pin the manifest)")
+            tmp = path.with_suffix(".part")
+            tmp.write_bytes(data)
+            tmp.replace(path)  # atomic: a partial download never sits under the real name
         paths.append(path)
     return paths
 
@@ -83,7 +93,8 @@ def _sha(data: bytes) -> str:
 
 
 def plan(m: Manifest) -> list[list[int]]:
-    """Seeded partition of all docs into packets of ``docs_per_packet`` docs (each doc once)."""
+    """Seeded partition of all docs into packets of ``docs_per_packet`` docs (each doc once).
+    The last packet absorbs a remainder smaller than the minimum, so it can exceed the max."""
     rng = random.Random(m.seed)
     order = list(range(len(m.docs)))
     rng.shuffle(order)
@@ -111,13 +122,17 @@ def build_fixtures(m: Manifest, cache: Path, out: Path) -> list[NamedFixture]:
         for i in idxs:
             d = m.docs[i]
             src = pdfium.PdfDocument(str(cache / d.file))
-            if len(src) != d.pages:
-                raise FetchError(f"{d.name}: {len(src)} pages, manifest says {d.pages}")
-            joined.import_pages(src)
+            try:
+                if len(src) != d.pages:
+                    raise FetchError(f"{d.name}: {len(src)} pages, manifest says {d.pages}")
+                joined.import_pages(src)
+            finally:
+                src.close()
             docs.append(LogicalDocument(id=f"{name}-d{len(docs)}", page_start=start,
                                         page_end=start + d.pages - 1, title=d.name))
             start += d.pages
         joined.save(str(pdf_path))
+        joined.close()
         gold = Packet(id=name, origin=PacketOrigin(path=str(pdf_path), page_count=start),
                       documents=docs)
         fixtures.append(NamedFixture(name, pdf_path, gold, "born-digital",

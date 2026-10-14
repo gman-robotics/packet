@@ -53,14 +53,14 @@ def test_fetch_rejects_checksum_mismatch(tmp_path):
     m = _fake(tmp_path, 2)
     m.docs[0].sha256 = "0" * 64
     with pytest.raises(wholedoc.FetchError):
-        wholedoc.fetch(m, cache=tmp_path, opener=lambda url: b"")
+        wholedoc.fetch(m, cache=tmp_path, opener=lambda url: b"", pause=0)
 
 
 def test_fetch_downloads_missing_and_verifies(tmp_path):
     m = _fake(tmp_path, 2)
     blobs = {d.url: (tmp_path / d.file).read_bytes() for d in m.docs}
     cache = tmp_path / "cache"
-    paths = wholedoc.fetch(m, cache=cache, opener=lambda url: blobs[url])
+    paths = wholedoc.fetch(m, cache=cache, opener=lambda url: blobs[url], pause=0)
     assert all(p.exists() and p.parent == cache for p in paths)
 
 

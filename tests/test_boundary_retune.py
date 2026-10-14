@@ -35,11 +35,11 @@ def test_single_weak_signal_does_not_commit():
     assert sig is None or not _commits(sig)
 
 
-def test_title_at_top_of_page_proposes_and_commits():
+def test_title_at_top_of_page_proposes_and_commits_with_a_second_signal():
     det = BoundaryDetector()
-    det.observe(_ref(0), [_b(0, "body")])
-    sig = det.observe(_ref(1), [_b(1, "A New Paper Title", BlockKind.TITLE), _b(1, "Abstract text")])
-    assert sig is not None and "title_top" in sig.reason
+    det.observe(_ref(0, 594, 774), [_b(0, "body")])
+    sig = det.observe(_ref(1, 595, 842), [_b(1, "A New Paper Title", BlockKind.TITLE), _b(1, "Abstract")])
+    assert sig is not None and "title_top" in sig.reason and "media_box_changed" in sig.reason
     assert _commits(sig)
 
 
@@ -105,3 +105,37 @@ def test_top_line_bare_page_number_is_tagged():
     assert all(BlockKind.PAGE_NUMBER in k for k in kinds[1:])
     final = t.finalize([b for page in tagged for b in page])
     assert [b.text for b in final if b.kind == BlockKind.PAGE_NUMBER] == ["2", "3", "4"]
+
+
+def test_title_top_alone_does_not_commit_without_numbering():
+    det = BoundaryDetector()
+    det.observe(_ref(0), [_b(0, "body")])
+    sig = det.observe(_ref(1), [_b(1, "Section Two", BlockKind.TITLE), _b(1, "text")])
+    assert sig is not None and "title_top" in sig.reason
+    assert not _commits(sig)
+
+
+def test_unnumbered_doc_with_titles_at_page_tops_stays_one_document():
+    det, s, out = BoundaryDetector(), LookaheadSplitter(), []
+    for i in range(5):
+        sig = det.observe(_ref(i), [_b(i, f"Heading {i}", BlockKind.TITLE), _b(i, "body text")])
+        out += s.push(PageObs(i, sig, det.last_page_number, det.last_page_total))
+    out += s.flush()
+    assert not any(d.split for d in out if d.page > 0)
+
+
+def test_combined_signals_without_reset_stay_below_commit_and_numbering_vetoes():
+    det = BoundaryDetector()
+    det.observe(_ref(0), [_b(0, "Running", BlockKind.HEADER), _b(0, "body"), _b(0, "4", BlockKind.PAGE_NUMBER)])
+    sig = det.observe(_ref(1, 792, 612), [_b(1, "Table 3", BlockKind.TITLE), _b(1, "5", BlockKind.PAGE_NUMBER)])
+    assert sig is not None and sig.confidence < 0.75
+    s = LookaheadSplitter()
+    s.push(PageObs(0, None, 4))
+    out = s.push(PageObs(1, sig, 5)) + s.push(PageObs(2, None, 6)) + s.push(PageObs(3, None, 7)) + s.flush()
+    assert not any(d.split for d in out)
+
+
+def test_unnumbered_cover_then_two_at_packet_start_is_harmless():
+    from packet.pipeline import Pipeline  # noqa: F401  (decision at page 0 never closes a doc)
+    d = _decide([PageObs(0, None, None), PageObs(1, None, 2), PageObs(2, None, 3)])
+    assert not d[1].split and not d[2].split

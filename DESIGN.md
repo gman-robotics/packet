@@ -184,6 +184,8 @@ event) when the combined score is `>= 0.4`; the reported confidence is
   in the window puts it at page 1 (`num(q) - k == 1`) and that page does not
   continue the current document's numbering. Many documents leave page 1
   unnumbered, so this is the most common page-number reset in practice.
+  Cost: `document_opened` for unnumbered pages now lags by up to
+  `lookahead_window` pages even without a signal.
 - `lookahead_window=0` reproduces v0 eager commit exactly.
 
 Streaming: `page_classified`, `block_emitted` and `boundary_proposed`
