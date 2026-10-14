@@ -26,14 +26,21 @@ class BoundaryDetector:
     last_page_number: int | None = None
     last_page_total: int | None = None
     _page_nums: list[tuple[int, int | None]] = field(default_factory=list)
+    _page_totals: list[int | None] = field(default_factory=list)
+    _tagged_header: list[bool] = field(default_factory=list)
     _headers: list[str] = field(default_factory=list)
     _sizes: list[tuple[float | None, float | None, int]] = field(default_factory=list)
 
     def observe(self, ref: PageRef, blocks: list[Block]) -> BoundarySignal | None:
-        page_num = _extract_page_number(blocks)
+        page_num, page_total = _extract_page_number(blocks)
         self.last_page_number = page_num
-        self.last_page_total = _extract_page_total(blocks)
-        header = _fingerprint(blocks, BlockKind.HEADER) or _leading_fingerprint(blocks)
+        self.last_page_total = page_total
+        self._page_totals.append(page_total)
+        # header_changed only means something when the previous page carried a tagged
+        # running HEADER: it fires when that header stops. Ordinary pages always have
+        # different first lines, so comparing those would fire on every page pair.
+        header = _leading_fingerprint(blocks)
+        self._tagged_header.append(bool(_fingerprint(blocks, BlockKind.HEADER)))
         self._page_nums.append((ref.index, page_num))
         self._headers.append(header)
         self._sizes.append((ref.width, ref.height, ref.rotation))
@@ -48,9 +55,14 @@ class BoundaryDetector:
         if page_num == 1 and prev_num is not None and prev_num > 1:
             reasons.append("page_number_reset")
             score += 0.45
+            prev_total = self._page_totals[-2]
+            if prev_total is not None and prev_num == prev_total:
+                # previous page was "N of N": its sequence is complete
+                reasons.append("sequence_completed")
+                score += 0.2
 
         prev_header = self._headers[-2]
-        if header and prev_header and header != prev_header:
+        if self._tagged_header[-2] and header and prev_header and header != prev_header:
             reasons.append("header_changed")
             score += 0.25
 
@@ -73,31 +85,19 @@ class BoundaryDetector:
         )
 
 
-def _extract_page_number(blocks: list[Block]) -> int | None:
+def _extract_page_number(blocks: list[Block]) -> tuple[int | None, int | None]:
     for block in blocks:
         is_furniture = block.kind in {BlockKind.PAGE_NUMBER, BlockKind.FOOTER, BlockKind.HEADER}
         if not is_furniture and (block.kind is not BlockKind.PARAGRAPH or len(block.text) > 40):
             continue
         match = _PAGE_NUM.search(block.text)
         if match:
-            return int(match.group(1))
+            return int(match.group(1)), int(match.group(2))
     for block in blocks[-2:]:
         match = _PAGE_NUM.search(block.text)
         if match:
-            return int(match.group(1))
-    return None
-
-
-def _extract_page_total(blocks: list[Block]) -> int | None:
-    """The ``N`` of "x of N" on the same block _extract_page_number would use."""
-    num = _extract_page_number(blocks)
-    if num is None:
-        return None
-    for block in blocks:
-        match = _PAGE_NUM.search(block.text)
-        if match and int(match.group(1)) == num:
-            return int(match.group(2))
-    return None
+            return int(match.group(1)), int(match.group(2))
+    return None, None
 
 
 def _fingerprint(blocks: list[Block], kind: BlockKind) -> str:
@@ -108,7 +108,7 @@ def _fingerprint(blocks: list[Block], kind: BlockKind) -> str:
 def _leading_fingerprint(blocks: list[Block]) -> str:
     if not blocks:
         return ""
-    first = blocks[0].text.strip().lower()
+    first = blocks[0].text.strip().lower().split("\n", 1)[0]
     return first[:80]
 
 

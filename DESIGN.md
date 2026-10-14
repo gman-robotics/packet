@@ -112,16 +112,21 @@ and drives the fail-closed behavior below.
   - The Python `Pipeline()` default is still `[NativeTextExtractor()]`
     (no model loads); pass `extractors=default_extractors()` to get OCR.
 
-- **`NativeTextExtractor` never tags furniture.** It only emits
-  `BlockKind.TITLE`, `HEADING`, `PARAGRAPH`, `LIST_ITEM`, or `UNKNOWN`
-  (`src/packet/extract.py::_guess_kind`) — never `HEADER`, `FOOTER`, or
-  `PAGE_NUMBER`. Those three kinds exist in the schema and
-  `Assembler._split_furniture` (`src/packet/assemble.py`) knows how to
-  strip them from the body, but nothing in the default pipeline produces
-  a block of those kinds yet, so furniture stripping is reachable code
-  with no live input today. `Section.blocks` on real output currently
-  includes whatever the extractor emitted, unfiltered by furniture kind.
-  This also affects the boundary detector's header signal — see below.
+- **Furniture tagging** (`src/packet/furniture.py`, `FurnitureTagger`):
+  `Pipeline` runs every native page through it. The page's first and last
+  lines become their own blocks; a last line that looks like a page number
+  (`Page 3 of 9`, `3/9`, `- 3 -`, `3`) is `PAGE_NUMBER`; a top/bottom line
+  repeats on another page within 3 pages is `HEADER` (exact text) or
+  `FOOTER` (digit-normalized; also the line above a page number). Lines are
+  split into their own block only when tagged. Page 0 is re-tagged when its
+  document closes, so that shows in `document_closed` and the final
+  Packet but not in the earlier `block_emitted` events. Bare numbers count
+  as page numbers only when plausible (not a year, not far past the page). OCR blocks keep the
+  engine's labels. `Assembler._split_furniture` then moves these into
+  `LogicalDocument.furniture`, so section bodies no longer contain running
+  headers or page numbers. The boundary detector adds `sequence_completed`
+  (+0.2) when a page-number reset follows an "N of N" page, so a shared
+  binder header no longer hides a page-number restart.
 
 In short: today's real routing table is `{TEXT, MIXED, UNKNOWN} →
 NativeTextExtractor`, `SCAN → nothing (empty result)`. The class→backend
