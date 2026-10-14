@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from packet.backends import default_extractors
 from packet.pipeline import Pipeline
 
 
@@ -14,11 +15,13 @@ def main(argv: list[str] | None = None) -> int:
 
     inspect = sub.add_parser("inspect", help="classify pages and print events")
     inspect.add_argument("path")
+    inspect.add_argument("--force-inspect", action="store_true", help="OCR every page, even text pages")
 
     parse = sub.add_parser("parse", help="write a PacketTree JSON file")
     parse.add_argument("path")
     parse.add_argument("-o", "--output", default="-")
     parse.add_argument("--no-split", action="store_true", help="force a single logical document")
+    parse.add_argument("--force-inspect", action="store_true", help="OCR every page, even text pages")
 
     ev = sub.add_parser("eval", help="run built-in packet fixtures")
     ev.add_argument("--json", action="store_true")
@@ -43,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"not found: {path}", file=sys.stderr)
         return 2
 
-    pipe = Pipeline()
+    pipe = Pipeline(extractors=default_extractors(force_inspect=args.force_inspect))
     if args.cmd == "parse" and args.no_split:
         pipe.config.split_on_boundary = False
 

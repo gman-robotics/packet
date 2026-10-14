@@ -57,7 +57,9 @@ class Pipeline:
                 classified = self.classifier.classify(ref, text)
                 yield Event.page_classified(classified)
 
-                blocks = self.router.extract(classified, text)
+                blocks = self.router.extract(
+                    classified, text, image=_lazy_render(source, classified.index)
+                )
                 for block in blocks:
                     yield Event.block_emitted(block)
 
@@ -109,6 +111,17 @@ class Pipeline:
         doc = apply_domains(doc, self.config.domain_adapters)
         packet.documents.append(doc)
         return doc
+
+
+def _lazy_render(source: PdfPageSource, index: int):
+    cache: list = []
+
+    def thunk():
+        if not cache:
+            cache.append(source.render(index))
+        return cache[0]
+
+    return thunk
 
 
 def _doc_id(packet_id: str, index: int) -> str:

@@ -63,6 +63,22 @@ class PdfPageSource:
         finally:
             page.close()
 
+    def render(self, index: int, longest_px: int = 1540):
+        """Render page ``index`` to a PIL image whose longest side is ``longest_px``
+        (LightOnOCR's recommended input size; about 140 DPI for US Letter)."""
+        page = self._doc[index]
+        try:
+            width, height = page.get_size()
+            scale = longest_px / max(width, height, 1.0)
+            img = page.render(scale=scale).to_pil().convert("RGB")
+        finally:
+            page.close()
+        if max(img.size) != longest_px:  # rounding: snap the longest side exactly
+            w, h = img.size
+            r = longest_px / max(w, h)
+            img = img.resize((max(1, round(w * r)), max(1, round(h * r))))
+        return img
+
     def close(self) -> None:
         self._doc.close()
 

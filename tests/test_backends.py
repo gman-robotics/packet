@@ -45,6 +45,10 @@ def test_falls_back_when_primary_fails():
     assert ext.last_used is ext.fallback
 
 
-def test_fallback_error_propagates():
-    with pytest.raises(NotImplementedError):
-        default_ocr_extractor().extract(REF, "")
+def test_no_page_image_means_ocr_unavailable_without_loading_models():
+    from packet.backends import OcrUnavailable
+
+    ext = default_ocr_extractor()
+    with pytest.raises(OcrUnavailable):
+        ext.extract(REF, "")
+    assert ext.primary._loaded is None and ext.fallback._loaded is None
