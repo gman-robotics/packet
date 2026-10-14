@@ -25,6 +25,13 @@ treat it as available, not wired in. **Heading-path accuracy (§2)** and
 function in `packet.eval.metrics`); both sections below are spec only
 until that lands.
 
+**`packet eval --set dlnet-whole`** (GMA-216) scores the same §1 boundary
+metric on 13 packets joined from 35 whole arXiv papers named by DocLayNet
+(`evals/README.md`). It gates on macro F1 >= 0.6 with no per-packet floor.
+It is a friendly set: one category (scientific articles), printed page numbers,
+and mixed A4/Letter sizes that give `media_box_changed` for free, so treat it as
+a smoke test for splitting, not a measure of real mixed packets.
+
 All metrics are computed per-packet and then aggregated (macro-average
 across packets, not micro-average across pages) unless stated otherwise.
 Always report results sliced by page condition — `born-digital`,

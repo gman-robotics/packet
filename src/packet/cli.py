@@ -36,6 +36,11 @@ def main(argv: list[str] | None = None) -> int:
     ev = sub.add_parser("eval", help="run built-in packet fixtures")
     ev.add_argument("--json", action="store_true")
     ev.add_argument("--dir", default=None, help="cache dir for generated PDFs")
+    ev.add_argument("--set", default="builtin", choices=["builtin", "dlnet-whole"],
+                    help="builtin fixtures (default) or packet-dlnet-whole: whole public PDFs "
+                         "named by DocLayNet, downloaded to --data-dir and joined into packets")
+    ev.add_argument("--data-dir", default=None,
+                    help="download cache for --set dlnet-whole (default ~/.cache/packet/dlnet-whole)")
     ev.add_argument("--min-f1", type=_unit_interval, default=None,
                     help="per-fixture boundary F1 floor in [0,1] (tolerance 0); default 1.0, "
                          "which suits the deterministic built-in fixtures; lower it for "
@@ -87,11 +92,18 @@ def _cmd_eval(args) -> int:
     from packet.eval import run as ev
 
     root = Path(args.dir) if args.dir else None
-    min_f1 = ev.DEFAULT_MIN_F1 if args.min_f1 is None else args.min_f1
-    results = ev.run_named_fixtures(root)
-    gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=args.min_macro_f1)
+    floors = ev.SET_FLOORS[args.set]
+    min_f1 = floors[0] if args.min_f1 is None else args.min_f1
+    min_macro = floors[1] if args.min_macro_f1 is None else args.min_macro_f1
+    if args.set == "dlnet-whole":
+        data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_WHOLEDOC_CACHE
+        results = ev.run_dlnet_whole(data, root)
+    else:
+        results = ev.run_named_fixtures(root)
+    gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=min_macro)
     if args.json:
         print(json.dumps({
+            "set": args.set,
             "fixtures": ev.results_as_dict(results, min_f1),
             "gate": {"passed": gate.passed, "failures": gate.failures, "macro_f1": gate.macro_f1,
                      "min_f1": gate.min_f1, "min_macro_f1": gate.min_macro_f1},

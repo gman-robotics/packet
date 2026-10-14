@@ -11,6 +11,25 @@ _PAGE_NUM = re.compile(
 )
 
 
+_BARE_PN = re.compile(r"^\s*(?:page\s*)?(\d{1,4})\s*$", re.IGNORECASE)
+
+# Signal weights. A signal at or above PROPOSE is proposed alone; two or more
+# independent weak signals together are lifted to COMBINED, which clears the
+# pipeline's eager floor (0.55) but stays below the immediate-commit level, so
+# look-ahead page-number evidence can still veto them.
+W_PAGE_RESET = 0.45
+W_SEQUENCE_COMPLETED = 0.2
+W_HEADER_CHANGED = 0.25
+W_MEDIA_BOX = 0.2
+W_TITLE_TOP = 0.45  # a title that opens the page (below any running header): proposes alone
+W_TITLE = 0.25  # a title lower on the page
+PROPOSE = 0.4
+COMBINED = 0.6
+# Without a page-number reset, no combination may reach the splitter's immediate
+# commit level (0.75): look-ahead numbering must always get a chance to veto.
+CAP_WITHOUT_RESET = 0.74
+
+
 @dataclass
 class BoundarySignal:
     after_page: int
@@ -54,35 +73,55 @@ class BoundaryDetector:
         prev_num = self._page_nums[-2][1]
         if page_num == 1 and prev_num is not None and prev_num > 1:
             reasons.append("page_number_reset")
-            score += 0.45
+            score += W_PAGE_RESET
             prev_total = self._page_totals[-2]
             if prev_total is not None and prev_num == prev_total:
                 # previous page was "N of N": its sequence is complete
                 reasons.append("sequence_completed")
-                score += 0.2
+                score += W_SEQUENCE_COMPLETED
 
         prev_header = self._headers[-2]
         if self._tagged_header[-2] and header and prev_header and header != prev_header:
             reasons.append("header_changed")
-            score += 0.25
+            score += W_HEADER_CHANGED
 
         prev_size = self._sizes[-2]
         curr_size = self._sizes[-1]
         if _size_jump(prev_size, curr_size):
             reasons.append("media_box_changed")
-            score += 0.2
+            score += W_MEDIA_BOX
 
-        if any(b.kind == BlockKind.TITLE for b in blocks) and ref.index > 0:
+        title = _title_position(blocks)
+        if title == "top":
+            reasons.append("title_top")
+            score += W_TITLE_TOP
+        elif title == "lower":
             reasons.append("title_block")
-            score += 0.25
+            score += W_TITLE
 
-        if score < 0.4:
+        # "sequence_completed" refines the reset, it is not independent evidence, and a
+        # title lower on the page is too common inside documents (OCR labels table and
+        # section captions as titles) to count toward a combination.
+        independent = [r for r in reasons if r not in {"sequence_completed", "title_block"}]
+        if len(independent) >= 2:
+            score = max(score, COMBINED)
+        if "page_number_reset" not in reasons:
+            score = min(score, CAP_WITHOUT_RESET)
+        if score < PROPOSE:
             return None
         return BoundarySignal(
             after_page=ref.index - 1,
             confidence=min(score, 0.95),
             reason="+".join(reasons),
         )
+
+
+def _title_position(blocks: list[Block]) -> str | None:
+    """``top`` when the first non-furniture block is a TITLE, ``lower`` for any other TITLE."""
+    body = [b for b in blocks if b.kind not in _FURNITURE]
+    if body and body[0].kind == BlockKind.TITLE:
+        return "top"
+    return "lower" if any(b.kind == BlockKind.TITLE for b in body) else None
 
 
 def _extract_page_number(blocks: list[Block]) -> tuple[int | None, int | None]:
@@ -93,6 +132,9 @@ def _extract_page_number(blocks: list[Block]) -> tuple[int | None, int | None]:
             match = _PAGE_NUM.search(block.text)
             if match:
                 return int(match.group(1)), int(match.group(2))
+            bare = _BARE_PN.match(block.text)
+            if bare:
+                return int(bare.group(1)), None
     for block in blocks:
         is_furniture = block.kind in {BlockKind.PAGE_NUMBER, BlockKind.FOOTER, BlockKind.HEADER}
         if not is_furniture and (block.kind is not BlockKind.PARAGRAPH or len(block.text) > 40):
@@ -105,6 +147,9 @@ def _extract_page_number(blocks: list[Block]) -> tuple[int | None, int | None]:
         if match:
             return int(match.group(1)), int(match.group(2))
     return None, None
+
+
+_FURNITURE = {BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER}
 
 
 def _fingerprint(blocks: list[Block], kind: BlockKind) -> str:
