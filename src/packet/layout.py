@@ -1,14 +1,15 @@
 """Layout signals for text-layer pages (GMA-217).
 
 ``read_lines`` turns a pdfium text page into positioned lines with font size and
-weight. ``layout_blocks`` turns those lines into Blocks the same way OCR pages get
-them: the largest text near the top is a TITLE, short bold or larger lines are
-HEADINGs, a bare number in the top or bottom band is a PAGE_NUMBER, and a line in a
-band set smaller than the body is a HEADER or FOOTER. Repetition across pages is
-left to ``FurnitureTagger`` (band lines get their own block, so a repeated band
-line is the page's first or last line). Every layout block carries its style in
-``extra`` (``size``, ``bold``, ``band``, ``top``) so later stages can compare
-templates, not just text.
+weight. ``layout_blocks`` turns those lines into Blocks the way OCR pages get them:
+the largest text near the top is a TITLE, short bold or larger lines are HEADINGs,
+and a labelled page number ("Page 3", "3 of 9", "- 3 -") in the top or bottom band
+is a PAGE_NUMBER. Anything that needs evidence from other pages (bare page
+numbers, running heads and feet) is left to ``FurnitureTagger``: each band line
+gets its own block at the page's first or last position, and the tagger tags it
+when its text or its template (font size and position) repeats on a nearby page.
+Every layout block carries its style in ``extra`` (``size``, ``bold``, ``band``,
+``top``, ``small``) so later stages can compare templates, not just text.
 """
 
 from __future__ import annotations
@@ -26,8 +27,9 @@ BAND = 0.08  # top / bottom fraction of the page height that holds furniture
 TITLE_RATIO = 1.3  # title font size vs body size
 HEADING_RATIO = 1.12
 TITLE_ZONE = 0.45  # a title starts in the top 45% of the page
-_PAGE_LABEL = re.compile(
-    r"^\s*(?:(?:page|p\.?)\s*)?\d{1,4}(?:\s*(?:of|/)\s*\d{1,4})?\s*$|^\s*[-–—]\s*\d{1,4}\s*[-–—]\s*$",
+_PAGE_LABELLED = re.compile(
+    r"^\s*(?:(?:page|p\.)\s*\d{1,4}(?:\s*(?:of|/)\s*\d{1,4})?|\d{1,4}\s*(?:of|/)\s*\d{1,4}"
+    r"|[-–—]\s*\d{1,4}\s*[-–—])\s*$",
     re.IGNORECASE,
 )
 
@@ -43,8 +45,9 @@ class TextLine:
     bold: bool
 
 
-def read_lines(textpage, page_height: float) -> list[TextLine]:
-    """Group a pdfium text page's characters into lines (top-down coordinates)."""
+def read_lines(textpage, box_top: float, box_left: float = 0.0) -> list[TextLine]:
+    """Group a pdfium text page's characters into lines, in content-stream order, with
+    coordinates measured from the crop box's top-left corner. Unrotated pages only."""
     raw = textpage.raw
     n = pdfium_c.FPDFText_CountChars(raw)
     lines: list[TextLine] = []
@@ -72,24 +75,31 @@ def read_lines(textpage, page_height: float) -> list[TextLine]:
             flush()
             last_mid = None
             continue
+        if not ch.isprintable():
+            continue  # soft-hyphen markers and other control characters
         pdfium_c.FPDFText_GetCharBox(raw, i, lft, rgt, btm, top)
         size = round(pdfium_c.FPDFText_GetFontSize(raw, i), 1)
-        t, b = page_height - top.value, page_height - btm.value
+        t, b = box_top - top.value, box_top - btm.value
         mid = (t + b) / 2
+        # Compare with the line's anchor (its first visible char), not the previous
+        # char, so superscripts and footnote markers do not chain into a new line.
         if ch.strip() and last_mid is not None and abs(mid - last_mid) > max(size, 1) * 0.6:
             flush()
+            last_mid = None
         chars.append(ch)
         if not ch.strip():
             continue
-        last_mid = mid
-        box = [min(box[0], lft.value), min(box[1], t), max(box[2], rgt.value), max(box[3], b)]
+        if last_mid is None:
+            last_mid = mid
+        x0, x1 = lft.value - box_left, rgt.value - box_left
+        box = [min(box[0], x0), min(box[1], t), max(box[2], x1), max(box[3], b)]
         sizes[size] += 1
         pdfium_c.FPDFText_GetFontInfo(raw, i, name, len(name), flags)
         weight = pdfium_c.FPDFText_GetFontWeight(raw, i)
-        if weight >= 600 or b"bold" in name.value.lower() or b"black" in name.value.lower():
+        fname = name.value.lower()
+        if weight >= 600 or any(k in fname for k in (b"bold", b"black", b"heavy", b"semibold", b"demi")):
             bolds += 1
     flush()
-    lines.sort(key=lambda ln: (round(ln.top), ln.x0))
     return lines
 
 
@@ -110,13 +120,19 @@ def layout_blocks(ref: PageRef, lines: list[TextLine]) -> list[Block]:
     biggest = max((ln.size for ln in content), default=0.0)
     title_size = biggest if body and biggest >= body * TITLE_RATIO else None
 
+    # Content keeps stream order (columns stay intact); band lines go to the page's
+    # first and last positions, where FurnitureTagger looks for furniture.
+    tops = sorted((ln for ln, t in zip(lines, in_top) if t), key=lambda ln: ln.top)
+    bottoms = sorted((ln for ln, b in zip(lines, in_bottom) if b), key=lambda ln: ln.top)
+    ordered = [(ln, True, False) for ln in tops] + [(ln, False, False) for ln in content]
+    ordered += [(ln, False, True) for ln in bottoms]
+
     groups: list[tuple[BlockKind, str | None, list[TextLine]]] = []
     title_done = False
-    for ln, t, b in zip(lines, in_top, in_bottom):
+    for ln, t, b in ordered:
         band = "top" if t else "bottom" if b else None
         if band:
-            kind = _band_kind(ln, body)
-            groups.append((kind, band, [ln]))
+            groups.append((_band_kind(ln), band, [ln]))
             continue
         if (title_size and not title_done and ln.size == title_size
                 and ln.top <= height * TITLE_ZONE):
@@ -150,17 +166,16 @@ def layout_blocks(ref: PageRef, lines: list[TextLine]) -> list[Block]:
             confidence=0.8,
             heading_level=0 if kind == BlockKind.TITLE else 1 if kind == BlockKind.HEADING else None,
             extra={"size": lead.size, "bold": lead.bold, "band": band, "top": round(lead.top, 1),
-                   "layout": True},
+                   "small": bool(body and lead.size < body * 0.95), "layout": True},
         ))
     return blocks
 
 
-def _band_kind(ln: TextLine, body: float) -> BlockKind:
-    if _PAGE_LABEL.match(ln.text):
-        return BlockKind.PAGE_NUMBER
-    if body and ln.size < body * 0.95 and len(ln.text) <= 120:
-        return BlockKind.HEADER if ln.top < 400 else BlockKind.FOOTER
-    return BlockKind.PARAGRAPH  # left to FurnitureTagger's repetition check
+def _band_kind(ln: TextLine) -> BlockKind:
+    """Only a labelled page number ("Page 3", "3 of 9", "- 3 -") is decided per page.
+    Bare numbers and running heads/feet are left as their own block for
+    FurnitureTagger, which needs corroboration from neighbouring pages."""
+    return BlockKind.PAGE_NUMBER if _PAGE_LABELLED.match(ln.text) else BlockKind.PARAGRAPH
 
 
 def _content_kind(ln: TextLine, body: float) -> BlockKind:

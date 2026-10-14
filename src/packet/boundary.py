@@ -85,10 +85,15 @@ class BoundaryDetector:
         prev_header = self._headers[-2]
         prev_style, style = self._header_styles[-2], self._header_styles[-1]
         same_template = prev_style is not None and prev_style == style
+        # A layout page with no running-head line at all after one that had it (a
+        # chapter opener drops its head) is an absence, not a new template.
+        # Only a small-type running head counts: a body-size repeated first line that
+        # stops (an inserted exhibit) is still a header change.
+        dropped = prev_style is not None and prev_style[2] and style is None and _is_layout(blocks)
         # With layout styles on both pages, a running head whose text changes but whose
         # template (font size, position) does not is a chapter head, not a new document.
         if (self._tagged_header[-2] and header and prev_header and header != prev_header
-                and not same_template):
+                and not same_template and not dropped):
             reasons.append("header_changed")
             score += W_HEADER_CHANGED
 
@@ -123,17 +128,30 @@ class BoundaryDetector:
         )
 
 
+def _head_candidate(b: Block) -> bool:
+    """A small top-band line FurnitureTagger may tag as a HEADER once its repeat is seen."""
+    x = b.extra or {}
+    return bool(x.get("layout") and x.get("band") == "top" and x.get("small"))
+
+
+def _is_layout(blocks: list[Block]) -> bool:
+    return any(b.extra.get("layout") for b in blocks)
+
+
 def _header_style(blocks: list[Block]) -> tuple | None:
-    """(font size, rounded top) of the page's first layout HEADER block, if any."""
+    """(font size, rounded top) of the page's running-head line: a layout HEADER, or a
+    small top-band line not tagged yet (its repeat may lie on a page not seen yet)."""
     for b in blocks:
-        if b.kind == BlockKind.HEADER and b.extra.get("layout"):
-            return (b.extra.get("size"), round(float(b.extra.get("top") or 0) / 4))
+        x = b.extra or {}
+        if x.get("layout") and (b.kind == BlockKind.HEADER
+                                or (x.get("band") == "top" and x.get("small"))):
+            return (x.get("size"), round(float(x.get("top") or 0) / 4), bool(x.get("small")))
     return None
 
 
 def _title_position(blocks: list[Block]) -> str | None:
     """``top`` when the first non-furniture block is a TITLE, ``lower`` for any other TITLE."""
-    body = [b for b in blocks if b.kind not in _FURNITURE]
+    body = [b for b in blocks if b.kind not in _FURNITURE and not _head_candidate(b)]
     if body and body[0].kind == BlockKind.TITLE:
         return "top"
     return "lower" if any(b.kind == BlockKind.TITLE for b in body) else None

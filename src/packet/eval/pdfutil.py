@@ -62,9 +62,11 @@ def write_text_pdf(path: Path, pages: list[list[str]]) -> Path:
     return path
 
 
-def write_layout_pdf(path: Path, pages: list[list[tuple]], size: tuple[int, int] = (612, 792)) -> Path:
-    """Born-digital PDF with positioned lines. Each line is ``(text, font_size, y_top)`` or
-    ``(text, font_size, y_top, bold)``; ``y_top`` is measured down from the top edge."""
+def write_layout_pdf(path: Path, pages: list[list[tuple]], size: tuple[int, int] = (612, 792),
+                     rotate: int = 0, origin: tuple[int, int] = (0, 0)) -> Path:
+    """Born-digital PDF with positioned lines. Each line is ``(text, font_size, y_top)``,
+    optionally followed by ``bold`` and ``x``; ``y_top`` is measured down from the top
+    edge of the (unrotated) media box, which starts at ``origin`` and has ``/Rotate``."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     w, h = size
@@ -84,12 +86,15 @@ def write_layout_pdf(path: Path, pages: list[list[tuple]], size: tuple[int, int]
         for spec in lines:
             text, fs, y_top = spec[:3]
             font = "F2" if len(spec) > 3 and spec[3] else "F1"
+            x = spec[4] if len(spec) > 4 else 50
             safe = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-            cmds.append(f"BT /{font} {fs} Tf 50 {h - y_top - fs:.1f} Td ({safe}) Tj ET")
+            cmds.append(f"BT /{font} {fs} Tf {origin[0] + x} {origin[1] + h - y_top - fs:.1f} Td "
+                        f"({safe}) Tj ET")
         stream = ("\n".join(cmds) + "\n").encode("latin-1")
         cid = add(f"<< /Length {len(stream)} >>\nstream\n".encode("latin-1") + stream + b"\nendstream")
         page_ids.append(add(
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] "
+            f"<< /Type /Page /Parent 2 0 R /Rotate {rotate} "
+            f"/MediaBox [{origin[0]} {origin[1]} {origin[0] + w} {origin[1] + h}] "
             f"/Resources << /Font << /F1 {reg} 0 R /F2 {bold} 0 R >> >> /Contents {cid} 0 R >>"
         ))
     kids = " ".join(f"{i} 0 R" for i in page_ids)
