@@ -99,8 +99,10 @@ class BoundaryDetector:
             reasons.append("title_block")
             score += W_TITLE
 
-        # "sequence_completed" refines the reset, it is not independent evidence.
-        independent = [r for r in reasons if r != "sequence_completed"]
+        # "sequence_completed" refines the reset, it is not independent evidence, and a
+        # title lower on the page is too common inside documents (OCR labels table and
+        # section captions as titles) to count toward a combination.
+        independent = [r for r in reasons if r not in {"sequence_completed", "title_block"}]
         if len(independent) >= 2:
             score = max(score, COMBINED)
         if "page_number_reset" not in reasons:

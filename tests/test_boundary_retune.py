@@ -139,3 +139,13 @@ def test_unnumbered_cover_then_two_at_packet_start_is_harmless():
     from packet.pipeline import Pipeline  # noqa: F401  (decision at page 0 never closes a doc)
     d = _decide([PageObs(0, None, None), PageObs(1, None, 2), PageObs(2, None, 3)])
     assert not d[1].split and not d[2].split
+
+
+def test_lower_title_does_not_count_toward_combination():
+    # e2e p11: an OCR running header changed ("P 15" -> "P 39") and a mid-page title
+    # on the next page of the same report must not combine into a split.
+    det = BoundaryDetector()
+    det.observe(_ref(0), [_b(0, "P 15", BlockKind.HEADER), _b(0, "body")])
+    sig = det.observe(_ref(1), [_b(1, "P 39", BlockKind.HEADER), _b(1, "body"), _b(1, "Notes", BlockKind.TITLE)])
+    assert sig is not None and "title_block" in sig.reason
+    assert not _commits(sig)
