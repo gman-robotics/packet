@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ctypes
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 
@@ -75,8 +76,10 @@ def read_lines(textpage, box_top: float, box_left: float = 0.0) -> list[TextLine
             flush()
             last_mid = None
             continue
-        if not ch.isprintable():
-            continue  # soft-hyphen markers and other control characters
+        if ch.isspace():
+            ch = " " if ch not in "\r\n" else ch  # NBSP, tabs, thin spaces separate words
+        elif unicodedata.category(ch) in ("Cc", "Cf"):
+            continue  # pdfium soft-hyphen markers and other control/format characters
         pdfium_c.FPDFText_GetCharBox(raw, i, lft, rgt, btm, top)
         size = round(pdfium_c.FPDFText_GetFontSize(raw, i), 1)
         t, b = box_top - top.value, box_top - btm.value

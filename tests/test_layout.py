@@ -178,3 +178,10 @@ def test_same_template_header_text_change_is_not_header_changed():
     d.observe(PageRef(packet_id="p", index=2), [hb(2, "Part B", 8), body(2)])
     sig = d.observe(PageRef(packet_id="p", index=3), [hb(3, "OTHER CO", 10), body(3)])
     assert sig is not None and "header_changed" in sig.reason
+
+
+def test_unicode_spaces_still_separate_words(tmp_path):
+    pdf = write_layout_pdf(tmp_path / "s.pdf", [[("Section\u00a04 applies", 11, 100)]])
+    with PdfPageSource(pdf) as src:
+        text = src.lines_for(0)[0].text
+    assert "Section 4" in text
