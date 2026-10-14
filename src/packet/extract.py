@@ -74,14 +74,22 @@ def _guess_kind(text: str, maybe_title: bool) -> tuple[BlockKind, int | None]:
     return BlockKind.PARAGRAPH, None
 
 
+def call_extractor(ext, ref: PageRef, text: str, image=None) -> list[Block]:
+    """Call ``ext``; image-based extractors (``needs_image = True``) also get the lazy
+    page-image thunk. Text extractors keep the 2-argument signature and never render."""
+    if getattr(ext, "needs_image", False):
+        return ext.extract(ref, text, image=image)
+    return ext.extract(ref, text)
+
+
 class Router:
     """Send a page to the first extractor that claims it."""
 
     def __init__(self, extractors: list[Extractor]):
         self.extractors = extractors
 
-    def extract(self, ref: PageRef, text: str) -> list[Block]:
+    def extract(self, ref: PageRef, text: str, image=None) -> list[Block]:
         for ext in self.extractors:
             if ext.supports(ref.page_class):
-                return ext.extract(ref, text)
+                return call_extractor(ext, ref, text, image)
         return []

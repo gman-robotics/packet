@@ -1,0 +1,108 @@
+"""Pure mappers from OCR engine output to Packet ``Block``s (no model imports)."""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from packet.types import BBox, Block, PageRef, SourceKind
+from packet.types import BlockKind as K
+
+LIGHTON_LABELS: dict[str, K] = {
+    "text": K.PARAGRAPH, "title": K.HEADING, "list": K.LIST_ITEM, "header": K.HEADER,
+    "footer": K.FOOTER, "page_number": K.PAGE_NUMBER, "footnote": K.PARAGRAPH,
+    "caption": K.CAPTION, "formula": K.FORMULA, "code": K.CODE, "table": K.TABLE,
+    "image": K.FIGURE, "chart": K.FIGURE, "header_image": K.HEADER, "footer_image": K.FOOTER,
+    "aside_text": K.PARAGRAPH,
+}
+PADDLE_LABELS: dict[str, K] = {
+    "doc_title": K.TITLE, "paragraph_title": K.HEADING, "text": K.PARAGRAPH, "content": K.PARAGRAPH,
+    "abstract": K.PARAGRAPH, "header": K.HEADER, "footer": K.FOOTER, "number": K.PAGE_NUMBER,
+    "table": K.TABLE, "image": K.FIGURE, "chart": K.FIGURE, "figure_title": K.CAPTION,
+    "chart_title": K.CAPTION, "table_title": K.CAPTION, "formula": K.FORMULA,
+    "display_formula": K.FORMULA, "inline_formula": K.FORMULA, "seal": K.STAMP, "algorithm": K.CODE,
+    "footnote": K.PARAGRAPH, "vision_footnote": K.PARAGRAPH, "aside_text": K.PARAGRAPH,
+    "reference": K.PARAGRAPH, "reference_content": K.PARAGRAPH, "header_image": K.HEADER,
+    "footer_image": K.FOOTER,
+}
+_TAG = re.compile(r"!\[([a-z_]+)(\+?)\]\((\d+),(\d+),(\d+),(\d+)\)[ \t]*\n?")
+_HASHES = re.compile(r"^(#+)\s*")
+
+
+def _page_size(ref: PageRef) -> tuple[float, float]:
+    return float(ref.width or 612.0), float(ref.height or 792.0)
+
+
+def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
+    """Grounding output: ``![label](x0,y0,x1,y1)`` (0-1000 page coords) before each block.
+    Falls back to markdown paragraphs when the model answered without tags."""
+    raw = raw or ""
+    wpt, hpt = _page_size(ref)
+    tags = list(_TAG.finditer(raw))
+    if not tags:
+        return _markdown_blocks(raw, ref)
+    out: list[Block] = []
+    for i, m in enumerate(tags):
+        end = tags[i + 1].start() if i + 1 < len(tags) else len(raw)
+        text = raw[m.end():end].strip()
+        label, cont = m.group(1), m.group(2) == "+"
+        kind = LIGHTON_LABELS.get(label, K.UNKNOWN)
+        level = None
+        if label == "title":
+            h = _HASHES.match(text)
+            level = len(h.group(1)) if h else 1
+            text = _HASHES.sub("", text, count=1)
+            if level == 1:
+                kind = K.TITLE
+        x0, y0, x1, y1 = (int(m.group(j)) for j in range(3, 7))
+        extra: dict[str, Any] = {"label": label, "continuation": cont, "engine": "lighton"}
+        if kind == K.TABLE or label == "chart":
+            extra["html"] = text
+        out.append(Block(
+            id=f"{ref.packet_id}-p{ref.index}-o{i}", page=ref.index, kind=kind, text=text,
+            reading_order=i, source=SourceKind.VLM, confidence=0.9, heading_level=level,
+            bbox=BBox(page=ref.index, x0=x0 / 1000 * wpt, y0=y0 / 1000 * hpt,
+                      x1=x1 / 1000 * wpt, y1=y1 / 1000 * hpt),
+            extra=extra,
+        ))
+    return out
+
+
+def _markdown_blocks(raw: str, ref: PageRef) -> list[Block]:
+    out: list[Block] = []
+    parts = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
+    for i, p in enumerate(parts):
+        kind, level = K.PARAGRAPH, None
+        h = _HASHES.match(p)
+        if h:
+            level = len(h.group(1))
+            kind = K.TITLE if level == 1 else K.HEADING
+            p = _HASHES.sub("", p, count=1)
+        elif p.startswith(("<table", "|")):
+            kind = K.TABLE
+        elif re.match(r"^([-*•]|\d+[.)])\s", p):
+            kind = K.LIST_ITEM
+        out.append(Block(id=f"{ref.packet_id}-p{ref.index}-o{i}", page=ref.index, kind=kind, text=p,
+                         reading_order=i, source=SourceKind.VLM, confidence=0.8,
+                         heading_level=level, extra={"engine": "lighton"}))
+    return out
+
+
+def parse_paddle_blocks(raw: list[dict[str, Any]], ref: PageRef, dpi: float) -> list[Block]:
+    """PaddleOCR-VL ``parsing_res_list`` entries (label, pixel bbox, text) -> Blocks."""
+    s = 72.0 / dpi
+    out: list[Block] = []
+    for i, b in enumerate(raw):
+        label = b.get("label") or ""
+        box = b.get("bbox")
+        bbox = None
+        if box:
+            x0, y0, x1, y1 = box
+            bbox = BBox(page=ref.index, x0=x0 * s, y0=y0 * s, x1=x1 * s, y1=y1 * s)
+        out.append(Block(
+            id=f"{ref.packet_id}-p{ref.index}-o{i}", page=ref.index,
+            kind=PADDLE_LABELS.get(label, K.UNKNOWN), text=(b.get("text") or "").strip(),
+            reading_order=i, source=SourceKind.VLM, confidence=0.85, bbox=bbox,
+            extra={"label": label, "engine": "paddle"},
+        ))
+    return out
