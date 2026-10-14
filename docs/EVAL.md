@@ -174,7 +174,9 @@ output, not a fixture source, and is gitignored.
    identical), and recovery would depend on `page_number_reset` alone —
    which, at its solo score of `0.45`, sits *below*
    `boundary_min_confidence` (`0.55`), so this fixture is designed to be
-   the hardest one for boundary recall.
+   the hardest one for boundary recall. (With look-ahead commit a 0.45
+   reset can still split when the following page continues the new
+   numbering, so recall here no longer depends on the header signal.)
    In today's v0 this is a documentation caveat, not yet a clean
    demonstration of that fail mode: `BoundaryDetector`'s header signal
    (`src/packet/boundary.py::_fingerprint`) only ever inspects

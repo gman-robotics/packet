@@ -23,12 +23,16 @@ class BoundaryDetector:
     """Generic, domain-free boundary hints."""
 
     lookback: int = 3
+    last_page_number: int | None = None
+    last_page_total: int | None = None
     _page_nums: list[tuple[int, int | None]] = field(default_factory=list)
     _headers: list[str] = field(default_factory=list)
     _sizes: list[tuple[float | None, float | None, int]] = field(default_factory=list)
 
     def observe(self, ref: PageRef, blocks: list[Block]) -> BoundarySignal | None:
         page_num = _extract_page_number(blocks)
+        self.last_page_number = page_num
+        self.last_page_total = _extract_page_total(blocks)
         header = _fingerprint(blocks, BlockKind.HEADER) or _leading_fingerprint(blocks)
         self._page_nums.append((ref.index, page_num))
         self._headers.append(header)
@@ -81,6 +85,18 @@ def _extract_page_number(blocks: list[Block]) -> int | None:
         match = _PAGE_NUM.search(block.text)
         if match:
             return int(match.group(1))
+    return None
+
+
+def _extract_page_total(blocks: list[Block]) -> int | None:
+    """The ``N`` of "x of N" on the same block _extract_page_number would use."""
+    num = _extract_page_number(blocks)
+    if num is None:
+        return None
+    for block in blocks:
+        match = _PAGE_NUM.search(block.text)
+        if match and int(match.group(1)) == num:
+            return int(match.group(2))
     return None
 
 

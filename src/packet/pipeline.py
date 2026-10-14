@@ -11,6 +11,7 @@ from packet.classify import Classifier, HeuristicClassifier
 from packet.domain import DomainAdapter, apply_domains
 from packet.events import Event
 from packet.extract import Extractor, NativeTextExtractor, Router
+from packet.lookahead import Decision, LookaheadSplitter, PageObs
 from packet.source import PdfPageSource
 from packet.types import Block, LogicalDocument, Packet
 
@@ -19,6 +20,10 @@ from packet.types import Block, LogicalDocument, Packet
 class PipelineConfig:
     split_on_boundary: bool = True
     boundary_min_confidence: float = 0.55
+    # Look-ahead commit: signals >= boundary_commit_confidence split at once; weaker ones
+    # wait up to lookahead_window pages for page-number evidence. 0 = v0 eager commit.
+    boundary_commit_confidence: float = 0.75
+    lookahead_window: int = 2
     domain_adapters: list[DomainAdapter] = field(default_factory=list)
 
 
@@ -44,9 +49,13 @@ class Pipeline:
     def stream(self, path: str | Path) -> Iterator[Event]:
         self._packet = None
         detector = BoundaryDetector()
-        current_blocks: list[Block] = []
-        current_start = 0
-        doc_index = 0
+        splitter = LookaheadSplitter(
+            window=self.config.lookahead_window,
+            commit=self.config.boundary_commit_confidence,
+            fallback=self.config.boundary_min_confidence,
+        )
+        state = _DocState()
+        pending: dict[int, list[Block]] = {}
 
         with PdfPageSource(path) as source:
             packet = Packet(id=source.packet_id, origin=source.origin())
@@ -64,38 +73,44 @@ class Pipeline:
                     yield Event.block_emitted(block)
 
                 signal = detector.observe(classified, blocks)
-                should_split = (
-                    self.config.split_on_boundary
-                    and signal is not None
-                    and signal.confidence >= self.config.boundary_min_confidence
-                    and current_blocks
-                )
                 if signal is not None:
                     yield Event.boundary_proposed(
                         signal.after_page, signal.confidence, signal.reason
                     )
+                pending[classified.index] = blocks
+                obs = PageObs(classified.index, signal, detector.last_page_number,
+                              detector.last_page_total)
+                for decision in splitter.push(obs):
+                    yield from self._apply(packet, state, decision, pending.pop(decision.page))
 
-                if should_split:
-                    doc = self._close_document(
-                        packet, doc_index, current_blocks, current_start, classified.index - 1
-                    )
-                    yield Event.document_closed(doc)
-                    doc_index += 1
-                    current_blocks = []
-                    current_start = classified.index
+            for decision in splitter.flush():
+                yield from self._apply(packet, state, decision, pending.pop(decision.page))
 
-                if not current_blocks:
-                    yield Event.document_opened(_doc_id(packet.id, doc_index), classified.index)
-                current_blocks.extend(blocks)
-
-            if current_blocks or not packet.documents:
+            if state.blocks or not packet.documents:
                 last_page = max(source.page_count - 1, 0)
                 doc = self._close_document(
-                    packet, doc_index, current_blocks, current_start, last_page
+                    packet, state.index, state.blocks, state.start, last_page
                 )
                 yield Event.document_closed(doc)
 
             yield Event.packet_closed(packet.id, packet.document_count())
+
+    def _apply(
+        self, packet: Packet, state: _DocState, decision: Decision, blocks: list[Block]
+    ) -> Iterator[Event]:
+        if self.config.split_on_boundary and decision.split and state.blocks:
+            doc = self._close_document(
+                packet, state.index, state.blocks, state.start, decision.page - 1
+            )
+            yield Event.document_closed(doc)
+            state.index += 1
+            state.blocks = []
+            state.start = decision.page
+            state.opened = False
+        if not state.opened:
+            yield Event.document_opened(_doc_id(packet.id, state.index), decision.page)
+            state.opened = True
+        state.blocks.extend(blocks)
 
     def _close_document(
         self,
@@ -122,6 +137,14 @@ def _lazy_render(source: PdfPageSource, index: int):
         return cache[0]
 
     return thunk
+
+
+@dataclass
+class _DocState:
+    index: int = 0
+    start: int = 0
+    opened: bool = False
+    blocks: list[Block] = field(default_factory=list)
 
 
 def _doc_id(packet_id: str, index: int) -> str:

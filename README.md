@@ -74,11 +74,12 @@ title-like block) cross a confidence threshold. Pass `--no-split` on the
 CLI (or set `split_on_boundary=False`) to force single-document behavior
 instead.
 
-That splitting is **eager-commit, not look-ahead**: a document closes the
-moment its boundary signal clears threshold, with no confirmation from
-later pages. See `DESIGN.md` for the accepted fail modes that follow from
-that (false splits on mid-document titles, false merges on shared headers,
-flush-at-EOF for the tail). Real backend adapters (Docling, pdf-inspector,
+That splitting is **look-ahead commit**: a strong boundary signal (>= 0.75)
+splits at once; a mid-confidence one waits up to 2 pages for page-number
+evidence (new numbering continues: split; old numbering resumes: the page
+was an insert, no split) before falling back to the 0.55 threshold.
+`PipelineConfig(lookahead_window=0)` restores the old eager commit. See
+`DESIGN.md` → Boundary policy for the remaining fail modes. Real backend adapters (Docling, pdf-inspector,
 PaddleOCR-VL) are stubs today — see `DESIGN.md`'s Escalation policy
 section — so scanned (`SCAN`-classified) pages currently come back empty
 rather than OCR'd.
