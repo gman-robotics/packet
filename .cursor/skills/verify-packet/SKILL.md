@@ -66,7 +66,7 @@ Proof standards:
 - Exercise the **public CLI** (`packet inspect|parse|eval|eval-plan`), not internal Python imports, unless the feature map explicitly allows a library-only path.
 - Capture **command, stdout, stderr, and exit code** for CLI proof (`control-packet cli --` files).
 - For `parse`, also keep the **output JSON file** the user asked for (`-o`); assert document count and page count in the file match CLI stderr summary when written to a path.
-- For `eval`, require exit code `0` and a `PASS` gate for every builtin fixture row (or JSON `passed` equivalents with `--json`).
+- For `eval`, require exit code `0`, a `PASS` mark on every builtin fixture row, and a final `GATE PASS` line. With `--json`, stdout is an object `{"fixtures": [...], "gate": {...}}`: require `.gate.passed == true` and `.fixtures[].gate_pass == true` for every fixture.
 - Record `feature_id` and the exact fixture or input path in a one-line `proof.txt` beside the captures:
 
 ```bash
