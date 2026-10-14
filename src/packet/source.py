@@ -63,6 +63,17 @@ class PdfPageSource:
         finally:
             page.close()
 
+    def lines_for(self, index: int):
+        """Positioned text lines with font size and weight (``packet.layout.TextLine``)."""
+        from packet.layout import read_lines
+
+        page = self._doc[index]
+        try:
+            tp = page.get_textpage()
+            return read_lines(tp, page.get_size()[1]) if tp else []
+        finally:
+            page.close()
+
     def render(self, index: int, longest_px: int = 1540):
         """Render page ``index`` to a PIL image whose longest side is ``longest_px``
         (LightOnOCR's recommended input size; about 140 DPI for US Letter)."""

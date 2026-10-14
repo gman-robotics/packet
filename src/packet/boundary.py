@@ -48,6 +48,7 @@ class BoundaryDetector:
     _page_totals: list[int | None] = field(default_factory=list)
     _tagged_header: list[bool] = field(default_factory=list)
     _headers: list[str] = field(default_factory=list)
+    _header_styles: list[tuple | None] = field(default_factory=list)
     _sizes: list[tuple[float | None, float | None, int]] = field(default_factory=list)
 
     def observe(self, ref: PageRef, blocks: list[Block]) -> BoundarySignal | None:
@@ -62,6 +63,7 @@ class BoundaryDetector:
         self._tagged_header.append(bool(_fingerprint(blocks, BlockKind.HEADER)))
         self._page_nums.append((ref.index, page_num))
         self._headers.append(header)
+        self._header_styles.append(_header_style(blocks))
         self._sizes.append((ref.width, ref.height, ref.rotation))
 
         if ref.index == 0:
@@ -81,7 +83,12 @@ class BoundaryDetector:
                 score += W_SEQUENCE_COMPLETED
 
         prev_header = self._headers[-2]
-        if self._tagged_header[-2] and header and prev_header and header != prev_header:
+        prev_style, style = self._header_styles[-2], self._header_styles[-1]
+        same_template = prev_style is not None and prev_style == style
+        # With layout styles on both pages, a running head whose text changes but whose
+        # template (font size, position) does not is a chapter head, not a new document.
+        if (self._tagged_header[-2] and header and prev_header and header != prev_header
+                and not same_template):
             reasons.append("header_changed")
             score += W_HEADER_CHANGED
 
@@ -114,6 +121,14 @@ class BoundaryDetector:
             confidence=min(score, 0.95),
             reason="+".join(reasons),
         )
+
+
+def _header_style(blocks: list[Block]) -> tuple | None:
+    """(font size, rounded top) of the page's first layout HEADER block, if any."""
+    for b in blocks:
+        if b.kind == BlockKind.HEADER and b.extra.get("layout"):
+            return (b.extra.get("size"), round(float(b.extra.get("top") or 0) / 4))
+    return None
 
 
 def _title_position(blocks: list[Block]) -> str | None:

@@ -70,7 +70,8 @@ class Pipeline:
 
                 blocks = tagger.tag_page(
                     classified,
-                    self.router.extract(classified, text, image=_lazy_render(source, classified.index)),
+                    self.router.extract(classified, text, image=_lazy_render(source, classified.index),
+                                       layout=_lazy_lines(source, classified.index)),
                 )
                 for block in blocks:
                     yield Event.block_emitted(block)
@@ -134,6 +135,10 @@ class Pipeline:
         doc = apply_domains(doc, self.config.domain_adapters)
         packet.documents.append(doc)
         return doc
+
+
+def _lazy_lines(source: PdfPageSource, index: int):
+    return lambda: source.lines_for(index)
 
 
 def _lazy_render(source: PdfPageSource, index: int):
