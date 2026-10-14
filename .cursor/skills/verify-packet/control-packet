@@ -302,19 +302,7 @@ cmd_materialize_fixtures() {
   mkdir -p "$CACHE_DIR"
   local pkt
   pkt="$(packet_bin)" || return 1
-  # packet eval writes builtin PDFs before gates and exits 1 when a gate fails.
-  # Inspect and parse only need the PDFs, so a gate failure is not a materialize failure.
-  set +e
   "$pkt" eval --dir "$CACHE_DIR" >/dev/null
-  local ec=$?
-  set -e
-  local name
-  for name in text-layer multi-doc shared-header scan; do
-    if [[ ! -f "$CACHE_DIR/builtin/${name}.pdf" ]]; then
-      echo "FAIL: packet eval did not write builtin PDFs (exit ${ec})" >&2
-      return 1
-    fi
-  done
   echo "cache_dir=$CACHE_DIR"
   ls -1 "$CACHE_DIR/builtin/"*.pdf 2>/dev/null || true
 }
