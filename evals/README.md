@@ -10,6 +10,7 @@ and can plan DocLayNet concatenations from a local catalog.
 | built-in | generated PDFs (`text-layer`, `multi-doc`, `shared-header`, `scan`) | `packet-builtin` | no |
 | develop | DocLayNet train/val pages | layout F1 (internal) | yes (train only) |
 | synth packets | concatenate DocLayNet **documents** from val | `packet-dlnet-synth` | no |
+| whole-doc packets | whole public PDFs named by DocLayNet, joined | `packet-dlnet-whole` | no |
 | frozen | OmniDocBench, olmOCR-bench | public parse scores | **never** |
 
 ## Commands
@@ -30,6 +31,25 @@ prints `GATE PASS` and exits 0.
 ```bash
 PACKET_EVAL_DIR=/tmp/pkt packet eval
 ```
+
+Whole-document packets (`packet-dlnet-whole`, GMA-216):
+
+```bash
+packet eval --set dlnet-whole                     # gate: macro F1 >= 0.6, no false-OCR
+packet eval --set dlnet-whole --data-dir /data/dlnet-whole --json
+```
+
+DocLayNet only ships sampled pages, so page numbers never restart in joined
+samples. `evals/dlnet_whole.json` resolves DocLayNet `scientific_articles`
+document names (from the DocLayNet-small sample) to the whole arXiv PDF whose
+page count equals DocLayNet's `num_pages`, pinned by URL and sha256. The first
+run downloads them (35 PDFs, ~20 MB) to `~/.cache/packet/dlnet-whole`; the
+packets are then joined with a seeded plan (13 packets, 2-4 docs each).
+Nothing third-party is committed. Licenses: DocLayNet labels are
+CDLA-Permissive-1.0; each PDF stays under its arXiv license (recorded per doc
+in the manifest; all are arXiv nonexclusive-distrib 1.0), which is why the
+files are fetched, never vendored. Limitation: one category (scientific
+articles); other DocLayNet categories have no stable public source URL yet.
 
 DocLayNet extras (optional):
 

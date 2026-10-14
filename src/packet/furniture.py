@@ -59,6 +59,7 @@ class _Edges:
     labelled_pn: bool  # bottom is "Page 3", "3 of 9", "- 3 -", ...
     bare_n: int | None  # bottom is a bare number (needs corroboration)
     footer: str  # footer candidate (bottom, or the line above a page number)
+    top_bare_n: int | None = None  # top is a bare number (running-head page numbers)
 
 
 @dataclass
@@ -76,7 +77,8 @@ class FurnitureTagger:
         bare = None if labelled else bare_number(lines[-1])
         numbered = labelled or bare is not None
         footer = (lines[-2] if len(lines) > 2 else "") if numbered else lines[-1]
-        self._edges[ref.index] = _Edges(lines[0], lines[-1], labelled, bare, footer)
+        self._edges[ref.index] = _Edges(lines[0], lines[-1], labelled, bare, footer,
+                                        bare_number(lines[0]))
         return self._apply(ref.index, [b.model_copy(deep=True) for b in blocks])
 
     def finalize(self, blocks: list[Block]) -> list[Block]:
@@ -106,17 +108,21 @@ class FurnitureTagger:
                 return True
         return False
 
-    def _bare_pn_ok(self, page: int, e: _Edges) -> bool:
+    def _bare_pn_ok(self, page: int, e: _Edges, edge: str = "bottom") -> bool:
         """A bare number is a page number if it equals the page position, or a
-        neighbouring page also ends in a bare number offset by the page distance."""
-        if e.bare_n is None:
+        neighbouring page carries a bare number on the same edge offset by the page
+        distance."""
+        def num(x: _Edges) -> int | None:
+            return x.bare_n if edge == "bottom" else x.top_bare_n
+
+        n = num(e)
+        if n is None:
             return False
-        if e.bare_n == page + 1:
+        if n == page + 1:
             return True
         for other in range(page - self.lookback, page + self.lookback + 1):
             o = self._edges.get(other)
-            if (other != page and o is not None and o.bare_n is not None
-                    and o.bare_n - e.bare_n == other - page):
+            if other != page and o is not None and num(o) is not None and num(o) - n == other - page:
                 return True
         return False
 
@@ -127,7 +133,9 @@ class FurnitureTagger:
         if e.footer and self._repeats(page, lambda x: _footer_key(x.footer), _footer_key(e.footer)):
             blocks = _tag_edge(blocks, "bottom", e.footer, BlockKind.FOOTER)
         # Top and footer are always different lines, so one letterhead can be both.
-        if self._repeats(page, lambda x: x.top, e.top):
+        if self._bare_pn_ok(page, e, "top"):
+            blocks = _tag_edge(blocks, "top", e.top, BlockKind.PAGE_NUMBER)
+        elif self._repeats(page, lambda x: x.top, e.top):
             blocks = _tag_edge(blocks, "top", e.top, BlockKind.HEADER)
         for order, b in enumerate(blocks):
             b.reading_order = order

@@ -81,8 +81,16 @@ class LookaheadSplitter:
             if self.window == 0:
                 d = (Decision(o.index, True, "eager") if conf >= self.fallback
                      else Decision(o.index, False, "below_threshold"))
-            elif conf < self.propose:
+            elif conf < self.propose and o.page_num is not None:
                 d = Decision(o.index, False, "no_signal")
+            elif conf < self.propose:
+                # Unnumbered page with no signal: it may still be the unnumbered
+                # first page of a new document, which only later pages can show.
+                if final or len(self._obs) - 1 >= self.window:
+                    d = (Decision(o.index, True, "implied_page_one") if self._implied_page_one(o)
+                         else Decision(o.index, False, "no_signal"))
+                else:
+                    break
             elif conf >= self.commit:
                 d = Decision(o.index, True, "high_confidence")
             elif final or len(self._obs) - 1 >= self.window:
@@ -120,9 +128,28 @@ class LookaheadSplitter:
             return gap >= 1 and 1 <= num <= gap + 1
         return s.num < num <= s.num + gap
 
+    def _implied_page_one(self, o: PageObs) -> bool:
+        """``o`` is unnumbered and the first later numbered page in the window puts it
+        at page 1 of a new sequence (``num(q) - k == 1``) that does not continue the
+        current one."""
+        if o.page_num is not None:
+            return False
+        for k in range(1, self.window + 1):
+            if k >= len(self._obs):
+                return False
+            q = self._obs[k]
+            if q.page_num is None:
+                continue
+            if self._continues(q.page_num, q.page_total, q.index):
+                return False
+            return q.page_num - k == 1 and (self._seq is None or self._seq.num is not None)
+        return False
+
     def _decide_mid(self, o: PageObs) -> Decision:
         if self._continues(o.page_num, o.page_total, o.index):
             return Decision(o.index, False, "continues_sequence")
+        if self._implied_page_one(o):
+            return Decision(o.index, True, "implied_page_one")
         for k in range(1, self.window + 1):
             if k >= len(self._obs):
                 break

@@ -11,6 +11,9 @@ from packet.source import PdfPageSource
 from packet.types import Packet
 
 DEFAULT_MIN_F1 = 1.0
+# (per-fixture, macro) boundary-F1 floors when the CLI flags are not given.
+SET_FLOORS = {"builtin": (DEFAULT_MIN_F1, None), "dlnet-whole": (0.0, 0.6)}
+DEFAULT_WHOLEDOC_CACHE = Path.home() / ".cache" / "packet" / "dlnet-whole"
 
 
 @dataclass
@@ -96,6 +99,18 @@ def run_fixture(fixture: NamedFixture, pipeline: Pipeline | None = None) -> Eval
 
 def run_named_fixtures(root: Path | None = None, pipeline: Pipeline | None = None) -> list[EvalResult]:
     return [run_fixture(fx, pipeline) for fx in build_builtin(root)]
+
+
+def run_dlnet_whole(
+    data_dir: Path, root: Path | None = None, pipeline: Pipeline | None = None
+) -> list[EvalResult]:
+    """``packet-dlnet-whole``: download (sha256-pinned) and join whole docs, then score."""
+    from packet.eval import wholedoc
+
+    m = wholedoc.load_manifest()
+    wholedoc.fetch(m, cache=data_dir)
+    out = (root or Path(".packet-eval")) / "dlnet-whole"
+    return [run_fixture(fx, pipeline) for fx in wholedoc.build_fixtures(m, data_dir, out)]
 
 
 def results_as_dict(results: list[EvalResult], min_f1: float = DEFAULT_MIN_F1) -> list[dict]:

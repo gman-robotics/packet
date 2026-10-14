@@ -1,0 +1,329 @@
+{
+ "name": "packet-dlnet-whole",
+ "version": 1,
+ "seed": 20261014,
+ "docs_per_packet": [
+  2,
+  4
+ ],
+ "source": "DocLayNet v1 scientific_articles doc names (DocLayNet-small sample, CDLA-Permissive-1.0) resolved to the whole arXiv PDF whose page count equals DocLayNet num_pages",
+ "doclaynet": "https://huggingface.co/datasets/pierreguillou/DocLayNet-small (CDLA-Permissive-1.0)",
+ "license_note": "DocLayNet labels: CDLA-Permissive-1.0. The PDFs themselves are arXiv-hosted under each paper's license (all listed here: arXiv nonexclusive-distrib 1.0). They are downloaded at eval time to a local cache and never committed or redistributed.",
+ "docs": [
+  {
+   "doclaynet_name": "1001.0011.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.0011v2",
+   "file": "1001.0011v2.pdf",
+   "pages": 5,
+   "sha256": "f9cbc756b0fa324c5e58a6e6d5e26a481c4a6a65384e556f6cb5bf4db12065c2",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.0123.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.0123v1",
+   "file": "1001.0123v1.pdf",
+   "pages": 8,
+   "sha256": "09c0a76642e86fcad828dffb570c8de80c34bbbd805c10fb4e1ae4151b6e1fc8",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.0187.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.0187v1",
+   "file": "1001.0187v1.pdf",
+   "pages": 6,
+   "sha256": "fcf771fa52d6354b467be9a843a74937e67362ea7b38873dd574f40d4751fa1e",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.0266.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.0266v2",
+   "file": "1001.0266v2.pdf",
+   "pages": 11,
+   "sha256": "c8bdcf4339ee76ae9b10e5c1a965fd7c3575ce4eeb03c16b82d2b9173dd0e13a",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.0471.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.0471v1",
+   "file": "1001.0471v1.pdf",
+   "pages": 3,
+   "sha256": "54435a68cebdde88e8e3fe04ee2b92812f508d6169e13df13775bf31f02bef01",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.0481.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.0481v2",
+   "file": "1001.0481v2.pdf",
+   "pages": 8,
+   "sha256": "57fb966b7d015acb70a9ed80b12724dedb6fbd52b717b89a11ee4acff24716cd",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.0652.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.0652v1",
+   "file": "1001.0652v1.pdf",
+   "pages": 10,
+   "sha256": "9da7201d4fad5131ea69685715336fa2a1e37dd685460377e2b1b57b672a8df5",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.0957.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.0957v1",
+   "file": "1001.0957v1.pdf",
+   "pages": 7,
+   "sha256": "690382d1d4fdfff8a6659f88c6c7470e91a218ee0d688d3bf800df841448af71",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.1102.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.1102v2",
+   "file": "1001.1102v2.pdf",
+   "pages": 4,
+   "sha256": "7a8aca1e2bcaeb034ae429d0109125c43dafc55c2da0f759255bda3370c2de8e",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.1127.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.1127v1",
+   "file": "1001.1127v1.pdf",
+   "pages": 9,
+   "sha256": "64b4c51e09bf42cd90c748f8e710db2f51652e737939858572396d4a2621943c",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.1226.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.1226v2",
+   "file": "1001.1226v2.pdf",
+   "pages": 4,
+   "sha256": "5b7c8ce1d3112439387532a418dfcfe6a6738b8b8e029de9ceb197db01f2a959",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.1368.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.1368v2",
+   "file": "1001.1368v2.pdf",
+   "pages": 10,
+   "sha256": "922b967ccf2fc76c366dc74057b1e4d659eb8dcd25443c5d6c7aedd053cd8003",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.1442.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.1442v1",
+   "file": "1001.1442v1.pdf",
+   "pages": 6,
+   "sha256": "ce8ccbdb34a9cded6288f9b578eb8533bd1d4b90c8a458413d0c0ad746623f30",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.1545.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.1545v2",
+   "file": "1001.1545v2.pdf",
+   "pages": 6,
+   "sha256": "e28a5614f3a2e9c4ca6bbbf71d92d3f2f70414012e55d2a9b126760112e819fc",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.1602.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.1602v1",
+   "file": "1001.1602v1.pdf",
+   "pages": 7,
+   "sha256": "554e2844e4a8e415ab33c8edf7560d6741f4552587920ba8cf2e943c25d44e15",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.1616.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.1616v1",
+   "file": "1001.1616v1.pdf",
+   "pages": 12,
+   "sha256": "86fbc28e35ffd1a359ad4d7ed23552933ece465949ec69151c8311319f95c54f",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.1895.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.1895v1",
+   "file": "1001.1895v1.pdf",
+   "pages": 9,
+   "sha256": "07172c9c9e93d29eec477c937fbe69e66cbb5d340990ca46904c1a5a51b4d4e9",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.1983.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.1983v2",
+   "file": "1001.1983v2.pdf",
+   "pages": 10,
+   "sha256": "00e02c1fd5e1acaba0c470a8915d32a325168c32950d1defcd750d523afc7b9f",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.2127.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.2127v2",
+   "file": "1001.2127v2.pdf",
+   "pages": 5,
+   "sha256": "18b17e466d6cc2e44bd39a8143022a7d17775d8fcc256d90038c767014e959f4",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.2359.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.2359v3",
+   "file": "1001.2359v3.pdf",
+   "pages": 7,
+   "sha256": "b142c8f47effb3110a59b4a6e91199695d4a3970c4048ba3ed5282a6c0570f3d",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.2380.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.2380v1",
+   "file": "1001.2380v1.pdf",
+   "pages": 4,
+   "sha256": "eb9589a87d3b36b9b294a81a85f585db6f59ea173a38ae8effc7a2593e658790",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.2458.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.2458v3",
+   "file": "1001.2458v3.pdf",
+   "pages": 12,
+   "sha256": "9936d0ef83bfbaeef317178e40e10cd5c15ee3ea8156e927d7d9ea63fbe27897",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.2465.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.2465v1",
+   "file": "1001.2465v1.pdf",
+   "pages": 4,
+   "sha256": "75e71ddb08dde7c14d65dbe19d0b7a7eb0c945b8af11fdd8337367e0e7b784e4",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.2556.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.2556v2",
+   "file": "1001.2556v2.pdf",
+   "pages": 4,
+   "sha256": "8708c4dcd6b044e0d63b97dff9bff96ef860898e9c22e949130ba5be6a04c27b",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.2700.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.2700v1",
+   "file": "1001.2700v1.pdf",
+   "pages": 10,
+   "sha256": "c1e76203aea9a51a2586385de27379a9d69582ad43b00d381cf446acf055f37a",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.2804.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.2804v2",
+   "file": "1001.2804v2.pdf",
+   "pages": 12,
+   "sha256": "a125e7303d77fd7e6735747fa5866eca659aa36f7e7ee54541f069938af2eeff",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.2881.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.2881v1",
+   "file": "1001.2881v1.pdf",
+   "pages": 3,
+   "sha256": "3bb6c3b597767d73a099a1b145522c0869dd212c9b5b7814ecbe215430c75033",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.3200.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.3200v2",
+   "file": "1001.3200v2.pdf",
+   "pages": 4,
+   "sha256": "f047bf1b035b8d09b56d9f789f52aa7bde01b7cfe4def00f2929660a3eaef578",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.3228.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.3228v1",
+   "file": "1001.3228v1.pdf",
+   "pages": 8,
+   "sha256": "2be9081f456cf26cfe5ba1e36bd31534221db27f250340cdb274f0afb9d7543e",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.3358.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.3358v1",
+   "file": "1001.3358v1.pdf",
+   "pages": 5,
+   "sha256": "2693319166ec58272fdd58685c09fdd740a88304280a21cfc70712ba453b9426",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.3423.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.3423v2",
+   "file": "1001.3423v2.pdf",
+   "pages": 6,
+   "sha256": "084dbe1e9c7efbc5bb4d5cc1259dbe6b7792d40b558e6344a607d29cb01410e4",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1001.4869.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1001.4869v1",
+   "file": "1001.4869v1.pdf",
+   "pages": 12,
+   "sha256": "1bbd30dba92224be3761c91beff07b9af7721a1359b2900be70edffe75ad28a6",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1002.1976.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1002.1976v1",
+   "file": "1002.1976v1.pdf",
+   "pages": 10,
+   "sha256": "f7ab02b89ccb2431af067aaceb72ec5096235df8f64fc7e154804e3090ca20ed",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1002.1987.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1002.1987v1",
+   "file": "1002.1987v1.pdf",
+   "pages": 11,
+   "sha256": "d1f0def21dbe887bab207e412e5366676bfa073f538b7969c45fb4e1bc4fbd47",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  },
+  {
+   "doclaynet_name": "1410.8736.pdf",
+   "category": "scientific_articles",
+   "url": "https://arxiv.org/pdf/1410.8736v3",
+   "file": "1410.8736v3.pdf",
+   "pages": 11,
+   "sha256": "f8214ca449c5c88dac7f667b4518e1cd367502b279efdbf35fa4e7c81d1c0373",
+   "license": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/"
+  }
+ ]
+}

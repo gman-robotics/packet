@@ -136,10 +136,18 @@ table above is the target, not the current behavior.
 
 Signals (domain-free, `src/packet/boundary.py`, `BoundaryDetector.observe`):
 
-- Printed page-number reset (`1 of N` after a high N) — score `+0.45`
+- Printed page-number reset (`1 of N`, or a tagged bare `1`, after a higher
+  number) — score `+0.45` (`+0.2` more when the previous page was `N of N`)
 - Header / footer fingerprint change — score `+0.25`
 - Media box or rotation jump — score `+0.2`
-- Title-like block on a non-first page of the current document — score `+0.25`
+- Title that opens the page (first non-furniture block) — score `+0.6`
+  (`title_top`); a title lower on the page — `+0.25` (`title_block`)
+- Two or more independent signals together are lifted to at least `0.6`
+  (GMA-216), so weak signals can combine into a split; look-ahead page-number
+  evidence can still veto them.
+
+Weights live as named constants at the top of `boundary.py` and are tuned
+against `packet eval --set dlnet-whole` (see `evals/README.md`).
 
 The header/footer signal only compares `BlockKind.HEADER` blocks; when a
 page has none — true today, since `NativeTextExtractor` never emits
@@ -171,6 +179,11 @@ event) when the combined score is `>= 0.4`; the reported confidence is
     no split, the page was an insert (`old_sequence_continues`);
   - no evidence in the window or end of file: the old eager rule,
     split iff confidence `>= boundary_min_confidence` (`0.55`).
+- An **unnumbered** page, with or without a signal, also waits for the
+  window: it splits (`implied_page_one`) when the first later numbered page
+  in the window puts it at page 1 (`num(q) - k == 1`) and that page does not
+  continue the current document's numbering. Many documents leave page 1
+  unnumbered, so this is the most common page-number reset in practice.
 - `lookahead_window=0` reproduces v0 eager commit exactly.
 
 Streaming: `page_classified`, `block_emitted` and `boundary_proposed`
@@ -191,7 +204,10 @@ never re-merged, so these remain:
   pull-quote, or all-caps run-in heading on page *k* can score `>= 0.4`
   purely from the `title_block` signal (`+0.25`) plus one other cue
   (e.g. a header change from a running head), closing the document one
-  page early. There is no repair pass that can re-merge documents once
+  page early. Since GMA-216 a TITLE that *opens* a page (`title_top`,
+  `+0.6`) is enough on its own unless look-ahead numbering vetoes it, so
+  OCR engines that label chapter openers as TITLE are the main exposure
+  (native text only labels page 0 as TITLE today). There is no repair pass that can re-merge documents once
   split — `Assembler` repair (reparenting headings) only applies inside
   a single already-open document's section tree, never across a boundary
   commit.
