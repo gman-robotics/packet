@@ -8,6 +8,7 @@ Hugging Face / PaddleX cache. Nothing is bundled (docs/LICENSE_CHECKLIST.md).
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import tempfile
@@ -19,6 +20,8 @@ from packet.ocr_parse import parse_lighton_grounding, parse_paddle_blocks
 from packet.types import Block, PageClass, PageRef
 
 ImageThunk = Callable[[], Any]
+
+log = logging.getLogger(__name__)
 
 _OCR_CLASSES = {PageClass.SCAN, PageClass.MIXED, PageClass.SUSPECT_ENCODING}
 
@@ -151,10 +154,13 @@ class PaddleExtractor(_LazyEngine):
 class FallbackExtractor:
     """Try ``primary``; if it cannot run or crashes, use ``fallback``.
 
-    An empty result from an engine that ran is final (a blank page stays blank and
-    does not load the second engine). If neither engine produced a result, raise
-    ``OcrUnavailable`` with both reasons, so a scanned page never comes back empty
-    silently."""
+    Engines that do not support the page class are skipped, unless none does
+    (``--force-inspect`` on a TEXT page), in which case both are tried. An empty result
+    from an engine that ran is final (a blank page stays blank and does not load
+    the second engine). A failed engine is never silent: its error is logged as a
+    warning and kept in ``last_errors`` for the page, even when the fallback then
+    succeeds. If no engine produced a result, raise ``OcrUnavailable`` with every
+    reason, so a scanned page never comes back empty silently."""
 
     needs_image = True
 
@@ -162,21 +168,28 @@ class FallbackExtractor:
         self.primary = primary
         self.fallback = fallback
         self.last_used = None
+        self.last_errors: list[str] = []
 
     def supports(self, page_class: PageClass) -> bool:
         return self.primary.supports(page_class) or self.fallback.supports(page_class)
 
     def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
-        errors: list[str] = []
-        for engine in (self.primary, self.fallback):
+        self.last_used = None
+        self.last_errors = []
+        engines = [e for e in (self.primary, self.fallback) if e.supports(ref.page_class)]
+        # No engine claims this class (e.g. a TEXT page under --force-inspect, which the
+        # escalate policy already chose to OCR): try them all rather than refuse.
+        for engine in engines or (self.primary, self.fallback):
             try:
                 blocks = call_extractor(engine, ref, text, image)
-            except Exception as exc:  # noqa: BLE001 - unavailable or crashed: try the next one
-                errors.append(f"{type(engine).__name__}: {exc}")
+            except Exception as exc:  # noqa: BLE001 - recorded and logged, then the next engine
+                reason = f"{type(engine).__name__}: {type(exc).__name__}: {exc}"
+                self.last_errors.append(reason)
+                log.warning("OCR engine failed on page %s: %s", ref.index, reason)
                 continue
             self.last_used = engine
             return blocks
-        raise OcrUnavailable("; ".join(errors))
+        raise OcrUnavailable("; ".join(self.last_errors))
 
 
 class EscalatingExtractor:
