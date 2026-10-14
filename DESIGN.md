@@ -153,15 +153,17 @@ event) when the combined score is `>= 0.4`; the reported confidence is
 **Commit is look-ahead, not eager** (`src/packet/lookahead.py`,
 `LookaheadSplitter`, driven by `Pipeline.stream`):
 
-- confidence `>= boundary_commit_confidence` (default `0.75`): split at once;
+- confidence `>= boundary_commit_confidence` (default `0.75`, never below
+  `boundary_min_confidence`): split as soon as every earlier page is decided;
 - `0.4 <= confidence < 0.75`: wait for up to `lookahead_window` (default
   `2`) following pages, then decide on page-number evidence:
-  - a following page continues the new numbering (`num(p) + k`): split
-    (`lookahead_numbering`);
-  - a following page resumes the old numbering (`num(p-1) + k` or
-    `+ k + 1`): no split, the page was an insert (`old_sequence_continues`);
-  - a following page has a stronger signal: no split here
-    (`superseded`); that page is decided on its own;
+  - the page itself continues the current document's numbering (same
+    total): no split (`continues_sequence`);
+  - a following page continues the new numbering (`num(p) + k`, same
+    total when printed): split (`lookahead_numbering`);
+  - a following page resumes the current document's numbering (the last
+    accepted numbered page, not a rejected insert; same total; within it):
+    no split, the page was an insert (`old_sequence_continues`);
   - no evidence in the window or end of file: the old eager rule,
     split iff confidence `>= boundary_min_confidence` (`0.55`).
 - `lookahead_window=0` reproduces v0 eager commit exactly.
@@ -169,12 +171,16 @@ event) when the combined score is `>= 0.4`; the reported confidence is
 Streaming: `page_classified`, `block_emitted` and `boundary_proposed`
 are still emitted as each page is read. `document_opened` /
 `document_closed` for a page can lag by up to `lookahead_window` pages
-while a mid-confidence boundary is pending. Decisions are applied
-strictly in page order.
+while a mid-confidence boundary is pending, so `block_emitted` events for
+the next pages can arrive **before** the `document_opened` of the document
+they end up in. Consumers should assign blocks to documents from
+`document_closed` (or the final Packet), not from event order. Decisions
+are applied strictly in page order; each document is opened exactly once.
 
 ### Remaining fail modes (documented, not silently swallowed)
 
-Because commit is eager and irrevocable:
+Look-ahead only uses page-number evidence, and a committed split is still
+never re-merged, so these remain:
 
 - **False split on a mid-document title-like block.** A chapter title,
   pull-quote, or all-caps run-in heading on page *k* can score `>= 0.4`
@@ -277,8 +283,8 @@ The hard checklist lives in
 - OCR for `SCAN` / `MIXED` pages in the CLI (LightOnOCR-3-1B grounding on
   MLX, PaddleOCR-VL-1.6 fallback) via the escalate policy
 - `BoundaryDetector` scoring (page numbers, headers, media box, titles)
-  feeding an **eager-commit** split in `Pipeline` (no look-ahead — see
-  Boundary policy above)
+  feeding a **look-ahead commit** split in `Pipeline` (see Boundary policy
+  above; `lookahead_window=0` = eager)
 - Section assembler with intra-document heading repair
 - Domain adapter protocol
 - CLI: `packet inspect`, `packet parse` (`--no-split`, `-o/--output`,
@@ -296,7 +302,8 @@ The hard checklist lives in
 4. Mid-band VLM confirm window (3-page) for both classification and
    boundary confirmation
 5. ~~`--force-inspect` CLI flag~~ (shipped)
-6. **Look-ahead commit for boundaries** — defer `_close_document` until
+6. ~~**Look-ahead commit for boundaries**~~ (shipped, signed off by Tom
+   2026-10-13; page-number evidence only) — defer `_close_document` until
    subsequent pages agree or EOF, replacing today's eager commit. This is
    deferred deliberately: it is a design decision (propose vs. commit)
    that needs an explicit sign-off before it is implemented, not a small

@@ -54,7 +54,7 @@ def test_mid_confidence_rejected_when_old_sequence_continues():
     assert next(x for x in d if x.page == 2).reason == "old_sequence_continues"
 
 
-def test_stronger_signal_in_window_supersedes():
+def test_weak_signal_before_a_strong_one_falls_back_to_threshold():
     d = _run([_obs(0), _obs(1, 0.5), _obs(2, 0.9), _obs(3)])
     assert _splits(d) == [2]
 
@@ -98,3 +98,55 @@ def test_builtin_eval_still_perfect(tmp_path):
     from packet.eval.run import run_named_fixtures
 
     assert all(r.boundary.f1 == 1.0 for r in run_named_fixtures(tmp_path))
+
+
+# ---- round-1 review cases ----
+
+def test_window_zero_is_exactly_eager_for_any_thresholds():
+    for conf in (0.4, 0.5, 0.55, 0.6, 0.8, 0.95):
+        for fallback in (0.55, 0.9):
+            d = _run([_obs(0), _obs(1, conf)], window=0, commit=0.75, fallback=fallback)
+            assert _splits(d) == ([1] if conf >= fallback else []), (conf, fallback)
+
+
+def test_adjacent_one_page_doc_is_not_swallowed_by_stronger_neighbour():
+    # page 1: one-page doc "1 of 1" (mid 0.6); page 2: new doc with stronger signal
+    d = _run([_obs(0, num=1, total=1), _obs(1, 0.6, num=1, total=1), _obs(2, 0.9, num=1, total=3),
+              _obs(3, num=2, total=3)])
+    assert _splits(d) == [1, 2]
+
+
+def test_consecutive_mid_signals_use_last_real_page_number():
+    # report 1..2 of 4, exhibit (no number, mid), resume page "3 of 4" (mid), 4 of 4
+    d = _run([_obs(0, num=1, total=4), _obs(1, num=2, total=4), _obs(2, 0.5),
+              _obs(3, 0.6, num=3, total=4), _obs(4, num=4, total=4)])
+    assert _splits(d) == []
+
+
+def test_new_doc_with_coincident_numbers_but_different_total_still_splits():
+    # old doc ends "1 of 1"; new doc cover (no number, mid 0.6); next "2 of 5"
+    d = _run([_obs(0, num=1, total=1), _obs(1, 0.6), _obs(2, num=2, total=5)])
+    assert _splits(d) == [1]
+
+
+def test_mid_signal_on_last_page_uses_fallback():
+    assert _splits(_run([_obs(0), _obs(1), _obs(2, 0.6)], window=2)) == [2]
+
+
+def test_missing_numbers_everywhere_uses_fallback():
+    assert _splits(_run([_obs(0), _obs(1, 0.5), _obs(2), _obs(3)])) == []
+
+
+def test_splitter_memory_is_bounded():
+    sp = LookaheadSplitter(window=2)
+    for i in range(500):
+        sp.push(_obs(i, num=i + 1))
+    assert len(sp._obs) <= 3
+
+
+def test_blank_pages_do_not_reopen_the_same_document(tmp_path):
+    from packet.eval.pdfutil import write_blank_scan_pdf
+
+    pdf = write_blank_scan_pdf(tmp_path / "s.pdf", page_count=3)
+    kinds = [e.kind.value for e in Pipeline().stream(pdf)]
+    assert kinds.count("document_opened") == 1 and kinds.count("document_closed") == 1

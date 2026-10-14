@@ -78,7 +78,8 @@ class Pipeline:
                         signal.after_page, signal.confidence, signal.reason
                     )
                 pending[classified.index] = blocks
-                obs = PageObs(classified.index, signal, detector.last_page_number)
+                obs = PageObs(classified.index, signal, detector.last_page_number,
+                              detector.last_page_total)
                 for decision in splitter.push(obs):
                     yield from self._apply(packet, state, decision, pending.pop(decision.page))
 
@@ -105,8 +106,10 @@ class Pipeline:
             state.index += 1
             state.blocks = []
             state.start = decision.page
-        if not state.blocks:
+            state.opened = False
+        if not state.opened:
             yield Event.document_opened(_doc_id(packet.id, state.index), decision.page)
+            state.opened = True
         state.blocks.extend(blocks)
 
     def _close_document(
@@ -140,6 +143,7 @@ def _lazy_render(source: PdfPageSource, index: int):
 class _DocState:
     index: int = 0
     start: int = 0
+    opened: bool = False
     blocks: list[Block] = field(default_factory=list)
 
 
