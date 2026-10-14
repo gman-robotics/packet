@@ -1,6 +1,6 @@
 # License checklist
 
-Status: **checklist only — not all rows below are cleared yet.** Packet's
+Status: **sections 1, 4 and 6 cleared 2026-10-13; 2, 3 and 5 still open.** Packet's
 own code is MIT (`LICENSE`), but Packet *names* several third-party
 backends (in `DESIGN.md`, `README.md`, and as optional dependencies in
 `pyproject.toml`) whose licenses do not automatically become MIT just
@@ -58,16 +58,40 @@ No Marker integration exists in code yet.
 
 ## 4. PaddleOCR-VL
 
-Referenced in `DESIGN.md` (Escalation policy, Backend adapters) as the
-scan/OCR backend. `PaddleExtractor` in `src/packet/backends.py` is
-currently a stub (`NotImplementedError`) — not wired in.
+Referenced in `DESIGN.md` (Escalation policy, Backend adapters) and wired
+as the **fallback** OCR engine (`PaddleExtractor`, PaddleOCR-VL-1.6 page
+pipeline) behind LightOnOCR-3 (section 6). Packet never bundles or vendors
+the Paddle code or weights: the user installs `paddleocr`/`paddlepaddle`
+themselves and the weights are downloaded by paddleocr/paddlex at first
+use into the user's cache.
+
+Checked 2026-10-13 by Bo (bench eng, for Thomas Ginter).
 
 | Check | Status | Notes |
 |---|---|---|
-| PaddleOCR / PaddleOCR-VL code license identified and recorded with version | ☐ | |
-| Model weight license(s) for the specific detection/recognition/VL models Packet would pull identified separately from the code license | ☐ | PaddleOCR historically distributes pretrained models under terms that need per-model verification (some Apache-2.0, some under PaddlePaddle-specific terms) — do not assume one blanket license covers every model file. |
-| Confirmed no GPL/AGPL-licensed component would be pulled in transitively via the `paddlepaddle` runtime dependency chain | ☐ | |
-| Attribution/NOTICE requirements captured | ☐ | |
+| PaddleOCR / PaddleOCR-VL code license identified and recorded with version | ☑ | `paddleocr==3.7.0`, `paddlex==3.7.2`, `paddlepaddle==3.2.1` (versions installed and benchmarked in `bench/ocr_compare`). All Apache-2.0: read <https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/LICENSE> (Apache License 2.0, repo `main` @ `dab3fe3`) and the installed wheels' metadata (`License: Apache License 2.0` / `Apache-2.0` / `Apache Software License`). |
+| Model weight license(s) for the specific detection/recognition/VL models Packet would pull identified separately from the code license | ☑ | **PaddleOCR-VL-1.6** (`PaddlePaddle/PaddleOCR-VL-1.6` @ `c5630abae1d940eafe0697512a0325494b02ab42`): repo ships a `LICENSE` file, Apache License 2.0, "Copyright (c) 2025 PaddlePaddle Authors" — read <https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6/blob/main/LICENSE>; card metadata `license: apache-2.0`. **PP-DocLayoutV3** (layout stage, fetched by paddlex; `PaddlePaddle/PP-DocLayoutV3` @ `241f8bdfc77a7c7bee915a5057aaee58c235a8d3`): card metadata `license: apache-2.0` (<https://huggingface.co/PaddlePaddle/PP-DocLayoutV3>); **no LICENSE file in that repo** — same caveat as LightOn below. paddlex fetches it unpinned; pin before relying on it. No other Paddle models are pulled by the PaddleOCR-VL pipeline as configured. |
+| Confirmed no GPL/AGPL-licensed component would be pulled in transitively via the `paddlepaddle` runtime dependency chain | ☑ | Scanned every distribution in the benchmark venv (`paddleocr 3.7.0` + deps) on 2026-10-13: **no GPL or AGPL**. LGPL-only transitive deps: `cssutils 2.15.0` (LGPL-3.0+), `encutils 1.0.0` (LGPL-3.0+), `python-bidi 0.6.11` (LGPL), `crc32c 2.9.post0` (LGPL-2.1+). These are dynamically imported by the user's own install, not shipped by Packet, so they do not affect Packet's MIT license. Re-scan if Packet ever ships a lockfile or bundle. |
+| Attribution/NOTICE requirements captured | ☑ | Apache-2.0 §4 applies only on redistribution. Packet does not redistribute Paddle code or weights, so no NOTICE is required today. If that ever changes, ship the Apache-2.0 text plus the PaddlePaddle copyright line above. |
+
+## 6. LightOnOCR-3 (default OCR engine)
+
+Wired as the **default** OCR engine: `LightOnOCR-3-1B` in grounding mode,
+run with MLX (`mlx-vlm`) on Apple silicon, per
+`bench/ocr_compare/REPORT.md`. Packet never bundles or vendors the
+weights; they are downloaded by the user (or lazily from Hugging Face at
+first use) into the user's HF cache. `mlx-vlm` is an optional extra the
+user installs.
+
+Checked 2026-10-13 by Bo (bench eng, for Thomas Ginter).
+
+| Check | Status | Notes |
+|---|---|---|
+| Model weight license identified and recorded with version | ☑ | `lightonai/LightOnOCR-3-1B` @ `23d544085c886bbdace647bcfab91203299417e2`: Apache-2.0 — read the model card <https://huggingface.co/lightonai/LightOnOCR-3-1B> ("All models are released under the Apache 2.0 license for research and commercial use"; "License: Apache License 2.0"; metadata `license: apache-2.0`). Same terms on the 0.8B (`36d8636…`) and 4B (`b71010f…`) cards. |
+| License text present as a file alongside the weights | ⚠ | **The LightOnOCR-3 license appears only on the model card. None of the three Hugging Face model repos contains a LICENSE file** (checked the repo file lists via the HF API on 2026-10-13). Note: LightOn's separate *code* repo <https://github.com/lightonai/LightOnOCR> (client/CLI/benchmarks, `main` @ `36755d4`) does carry an Apache-2.0 `LICENSE`, but that covers the code, not the weights. Accepted for a user-downloaded optional model; revisit before any bundling. |
+| Confirmed the weights are not non-commercial / research-only | ☑ | Card states "research and commercial use". |
+| Runtime code license (`mlx-vlm`, `mlx`) | ☑ | `mlx-vlm 0.7.6` (MIT) and `mlx 0.32.3` (MIT), as installed in the benchmark venv; optional, user-installed. |
+| Attribution/NOTICE requirements captured | ☑ | No redistribution, so nothing to ship. If bundled later: Apache-2.0 text plus the LightOn citation from the card, and first ask LightOn to add a LICENSE file to the weights repos. |
 
 ## 5. pdf-inspector (Firecrawl)
 
@@ -86,7 +110,11 @@ pre-flight check.
 
 ## Sign-off
 
-This checklist must have every non-N/A row in sections 2-5 at ☑ (with the
+Packet's own code stays MIT. Model weights are always downloaded by the
+user (or lazily at runtime), never bundled or vendored into a Packet
+artifact.
+
+This checklist must have every non-N/A row in sections 2-6 at ☑ (with the
 version and date recorded) before the corresponding `Extractor` /
 `Classifier` stub is wired into the default `Router`/`Pipeline` — i.e.
 before `NotImplementedError` is removed from `DoclingExtractor` or
