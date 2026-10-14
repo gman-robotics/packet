@@ -146,6 +146,29 @@ def test_splitter_memory_is_bounded():
     assert len(sp._obs) <= 3
 
 
+def test_in_window_blank_still_resumes_old_sequence():
+    # report 2 of 5, exhibit (mid), blank, then 3 of 5 — gap 3, resume is last+1
+    d = _run([_obs(0, num=1, total=5), _obs(1, num=2, total=5), _obs(2, 0.7),
+              _obs(3), _obs(4, num=3, total=5)])
+    assert _splits(d) == []
+    assert next(x for x in d if x.page == 2).reason == "old_sequence_continues"
+
+
+def test_unnumbered_split_keeps_the_following_numbered_run():
+    # scanned cover (no number) splits; 1 of N / 2 of N is that document, not another
+    d = _run([_obs(0, num=2, total=2), _obs(1, 0.7), _obs(2, 0.45, num=1, total=3),
+              _obs(3, num=2, total=3), _obs(4, num=3, total=3)])
+    assert _splits(d) == [1]
+    assert next(x for x in d if x.page == 2).reason == "continues_sequence"
+
+
+def test_unnumbered_split_still_splits_a_numbering_run_that_does_not_fit():
+    d = _run([_obs(0, num=1, total=1), _obs(1, 0.9), _obs(2, 0.45, num=4, total=8),
+              _obs(3, num=5, total=8), _obs(4, num=6, total=8)])
+    assert _splits(d) == [1, 2]
+    assert next(x for x in d if x.page == 2).reason == "lookahead_numbering"
+
+
 def test_blank_pages_do_not_reopen_the_same_document(tmp_path):
     from packet.eval.pdfutil import write_blank_scan_pdf
 
