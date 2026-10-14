@@ -2,7 +2,7 @@
 
 Parent: Packet / GMA-55. This compares models only; nothing in Packet's `src/` was changed.
 Mac: M5 Pro, 64 GB. Started 20:18 MDT, report written about 21:25 MDT (Mac clock), so about 1 h 10 m of the 3 h limit was used.
-Everything is in `/Users/Shared/gman-sandbox/ocr-compare/`: `venv-tf/`, `venv-mlx/`, `venv-paddle/`, `hf/` (weights), `paddlex-cache/`, `runs/` (raw outputs), `logs/`, `bench/` (scripts), `testset/`.
+Everything lives in an ocr-compare work dir outside the repo (`$OCR_COMPARE_ROOT`): `venv-tf/`, `venv-mlx/`, `venv-paddle/`, `hf/` (weights), `paddlex-cache/`, `runs/` (raw outputs), `logs/`, the scripts in `bench/ocr_compare/`, `testset/`.
 
 ## Models and pins (all Apache-2.0 per the HF card metadata)
 | Model | HF repo @ revision | Arch | License evidence |
@@ -16,15 +16,15 @@ Everything is in `/Users/Shared/gman-sandbox/ocr-compare/`: `venv-tf/`, `venv-ml
 The paddleocr pipeline downloaded its own copy of the VL weights. Its sha256 (`85a479d5…71db`) is identical to the pinned HF blob.
 Model cards are saved in `cards/`.
 
-## Test set (fixed, documented; `bench/make_testset.py`, seed 20261012, 150 dpi)
-- **Packet fixtures** (`packet.eval.fixtures.build_builtin`, rendered by `bench/packet_fixtures.py`): 13 pages (text-layer ×3, multi-doc ×4, shared-header ×4, scan ×2). Gold text comes from the PDF text layer. The `scan` fixture is blank, so it serves as a hallucination test where the model should output nothing.
+## Test set (fixed, documented; `bench/ocr_compare/make_testset.py`, seed 20261012, 150 dpi)
+- **Packet fixtures** (`packet.eval.fixtures.build_builtin`, rendered by `bench/ocr_compare/packet_fixtures.py`): 13 pages (text-layer ×3, multi-doc ×4, shared-header ×4, scan ×2). Gold text comes from the PDF text layer. The `scan` fixture is blank, so it serves as a hallucination test where the model should output nothing.
 - **Synthetic multi-doc packet** `testset/synth/multidoc.pdf`, md-00…05: an invoice (2 pp), a lease (3 pp) and a bank statement (1 pp). Each page has a header, footer, page number (in both "Page x of y" and bare forms), body text, and 3 tables. 4 of the 6 pages are scan-degraded (skew, blur, noise). Gold covers text, tables, furniture and the doc boundaries (new docs start at pages 2 and 5).
 - **Hard scans** hs-00/03/05: the same layouts, downsampled to 2/3 size, 3° skew, heavy noise, JPEG q30.
-- **Public samples** without shipped ground truth, scored with the manual rubric in `bench/public_rubric.py`:
+- **Public samples** without shipped ground truth, scored with the manual rubric in `bench/ocr_compare/public_rubric.py`:
   - SROIE receipt (hf-internal-testing/fixtures_ocr, a ScanSnap scan): 9 hand-transcribed key fields.
   - PaddleOCR demo page (a 4-column Chinese newspaper with a photo and caption): 7 anchors in true reading order, scored for hits and pairwise order.
 
-Metrics (`bench/score.py`):
+Metrics (`bench/ocr_compare/score.py`):
 - CER/WER (jiwer), order-sensitive, with markup stripped.
 - Line recall.
 - Table cell recall.
@@ -32,7 +32,7 @@ Metrics (`bench/score.py`):
 - Furniture labeled: the model's own label is correct (synth and hard-scan pages only).
 - Characters emitted on the blank pages.
 
-Boundaries: `bench/to_blocks.py` maps each output to `packet.types.Block` and runs **Packet's own `BoundaryDetector`** over md-00…05.
+Boundaries: `bench/ocr_compare/to_blocks.py` maps each output to `packet.types.Block` and runs **Packet's own `BoundaryDetector`** over md-00…05.
 
 ## Results (24 pages; accuracy over the 22 pages with gold)
 | Model / mode / backend | CER | Line recall | Table cells | Furniture present / labeled | Boundaries (Packet detector) | Receipt fields | News anchors / order | Blank-page chars | Pages/min | Peak mem |
@@ -71,7 +71,7 @@ Specific failures seen:
   - paddleocr has an `--vl_rec_backend mlx-vlm-server` option (layout on CPU, VLM on MLX) that would likely close most of the gap. **Not tested** in this run.
   - On transformers the card only supports element-level use, and not on MPS (its example uses cuda/cpu).
 
-## Mapping to Packet Blocks (`bench/to_blocks.py`, outputs in `runs/*/…packet_blocks.json`)
+## Mapping to Packet Blocks (`bench/ocr_compare/to_blocks.py`, outputs in `runs/*/…packet_blocks.json`)
 - **LightOn grounding:**
   - Labels map 1:1: text→PARAGRAPH, title→TITLE (H1) / HEADING (H2+, level from `#`), list→LIST_ITEM, header/footer/page_number→HEADER/FOOTER/PAGE_NUMBER, caption, formula, code, table, image/chart→FIGURE, header_image/footer_image→HEADER/FOOTER.
   - Bboxes are normalized 0–1000 and convert to pt via page size. Reading order is emission order.

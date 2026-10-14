@@ -154,7 +154,8 @@ class PaddleExtractor(_LazyEngine):
 class FallbackExtractor:
     """Try ``primary``; if it cannot run or crashes, use ``fallback``.
 
-    An engine that does not support the page class is skipped. An empty result
+    Engines that do not support the page class are skipped, unless none does
+    (``--force-inspect`` on a TEXT page), in which case both are tried. An empty result
     from an engine that ran is final (a blank page stays blank and does not load
     the second engine). A failed engine is never silent: its error is logged as a
     warning and kept in ``last_errors`` for the page, even when the fallback then
@@ -175,9 +176,10 @@ class FallbackExtractor:
     def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
         self.last_used = None
         self.last_errors = []
-        for engine in (self.primary, self.fallback):
-            if not engine.supports(ref.page_class):
-                continue
+        engines = [e for e in (self.primary, self.fallback) if e.supports(ref.page_class)]
+        # No engine claims this class (e.g. a TEXT page under --force-inspect, which the
+        # escalate policy already chose to OCR): try them all rather than refuse.
+        for engine in engines or (self.primary, self.fallback):
             try:
                 blocks = call_extractor(engine, ref, text, image)
             except Exception as exc:  # noqa: BLE001 - recorded and logged, then the next engine
@@ -187,7 +189,7 @@ class FallbackExtractor:
                 continue
             self.last_used = engine
             return blocks
-        raise OcrUnavailable("; ".join(self.last_errors) or "no OCR engine supports this page")
+        raise OcrUnavailable("; ".join(self.last_errors))
 
 
 class EscalatingExtractor:
