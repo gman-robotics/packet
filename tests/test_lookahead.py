@@ -65,11 +65,13 @@ def test_no_evidence_falls_back_to_eager_threshold():
 
 
 def test_pipeline_does_not_split_on_reset_when_old_numbering_continues(tmp_path: Path):
+    # The running header stops on the exhibit, so reset + header_changed is a mid-band
+    # signal (0.70): eager commit splits on it, look-ahead sees the report resume.
     pdf = write_text_pdf(tmp_path / "a.pdf", [
-        ["Report body starts here.", "Page 1 of 4"],
-        ["Discussion continues.", "Page 2 of 4"],
+        ["Annual Report 2026", "Report body starts here.", "Page 1 of 4"],
+        ["Annual Report 2026", "Discussion continues.", "Page 2 of 4"],
         ["Inserted exhibit sheet.", "Page 1 of 1"],
-        ["Report resumes.", "Page 3 of 4"],
+        ["Annual Report 2026", "Report resumes.", "Page 3 of 4"],
     ])
     assert Pipeline().parse(pdf).document_count() == 1
     eager = Pipeline(config=PipelineConfig(lookahead_window=0)).parse(pdf)

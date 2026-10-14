@@ -11,6 +11,7 @@ from packet.classify import Classifier, HeuristicClassifier
 from packet.domain import DomainAdapter, apply_domains
 from packet.events import Event
 from packet.extract import Extractor, NativeTextExtractor, Router
+from packet.furniture import FurnitureTagger
 from packet.lookahead import Decision, LookaheadSplitter, PageObs
 from packet.source import PdfPageSource
 from packet.types import Block, LogicalDocument, Packet
@@ -56,6 +57,7 @@ class Pipeline:
         )
         state = _DocState()
         pending: dict[int, list[Block]] = {}
+        tagger = FurnitureTagger()
 
         with PdfPageSource(path) as source:
             packet = Packet(id=source.packet_id, origin=source.origin())
@@ -66,8 +68,9 @@ class Pipeline:
                 classified = self.classifier.classify(ref, text)
                 yield Event.page_classified(classified)
 
-                blocks = self.router.extract(
-                    classified, text, image=_lazy_render(source, classified.index)
+                blocks = tagger.tag_page(
+                    classified,
+                    self.router.extract(classified, text, image=_lazy_render(source, classified.index)),
                 )
                 for block in blocks:
                     yield Event.block_emitted(block)
@@ -81,26 +84,31 @@ class Pipeline:
                 obs = PageObs(classified.index, signal, detector.last_page_number,
                               detector.last_page_total)
                 for decision in splitter.push(obs):
-                    yield from self._apply(packet, state, decision, pending.pop(decision.page))
+                    yield from self._apply(packet, state, decision, pending.pop(decision.page), tagger)
 
             for decision in splitter.flush():
-                yield from self._apply(packet, state, decision, pending.pop(decision.page))
+                yield from self._apply(packet, state, decision, pending.pop(decision.page), tagger)
 
             if state.blocks or not packet.documents:
                 last_page = max(source.page_count - 1, 0)
                 doc = self._close_document(
-                    packet, state.index, state.blocks, state.start, last_page
+                    packet, state.index, tagger.finalize(state.blocks), state.start, last_page
                 )
                 yield Event.document_closed(doc)
 
             yield Event.packet_closed(packet.id, packet.document_count())
 
     def _apply(
-        self, packet: Packet, state: _DocState, decision: Decision, blocks: list[Block]
+        self,
+        packet: Packet,
+        state: _DocState,
+        decision: Decision,
+        blocks: list[Block],
+        tagger: FurnitureTagger,
     ) -> Iterator[Event]:
         if self.config.split_on_boundary and decision.split and state.blocks:
             doc = self._close_document(
-                packet, state.index, state.blocks, state.start, decision.page - 1
+                packet, state.index, tagger.finalize(state.blocks), state.start, decision.page - 1
             )
             yield Event.document_closed(doc)
             state.index += 1
