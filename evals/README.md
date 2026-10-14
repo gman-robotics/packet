@@ -16,7 +16,18 @@ and can plan DocLayNet concatenations from a local catalog.
 
 ```bash
 packet eval                  # built-in fixtures
-packet eval --json
+packet eval --json            # {"fixtures": [...], "gate": {"passed", "failures", ...}}
+packet eval --min-f1 0.9      # per-fixture boundary F1 floor (default 1.0)
+packet eval --min-macro-f1 0.95
+```
+
+`packet eval` is a gate: it exits 1 (and prints `GATE FAIL` with reasons) if any
+fixture's boundary F1 (tolerance 0) is below `--min-f1`, if the macro-average F1 is
+below `--min-macro-f1` (defaults to `--min-f1`), or if any page with a text layer
+of at least 40 characters emitted OCR/VLM blocks (false-OCR hard-fail). Otherwise it
+prints `GATE PASS` and exits 0.
+
+```bash
 PACKET_EVAL_DIR=/tmp/pkt packet eval
 ```
 

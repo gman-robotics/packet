@@ -9,6 +9,16 @@ from packet.backends import default_extractors
 from packet.pipeline import Pipeline
 
 
+def _unit_interval(value: str) -> float:
+    try:
+        x = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {value!r}") from None
+    if not (0.0 <= x <= 1.0):  # rejects nan, inf, negatives, > 1
+        raise argparse.ArgumentTypeError(f"must be within [0, 1]: {value!r}")
+    return x
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="packet", description="Document language understanding")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -26,6 +36,12 @@ def main(argv: list[str] | None = None) -> int:
     ev = sub.add_parser("eval", help="run built-in packet fixtures")
     ev.add_argument("--json", action="store_true")
     ev.add_argument("--dir", default=None, help="cache dir for generated PDFs")
+    ev.add_argument("--min-f1", type=_unit_interval, default=None,
+                    help="per-fixture boundary F1 floor in [0,1] (tolerance 0); default 1.0, "
+                         "which suits the deterministic built-in fixtures; lower it for "
+                         "real-model or DocLayNet runs")
+    ev.add_argument("--min-macro-f1", type=_unit_interval, default=None,
+                    help="macro-average boundary F1 floor in [0,1]; default = --min-f1")
 
     plan = sub.add_parser("eval-plan", help="plan DocLayNet synthetic packets from a catalog")
     plan.add_argument("--catalog", required=True)
@@ -68,21 +84,35 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cmd_eval(args) -> int:
-    from packet.eval.run import results_as_dict, run_named_fixtures
+    from packet.eval import run as ev
 
     root = Path(args.dir) if args.dir else None
-    results = run_named_fixtures(root)
+    min_f1 = ev.DEFAULT_MIN_F1 if args.min_f1 is None else args.min_f1
+    results = ev.run_named_fixtures(root)
+    gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=args.min_macro_f1)
     if args.json:
-        print(json.dumps(results_as_dict(results), indent=2))
-        return 0 if all(r.passed_gate() for r in results) else 1
-    print(f"{'fixture':16} {'cond':14} pages gold pred   P     R    F1  gate")
+        print(json.dumps({
+            "fixtures": ev.results_as_dict(results, min_f1),
+            "gate": {"passed": gate.passed, "failures": gate.failures, "macro_f1": gate.macro_f1,
+                     "min_f1": gate.min_f1, "min_macro_f1": gate.min_macro_f1},
+        }, indent=2))
+        return 0 if gate.passed else 1
+    print(f"{'fixture':16} {'cond':14} pages gold pred   P     R    F1  ocr  gate")
     for r in results:
-        gate = "PASS" if r.passed_gate() else "FAIL"
+        mark = "PASS" if r.passed_gate(min_f1) else "FAIL"
         print(
             f"{r.name:16} {r.condition:14} {r.pages:5} {r.gold_docs:4} {r.pred_docs:4} "
-            f"{r.boundary.precision:5.2f} {r.boundary.recall:5.2f} {r.boundary.f1:5.2f}  {gate}"
+            f"{r.boundary.precision:5.2f} {r.boundary.recall:5.2f} {r.boundary.f1:5.2f} "
+            f"{len(r.false_ocr_pages):4}  {mark}"
         )
-    return 0 if all(r.passed_gate() for r in results) else 1
+    print(f"macro F1 {gate.macro_f1:.2f} (min {gate.min_macro_f1:.2f}; per-fixture min {min_f1:.2f})")
+    if gate.passed:
+        print("GATE PASS")
+        return 0
+    print("GATE FAIL")
+    for f in gate.failures:
+        print(f"  - {f}")
+    return 1
 
 
 def _cmd_eval_plan(args) -> int:
