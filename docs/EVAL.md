@@ -13,8 +13,12 @@ expands on.
 
 **What `packet eval` computes today**, against the four built-in fixtures
 below: **§1 Boundary P/R/F1** and the **§5 False-OCR hard-fail gate**.
-Those are the two numbers in the CLI table and the only thing `gate_pass`
-checks. `citation_integrity` (§4) is implemented as a library function in
+Those are the two things the gate checks: `packet eval` exits 1 when any
+fixture's boundary F1 (tolerance 0) is below `--min-f1` (default 1.0), when
+the macro-average F1 is below `--min-macro-f1` (default: `--min-f1`), or on
+any false-OCR hard-fail page (`packet.eval.run.evaluate_gate`). The
+false-OCR check uses each page's real text layer (>= 40 chars), not the
+fixture's condition label. `citation_integrity` (§4) is implemented as a library function in
 `packet.eval.metrics` but nothing calls it from `run.py` or the CLI yet —
 treat it as available, not wired in. **Heading-path accuracy (§2)** and
 **reading-order quality (§3)** have no implementation at all yet (no
