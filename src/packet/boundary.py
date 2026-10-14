@@ -86,6 +86,13 @@ class BoundaryDetector:
 
 
 def _extract_page_number(blocks: list[Block]) -> tuple[int | None, int | None]:
+    # A tagged PAGE_NUMBER wins: header/footer text often holds "N of M" or "N/M"
+    # (a volume label, a date) that must not shadow the printed page number.
+    for block in blocks:
+        if block.kind == BlockKind.PAGE_NUMBER:
+            match = _PAGE_NUM.search(block.text)
+            if match:
+                return int(match.group(1)), int(match.group(2))
     for block in blocks:
         is_furniture = block.kind in {BlockKind.PAGE_NUMBER, BlockKind.FOOTER, BlockKind.HEADER}
         if not is_furniture and (block.kind is not BlockKind.PARAGRAPH or len(block.text) > 40):

@@ -24,3 +24,14 @@ def test_same_document_no_boundary():
     det.observe(_ref(0), [_block(0, "Page 1 of 4", BlockKind.FOOTER)])
     signal = det.observe(_ref(1), [_block(1, "Page 2 of 4", BlockKind.FOOTER)])
     assert signal is None
+
+
+def test_printed_page_number_wins_over_n_of_m_in_header():
+    # "Volume 2 of 5" in a running header must not shadow the printed "Page 7 of 12".
+    d = BoundaryDetector()
+    d.observe(_ref(0), [
+        _block(0, "Volume 2 of 5", BlockKind.HEADER),
+        _block(0, "Body."),
+        _block(0, "Page 7 of 12", BlockKind.PAGE_NUMBER),
+    ])
+    assert (d.last_page_number, d.last_page_total) == (7, 12)
