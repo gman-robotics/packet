@@ -73,30 +73,31 @@ class BoundaryDetector:
         )
 
 
-def _page_num_match(blocks: list[Block]) -> re.Match[str] | None:
+def _extract_page_number(blocks: list[Block]) -> int | None:
     for block in blocks:
         is_furniture = block.kind in {BlockKind.PAGE_NUMBER, BlockKind.FOOTER, BlockKind.HEADER}
         if not is_furniture and (block.kind is not BlockKind.PARAGRAPH or len(block.text) > 40):
             continue
         match = _PAGE_NUM.search(block.text)
         if match:
-            return match
+            return int(match.group(1))
     for block in blocks[-2:]:
         match = _PAGE_NUM.search(block.text)
         if match:
-            return match
+            return int(match.group(1))
     return None
-
-
-def _extract_page_number(blocks: list[Block]) -> int | None:
-    match = _page_num_match(blocks)
-    return int(match.group(1)) if match else None
 
 
 def _extract_page_total(blocks: list[Block]) -> int | None:
     """The ``N`` of "x of N" on the same block _extract_page_number would use."""
-    match = _page_num_match(blocks)
-    return int(match.group(2)) if match else None
+    num = _extract_page_number(blocks)
+    if num is None:
+        return None
+    for block in blocks:
+        match = _PAGE_NUM.search(block.text)
+        if match and int(match.group(1)) == num:
+            return int(match.group(2))
+    return None
 
 
 def _fingerprint(blocks: list[Block], kind: BlockKind) -> str:
