@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from packet.topic import MIN_WORDS, content_words, detect_language, topic_similarity
+from packet.topic import MIN_WORDS, content_words, detect_language, same_language, topic_similarity
 from packet.types import Block, BlockKind, PageRef
 
 _PAGE_NUM = re.compile(
@@ -131,7 +131,7 @@ class BoundaryDetector:
             reasons.append("topic_shift")
             score += W_TOPIC_SHIFT
         prev_lang, lang = self._langs[-2], self._langs[-1]
-        if prev_lang and lang and prev_lang != lang:
+        if not same_language(prev_lang, lang):
             reasons.append("language_changed")
             score += W_LANGUAGE
 
@@ -139,6 +139,11 @@ class BoundaryDetector:
         # title lower on the page is too common inside documents (OCR labels table and
         # section captions as titles) to count toward a combination.
         independent = [r for r in reasons if r not in {"sequence_completed", "title_block"}]
+        # A language change also zeroes the vocabulary overlap: one event, one vote
+        # and one weight.
+        if "topic_shift" in independent and "language_changed" in independent:
+            independent.remove("topic_shift")
+            score -= W_TOPIC_SHIFT
         if len(independent) >= 2:
             score = max(score, COMBINED)
         if "page_number_reset" not in reasons:

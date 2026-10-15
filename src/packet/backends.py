@@ -119,9 +119,9 @@ class LightOnExtractor(_LazyEngine):
         try:
             path = snapshot_download(self.model, revision=self.revision)
             model, processor = load(path, trust_remote_code=False)
+            prompt = apply_chat_template(processor, model.config, self.mode, num_images=1)
         except Exception as exc:
-            raise OcrUnavailable(f"LightOnOCR weights unavailable: {exc}") from exc
-        prompt = apply_chat_template(processor, model.config, self.mode, num_images=1)
+            raise OcrUnavailable(f"LightOnOCR failed to load: {exc}") from exc
         return (model, processor, (generate, prompt))
 
     def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:

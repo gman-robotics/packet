@@ -86,6 +86,15 @@ def _cmd_parse(args) -> int:
     if len(paths) > 1 and not args.out_dir:
         print("packet parse: several PDFs need --out-dir", file=sys.stderr)
         return 2
+    if len(paths) > 1 and args.output != "-":
+        print("packet parse: -o takes one PDF; use --out-dir for several", file=sys.stderr)
+        return 2
+    stems = [p.stem for p in paths]
+    dupes = sorted({s for s in stems if stems.count(s) > 1})
+    if dupes:
+        print(f"packet parse: several PDFs have the same name ({', '.join(dupes)}); "
+              "their outputs would overwrite each other", file=sys.stderr)
+        return 2
     missing = [p for p in paths if not p.exists()]
     if len(paths) == 1 and missing:
         print(f"not found: {missing[0]}", file=sys.stderr)
@@ -126,19 +135,26 @@ def _cmd_parse(args) -> int:
                 print(f"wrote {out} ({packet.document_count()} document(s), "
                       f"{packet.origin.page_count} pages)")
             row.update(ok=True, pages=packet.origin.page_count, documents=packet.document_count())
-        except Exception as exc:
+        except Exception as exc:  # one bad file must not stop a batch
+            failed += 1
+            row.update(ok=False, error=f"{type(exc).__name__}: {exc}")
+            _write_timing(args.timings, row, start, extractors)
             if len(paths) == 1:
                 raise
-            failed += 1
             print(f"packet: {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
-            row.update(ok=False, error=f"{type(exc).__name__}: {exc}")
-        row["seconds"] = round(time.perf_counter() - start, 3)
-        row["ocr_page_seconds"] = [round(t["seconds"], 3) for ext in extractors
-                                   for t in getattr(ext, "ocr_timings", [])]
-        if args.timings:
-            with open(args.timings, "a") as fh:
-                fh.write(json.dumps(row) + "\n")
+            continue
+        _write_timing(args.timings, row, start, extractors)
     return 1 if failed else 0
+
+
+def _write_timing(path: str | None, row: dict, start: float, extractors) -> None:
+    if not path:
+        return
+    row["seconds"] = round(time.perf_counter() - start, 3)
+    row["ocr_page_seconds"] = [round(t["seconds"], 3) for ext in extractors
+                               for t in getattr(ext, "ocr_timings", [])]
+    with open(path, "a") as fh:
+        fh.write(json.dumps(row) + "\n")
 
 
 def _cmd_eval(args) -> int:

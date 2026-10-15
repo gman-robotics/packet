@@ -100,3 +100,19 @@ def test_topic_shift_needs_prose_on_both_pages():
     d.observe(_ref(0), _page(0, table, BlockKind.TABLE))
     sig = d.observe(_ref(1), _page(1, "Reactor Physics Report", BlockKind.TITLE) + _page(1, REACTOR))
     assert sig is None or "topic_shift" not in sig.reason
+
+
+def test_language_change_alone_does_not_split():
+    # A language change also zeroes the vocabulary overlap; the two must count once.
+    d = BoundaryDetector()
+    d.observe(_ref(0), _page(0, LEASE))
+    d.observe(_ref(1), _page(1, LEASE2))
+    sig = d.observe(_ref(2), _page(2, GERMAN + " " + GERMAN))
+    assert sig is None
+
+
+def test_kana_sparse_japanese_is_not_a_language_change():
+    from packet.topic import same_language
+
+    assert same_language("ja", "han") and same_language("han", "ja")
+    assert not same_language("en", "de")

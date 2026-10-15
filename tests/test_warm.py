@@ -114,3 +114,56 @@ def test_parse_many_keeps_going_after_a_bad_file(tmp_path, monkeypatch):
     assert (tmp_path / "o" / "good.json").exists()
     rows = [json.loads(x) for x in timings.read_text().splitlines()]
     assert [r["ok"] for r in rows] == [False, True] and rows[0]["error"]
+
+
+def test_parse_many_rejects_duplicate_names_and_output_flag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("PACKET_OCR", "off")
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    x1 = write_text_pdf(tmp_path / "a" / "x.pdf", [["One."]])
+    x2 = write_text_pdf(tmp_path / "b" / "x.pdf", [["Two."]])
+    assert cli.main(["parse", str(x1), str(x2), "--out-dir", str(tmp_path / "o")]) == 2
+    assert "same name" in capsys.readouterr().err
+    assert cli.main(["parse", str(x1), str(tmp_path / "a.pdf"), "-o", "z.json",
+                     "--out-dir", str(tmp_path / "o")]) == 2
+
+
+def test_single_file_failure_still_writes_a_timing_row(tmp_path, monkeypatch):
+    monkeypatch.setenv("PACKET_OCR", "off")
+    bad = tmp_path / "bad.pdf"
+    bad.write_bytes(b"not a pdf")
+    timings = tmp_path / "t.jsonl"
+    with pytest.raises(Exception):  # noqa: B017 - single-file mode keeps raising
+        cli.main(["parse", str(bad), "-o", str(tmp_path / "o.json"), "--timings", str(timings)])
+    rows = [json.loads(x) for x in timings.read_text().splitlines()]
+    assert rows and rows[0]["ok"] is False
+
+
+def test_lighton_prompt_failure_is_cached_as_unavailable(monkeypatch):
+    import sys
+    import types
+
+    calls = []
+    hub = types.ModuleType("huggingface_hub")
+    hub.snapshot_download = lambda *a, **k: "/tmp/m"
+    mlx = types.ModuleType("mlx_vlm")
+    mlx.generate = lambda *a, **k: ""
+
+    def load(path, **k):
+        calls.append(1)
+        return ("M", "P")
+
+    mlx.load = load
+    pu = types.ModuleType("mlx_vlm.prompt_utils")
+
+    def bad_template(*a, **k):
+        raise KeyError("chat_template")
+
+    pu.apply_chat_template = bad_template
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setitem(sys.modules, "mlx_vlm", mlx)
+    monkeypatch.setitem(sys.modules, "mlx_vlm.prompt_utils", pu)
+    for _ in range(2):
+        with pytest.raises(OcrUnavailable):
+            LightOnExtractor()._load()
+    assert calls == [1]

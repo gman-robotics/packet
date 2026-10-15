@@ -91,6 +91,14 @@ def detect_language(text: str) -> str | None:
     return lang
 
 
+def same_language(a: str | None, b: str | None) -> bool:
+    """True unless both are known and differ. Kana-sparse Japanese reads as ``han``,
+    so ``ja`` and ``han`` count as the same language."""
+    if not a or not b or a == b:
+        return True
+    return {a, b} == {"ja", "han"}
+
+
 def _script(c: str) -> str:
     o = ord(c)
     if o < 0x250:
