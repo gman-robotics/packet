@@ -8,7 +8,7 @@ This directory is the maintained source for verifying user-facing **Packet CLI**
 - `export PACKET_VERIFY_RUN_ID` to a unique value per verification run.
 - `export PATH="${HOME}/.local/bin:${PATH}"`.
 - Run `.cursor/skills/verify-packet/control-packet launch` from the repo root.
-- Run `.cursor/skills/verify-packet/control-packet doctor` and require `ok: true`.
+- Run `.cursor/skills/verify-packet/control-packet doctor` and require `ok: true`. For the OCR recipes also require `ocr_lighton: ready`.
 - Materialize builtin PDFs: `.cursor/skills/verify-packet/control-packet materialize-fixtures`.
 - Never assert against PDFs in the git tree; builtins are generated under `$PACKET_VERIFY_CACHE/builtin/`.
 
@@ -17,14 +17,14 @@ This directory is the maintained source for verifying user-facing **Packet CLI**
 - Start every recipe from the baseline unless its feature file says otherwise.
 - Pass PDF paths as positional arguments exactly as the CLI expects.
 - Use `.cursor/skills/verify-packet/control-packet cli --` for commands whose output is proof; set `PACKET_VERIFY_CMD_LABEL` to a stable basename.
-- Use `.cursor/skills/verify-packet/control-packet fixture <name>` to resolve builtin PDF paths (`text-layer`, `multi-doc`, `shared-header`, `scan`).
+- Use `.cursor/skills/verify-packet/control-packet fixture <name>` to resolve builtin PDF paths (`text-layer`, `multi-doc`, `shared-header`, `scan`). Use `make-scan` for an image-only copy of `multi-doc` that only OCR can read.
 - Run `.cursor/skills/verify-packet/control-packet cleanup` when finished; do not delete files under `$PACKET_VERIFY_ARTIFACTS`.
 
 ## Proof and skip reporting
 
 - CLI proof includes stdout, stderr, exit code, and any `-o` output file named in the recipe.
 - Include `feature_id` and input path in `$PACKET_VERIFY_ARTIFACTS/proof.txt`.
-- If a feature needs data that is not in-repo (DocLayNet catalog for `eval-plan`), report the missing precondition in Gotchas — do not mark the feature verified.
+- If a feature needs data that is not in-repo (DocLayNet catalog for `eval-plan`; network on the first `eval --set dlnet-whole`; LightOn weights for OCR), report the missing precondition in Gotchas — do not mark the feature verified.
 
 ## Feature entry contract
 
@@ -35,4 +35,5 @@ Each feature file has an H1 title, one introductory paragraph, then exactly four
 - [Inspect a packet](./inspect.md) — stream page classification and pipeline events for a PDF.
 - [Parse to JSON](./parse.md) — build a PacketTree and write JSON (stdout or `-o`).
 - [Run builtin eval](./eval.md) — boundary metrics on synthetic fixtures with pass/fail gates.
+- [OCR paths](./ocr.md) — LightOnOCR on a scanned PDF, `--force-inspect`, and `PACKET_OCR=off`.
 - [Plan DocLayNet eval packets](./eval-plan.md) — generate a manifest and placeholder PDFs from an external catalog.
