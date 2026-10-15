@@ -15,7 +15,8 @@ expands on.
 below: **§1 Boundary P/R/F1** and the **§5 False-OCR hard-fail gate**.
 Those are the two things the gate checks: `packet eval` exits 1 when any
 fixture's boundary F1 (tolerance 0) is below `--min-f1` (default 1.0), when
-the macro-average F1 is below `--min-macro-f1` (default: `--min-f1`), or on
+the macro-average F1 is below `--min-macro-f1` (default: `--min-f1` for the
+builtin set; 0.6 for `dlnet-whole` whatever `--min-f1` is), or on
 any false-OCR hard-fail page (`packet.eval.run.evaluate_gate`). The
 false-OCR check uses each page's real text layer (>= 40 chars), not the
 fixture's condition label. `citation_integrity` (§4) is implemented as a library function in
@@ -26,11 +27,24 @@ function in `packet.eval.metrics`); both sections below are spec only
 until that lands.
 
 **`packet eval --set dlnet-whole`** (GMA-216) scores the same §1 boundary
-metric on 13 packets joined from 35 whole arXiv papers named by DocLayNet
-(`evals/README.md`). It gates on macro F1 >= 0.6 with no per-packet floor.
-It is a friendly set: one category (scientific articles), printed page numbers,
-and mixed A4/Letter sizes that give `media_box_changed` for free, so treat it as
-a smoke test for splitting, not a measure of real mixed packets.
+metric on a second, larger set. It downloads 35 whole arXiv papers named by
+DocLayNet (about 20 MB, sha256-pinned, cached in `~/.cache/packet/dlnet-whole`
+or `--data-dir`) and joins them into 13 packets with a seeded plan
+(`evals/README.md`, `src/packet/eval/wholedoc.py`). Nothing third-party is
+committed. The gate floors come from `SET_FLOORS` in `src/packet/eval/run.py`:
+macro F1 >= 0.6 and no per-packet floor (0.0), plus the false-OCR gate.
+
+It is a friendly set: one category (scientific articles), printed page
+numbers, and mixed A4/Letter sizes that give `media_box_changed` for free.
+Treat it as a smoke test for splitting, not as a measure of real mixed
+packets. Report micro recall and precision over its 22 gold boundaries next
+to the macro F1, because one packet with a miss moves the macro number a lot.
+
+**What the eval pipeline runs.** `packet eval` uses `Pipeline()` with its
+default extractor, `NativeTextExtractor`, so it reads text layers (with the
+layout signals: titles, headings and band lines from font size, weight and
+position) and never OCRs. OCR quality and OCR-page splitting are measured
+outside `packet eval`, on real mixed packets run through `packet parse`.
 
 All metrics are computed per-packet and then aggregated (macro-average
 across packets, not micro-average across pages) unless stated otherwise.
@@ -141,12 +155,14 @@ is a **false-OCR hard-fail**.
 - **Gate rule:** any single false-OCR hard-fail on any fixture fails the
   whole eval run. This is intentionally not a rate/threshold — the design
   rule it enforces is absolute, not statistical.
-- Today (v0), this gate is trivially satisfied because no OCR/VLM backend
-  is wired in at all (see `DESIGN.md` → Escalation policy): every emitted
-  block has `source=SourceKind.NATIVE` or does not exist (the `SCAN`
-  fail-closed empty-result case). This check exists now so it is already
-  in place as a regression gate for when `PaddleExtractor` /
-  `DoclingExtractor` are wired in (see `DESIGN.md` → Next).
+- Inside `packet eval` this gate is easy to pass, because the eval
+  pipeline uses only `NativeTextExtractor` (see "What the eval pipeline
+  runs" above): every emitted block has `source=SourceKind.NATIVE`, or the
+  page is empty (the `SCAN` fail-closed case). The OCR backends
+  (LightOnOCR-3-1B first, PaddleOCR-VL-1.6 as fallback) run in
+  `packet parse` and `packet inspect` through `EscalatingExtractor`, which
+  sends only SCAN, MIXED and SUSPECT_ENCODING pages to OCR. The gate stays
+  here so that an eval run with OCR enabled is checked by the same rule.
 
 ## Named fixture pack
 
@@ -157,8 +173,8 @@ checked into git: `packet.eval.fixtures.build_builtin()` generates the
 four PDFs below on the fly (via `packet.eval.pdfutil`) and pairs each with
 its gold `Packet` in code, so the fixture *and* its label stay in sync by
 construction. `packet eval` writes the generated PDFs to
-`.packet-eval/builtin/` by default (override with `--dir` or
-`PACKET_EVAL_DIR`; see `evals/README.md`) — that directory is generated
+`.packet-eval/builtin/` by default (override with `--dir`; see
+`evals/README.md`) — that directory is generated
 output, not a fixture source, and is gitignored.
 
 1. **`text-layer`** — single born-digital document, 3-5 pages, consistent
@@ -184,34 +200,25 @@ output, not a fixture source, and is gitignored.
    the hardest one for boundary recall. (With look-ahead commit a 0.45
    reset can still split when the following page continues the new
    numbering, so recall here no longer depends on the header signal.)
-   In today's v0 this is a documentation caveat, not yet a clean
-   demonstration of that fail mode: `BoundaryDetector`'s header signal
-   (`src/packet/boundary.py::_fingerprint`) only ever inspects
-   `BlockKind.HEADER` blocks, but `NativeTextExtractor` never tags any
-   block `HEADER` (see `DESIGN.md` → What v0 implements) — every page in
-   this generated fixture is one `PARAGRAPH` block, so `_fingerprint`
-   always returns `""` and the detector falls back to
-   `_leading_fingerprint` (the leading block's first 80 characters). That
-   fallback captures body text, not just the header, so it happens to
-   differ page-to-page here and fires `header_changed` anyway — the
-   fixture currently passes boundary P/R for the wrong reason (a body-text
-   diff, not real header-fingerprint invariance) rather than exercising
-   the documented degraded-recall case. Fixing that for real needs
-   `NativeTextExtractor` (or a successor) to actually tag `HEADER` /
-   `FOOTER` / `PAGE_NUMBER` blocks — out of scope for this pass; flagged
-   here so a future fixture/extractor change does not "fix" a P/R
-   regression that is in fact this fixture starting to test what it always
-   claimed to. Track this fixture's boundary recall separately regardless
-   — do not let it get averaged away by `multi-doc`.
+   Since the layout signals (GMA-217), this fixture tests what it claims.
+   `FurnitureTagger` tags the shared top line as a `HEADER` on every page
+   and the `Page N of M` lines as `PAGE_NUMBER`, so `header_changed` does
+   not fire: the header text is the same on both sides of the boundary.
+   The split comes from page numbers only: `page_number_reset` (0.45) plus
+   `sequence_completed` (+0.2) gives 0.65. That is below the 0.75 commit
+   level, so the look-ahead splitter waits, sees page 2 of the new
+   numbering on the next page, and splits (`lookahead_numbering`). Track
+   this fixture's boundary recall separately; do not let it get averaged
+   away by `multi-doc`.
 4. **`scan`** — pages with no extractable text layer at all
    (`has_text_ops=False`), no OCR ground truth needed for text content;
    the assertion this fixture drives is behavioral, not textual: under
-   the default v0 `Router`, every page must classify `SCAN` and every
-   page's `Router.extract()` call must return `[]`. This fixture is the
+   the eval pipeline's native-only `Router`, every page must classify
+   `SCAN` and every page's `Router.extract()` call must return `[]`. This fixture is the
    regression test for the fail-closed behavior in `DESIGN.md` →
    Escalation policy, and it doubles as a trivial pass for the
    false-OCR hard-fail gate (there is nothing to mis-route to OCR yet).
 
-Build these four first; add `dirty-scan` and `handwriting` variants of
-`scan` once a real OCR/VLM backend lands (see `DESIGN.md` → Next) — they
-are not useful before there is a backend whose output they could score.
+Next: add `dirty-scan` and `handwriting` variants of `scan` that run with
+OCR enabled. The OCR backends exist now, so these fixtures would have
+output to score.
