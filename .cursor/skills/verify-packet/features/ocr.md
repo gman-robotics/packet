@@ -30,7 +30,7 @@ Steps:
 
 ## Gotchas
 
-- Each OCR page takes about 2–10 s on an M-series Mac, and the first call also loads the model. The three steps together take about 25 s.
+- Each OCR page takes about 2–10 s on an M-series Mac. The LightOn/Paddle model loads once per process (cached across pages and across several PDFs in one `packet parse --out-dir` batch). The three OCR recipe steps together take about 25 s after that one-time load.
 - `inspect` cuts each event payload to about 200 characters, so `"source"` is often cut off. Use the block id suffix (`-oN` for OCR, `-bN` for native) or the parse JSON.
 - Native `parse` of `multi-doc` can include a few `vlm/lighton` blocks too: short pages classify `mixed` and the escalating extractor OCRs them. That is expected.
 - Stderr carries Hugging Face `Fetching N files` progress lines. They are not errors.
