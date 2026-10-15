@@ -204,6 +204,7 @@ class EscalatingExtractor:
     """
 
     needs_image = True
+    needs_layout = True
 
     def __init__(self, native: Extractor | None = None, ocr=None, force_inspect: bool = False):
         self.native = native or NativeTextExtractor()
@@ -217,7 +218,8 @@ class EscalatingExtractor:
     def _wants_ocr(self, page_class: PageClass) -> bool:
         return self.ocr is not None and (self.force_inspect or page_class in _OCR_CLASSES)
 
-    def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
+    def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None,
+                layout=None) -> list[Block]:
         if self._wants_ocr(ref.page_class):
             try:
                 blocks = call_extractor(self.ocr, ref, text, image)
@@ -229,7 +231,7 @@ class EscalatingExtractor:
                           f"pages keep only their text layer: {exc}", file=sys.stderr)
                 self.unavailable.append(str(exc))
         if self.native.supports(ref.page_class) or self.force_inspect:
-            return self.native.extract(ref, text)
+            return call_extractor(self.native, ref, text, layout=layout)
         return []
 
 

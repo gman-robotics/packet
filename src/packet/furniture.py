@@ -60,6 +60,8 @@ class _Edges:
     bare_n: int | None  # bottom is a bare number (needs corroboration)
     footer: str  # footer candidate (bottom, or the line above a page number)
     top_bare_n: int | None = None  # top is a bare number (running-head page numbers)
+    top_style: tuple | None = None  # layout template of a small top-band line
+    bottom_style: tuple | None = None  # layout template of a small bottom-band line
 
 
 @dataclass
@@ -78,7 +80,8 @@ class FurnitureTagger:
         numbered = labelled or bare is not None
         footer = (lines[-2] if len(lines) > 2 else "") if numbered else lines[-1]
         self._edges[ref.index] = _Edges(lines[0], lines[-1], labelled, bare, footer,
-                                        bare_number(lines[0]))
+                                        bare_number(lines[0]), _style(blocks, "top"),
+                                        _style(blocks, "bottom"))
         return self._apply(ref.index, [b.model_copy(deep=True) for b in blocks])
 
     def finalize(self, blocks: list[Block]) -> list[Block]:
@@ -108,6 +111,14 @@ class FurnitureTagger:
                 return True
         return False
 
+    def _repeats_style(self, page: int, attr: str, style: tuple) -> bool:
+        """A nearby page has a small band line with the same template (size, position)."""
+        for other in range(page - self.lookback, page + self.lookback + 1):
+            e = self._edges.get(other)
+            if other != page and e is not None and getattr(e, attr) == style:
+                return True
+        return False
+
     def _bare_pn_ok(self, page: int, e: _Edges, edge: str = "bottom") -> bool:
         """A bare number is a page number if it equals the page position, or a
         neighbouring page carries a bare number on the same edge offset by the page
@@ -133,13 +144,26 @@ class FurnitureTagger:
         if e.footer and self._repeats(page, lambda x: _footer_key(x.footer), _footer_key(e.footer)):
             blocks = _tag_edge(blocks, "bottom", e.footer, BlockKind.FOOTER)
         # Top and footer are always different lines, so one letterhead can be both.
+        if (e.bottom_style and not (e.labelled_pn or self._bare_pn_ok(page, e))
+                and self._repeats_style(page, "bottom_style", e.bottom_style)):
+            blocks = _tag_edge(blocks, "bottom", e.bottom, BlockKind.FOOTER)
         if self._bare_pn_ok(page, e, "top"):
             blocks = _tag_edge(blocks, "top", e.top, BlockKind.PAGE_NUMBER)
-        elif self._repeats(page, lambda x: x.top, e.top):
+        elif self._repeats(page, lambda x: x.top, e.top) or (
+                e.top_style and self._repeats_style(page, "top_style", e.top_style)):
             blocks = _tag_edge(blocks, "top", e.top, BlockKind.HEADER)
         for order, b in enumerate(blocks):
             b.reading_order = order
         return blocks
+
+
+def _style(blocks: list[Block], band: str) -> tuple | None:
+    """Template of the page's small band line on ``band`` (layout pages only)."""
+    edge = blocks[0] if band == "top" else blocks[-1]
+    x = edge.extra or {}
+    if x.get("layout") and x.get("band") == band and x.get("small") and len(edge.text) <= MAX_EDGE_LEN:
+        return (x.get("size"), round(float(x.get("top") or 0) / 4))
+    return None
 
 
 def _tag_edge(blocks: list[Block], edge: str, line: str, kind: BlockKind) -> list[Block]:

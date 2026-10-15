@@ -24,10 +24,19 @@ _ALL_CAPS = re.compile(r"^[A-Z][A-Z0-9 ,.'-]{8,80}$")
 class NativeTextExtractor:
     """Split a page text layer into coarse blocks. No OCR."""
 
+    needs_layout = True
+
     def supports(self, page_class: PageClass) -> bool:
         return page_class in {PageClass.TEXT, PageClass.MIXED, PageClass.UNKNOWN}
 
-    def extract(self, ref: PageRef, text: str) -> list[Block]:
+    def extract(self, ref: PageRef, text: str, layout=None) -> list[Block]:
+        """With a ``layout`` thunk (positioned lines with font size and weight), blocks
+        come from layout signals (``packet.layout``); otherwise from the plain text."""
+        lines = layout() if callable(layout) else layout
+        if lines:
+            from packet.layout import layout_blocks
+
+            return layout_blocks(ref, lines)
         raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
         parts = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
         if not parts and raw.strip():
@@ -74,12 +83,16 @@ def _guess_kind(text: str, maybe_title: bool) -> tuple[BlockKind, int | None]:
     return BlockKind.PARAGRAPH, None
 
 
-def call_extractor(ext, ref: PageRef, text: str, image=None) -> list[Block]:
+def call_extractor(ext, ref: PageRef, text: str, image=None, layout=None) -> list[Block]:
     """Call ``ext``; image-based extractors (``needs_image = True``) also get the lazy
-    page-image thunk. Text extractors keep the 2-argument signature and never render."""
+    page-image thunk, and layout-aware ones (``needs_layout = True``) the lazy
+    text-line thunk. Plain text extractors keep the 2-argument signature."""
+    kwargs = {}
     if getattr(ext, "needs_image", False):
-        return ext.extract(ref, text, image=image)
-    return ext.extract(ref, text)
+        kwargs["image"] = image
+    if getattr(ext, "needs_layout", False):
+        kwargs["layout"] = layout
+    return ext.extract(ref, text, **kwargs)
 
 
 class Router:
@@ -88,8 +101,8 @@ class Router:
     def __init__(self, extractors: list[Extractor]):
         self.extractors = extractors
 
-    def extract(self, ref: PageRef, text: str, image=None) -> list[Block]:
+    def extract(self, ref: PageRef, text: str, image=None, layout=None) -> list[Block]:
         for ext in self.extractors:
             if ext.supports(ref.page_class):
-                return call_extractor(ext, ref, text, image)
+                return call_extractor(ext, ref, text, image, layout)
         return []
