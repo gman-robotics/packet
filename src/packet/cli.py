@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from packet.backends import default_extractors
@@ -28,8 +29,13 @@ def main(argv: list[str] | None = None) -> int:
     inspect.add_argument("--force-inspect", action="store_true", help="OCR every page, even text pages")
 
     parse = sub.add_parser("parse", help="write a PacketTree JSON file")
-    parse.add_argument("path")
-    parse.add_argument("-o", "--output", default="-")
+    parse.add_argument("path", nargs="+",
+                       help="one or more PDFs; several files share one loaded OCR model")
+    parse.add_argument("-o", "--output", default="-", help="output file for a single PDF")
+    parse.add_argument("--out-dir", default=None,
+                       help="write <name>.json per PDF here (required for several PDFs)")
+    parse.add_argument("--timings", default=None,
+                       help="append one JSON line per PDF: seconds, pages, OCR page seconds")
     parse.add_argument("--no-split", action="store_true", help="force a single logical document")
     parse.add_argument("--force-inspect", action="store_true", help="OCR every page, even text pages")
 
@@ -62,30 +68,93 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "eval-plan":
         return _cmd_eval_plan(args)
 
+    if args.cmd == "parse":
+        return _cmd_parse(args)
+
     path = Path(args.path)
     if not path.exists():
         print(f"not found: {path}", file=sys.stderr)
         return 2
-
     pipe = Pipeline(extractors=default_extractors(force_inspect=args.force_inspect))
-    if args.cmd == "parse" and args.no_split:
-        pipe.config.split_on_boundary = False
-
-    if args.cmd == "inspect":
-        for event in pipe.stream(path):
-            print(f"{event.kind.value:20} page={event.page} {json.dumps(event.payload)[:180]}")
-        return 0
-
-    packet = pipe.parse(path)
-    payload = packet.model_dump()
-    text = json.dumps(payload, indent=2)
-    if args.output == "-":
-        print(text)
-    else:
-        out = Path(args.output)
-        out.write_text(text)
-        print(f"wrote {out} ({packet.document_count()} document(s), {packet.origin.page_count} pages)")
+    for event in pipe.stream(path):
+        print(f"{event.kind.value:20} page={event.page} {json.dumps(event.payload)[:180]}")
     return 0
+
+
+def _cmd_parse(args) -> int:
+    paths = [Path(p) for p in args.path]
+    if len(paths) > 1 and not args.out_dir:
+        print("packet parse: several PDFs need --out-dir", file=sys.stderr)
+        return 2
+    if len(paths) > 1 and args.output != "-":
+        print("packet parse: -o takes one PDF; use --out-dir for several", file=sys.stderr)
+        return 2
+    stems = [p.stem for p in paths]
+    dupes = sorted({s for s in stems if stems.count(s) > 1})
+    if dupes:
+        print(f"packet parse: several PDFs have the same name ({', '.join(dupes)}); "
+              "their outputs would overwrite each other", file=sys.stderr)
+        return 2
+    missing = [p for p in paths if not p.exists()]
+    if len(paths) == 1 and missing:
+        print(f"not found: {missing[0]}", file=sys.stderr)
+        return 2
+
+    # One pipeline and one set of extractors for the whole run; OCR engines also sit in
+    # the process-level cache, so the model loads once however many files there are.
+    extractors = default_extractors(force_inspect=args.force_inspect)
+    pipe = Pipeline(extractors=extractors)
+    if args.no_split:
+        pipe.config.split_on_boundary = False
+    out_dir = Path(args.out_dir) if args.out_dir else None
+    if out_dir:
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    failed = 0
+    for path in paths:
+        for ext in extractors:
+            if hasattr(ext, "ocr_timings"):
+                ext.ocr_timings.clear()
+        start = time.perf_counter()
+        row: dict = {"file": path.name}
+        try:
+            if not path.exists():
+                raise FileNotFoundError(f"not found: {path}")
+            packet = pipe.parse(path)
+            text = json.dumps(packet.model_dump(), indent=2)
+            if out_dir:
+                out = out_dir / f"{path.stem}.json"
+            elif args.output != "-":
+                out = Path(args.output)
+            else:
+                out = None
+            if out is None:
+                print(text)
+            else:
+                out.write_text(text)
+                print(f"wrote {out} ({packet.document_count()} document(s), "
+                      f"{packet.origin.page_count} pages)")
+            row.update(ok=True, pages=packet.origin.page_count, documents=packet.document_count())
+        except Exception as exc:  # one bad file must not stop a batch
+            failed += 1
+            row.update(ok=False, error=f"{type(exc).__name__}: {exc}")
+            _write_timing(args.timings, row, start, extractors)
+            if len(paths) == 1:
+                raise
+            print(f"packet: {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            continue
+        _write_timing(args.timings, row, start, extractors)
+    return 1 if failed else 0
+
+
+def _write_timing(path: str | None, row: dict, start: float, extractors) -> None:
+    if not path:
+        return
+    row["seconds"] = round(time.perf_counter() - start, 3)
+    row["ocr_page_seconds"] = [round(t["seconds"], 3) for ext in extractors
+                               for t in getattr(ext, "ocr_timings", [])]
+    with open(path, "a") as fh:
+        fh.write(json.dumps(row) + "\n")
 
 
 def _cmd_eval(args) -> int:

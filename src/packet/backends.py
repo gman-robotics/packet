@@ -12,6 +12,8 @@ import logging
 import os
 import sys
 import tempfile
+import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -44,22 +46,44 @@ def _need_image(image: ImageThunk | None):
     return image() if callable(image) else image
 
 
+# One process-level cache of loaded OCR engines (GMA-218): every extractor instance,
+# every page and every file in a run shares a model once it is loaded. A failed load is
+# cached too, so it is not retried per page or per file.
+_ENGINE_CACHE: dict[tuple, Any] = {}
+_ENGINE_LOCK = threading.Lock()
+
+
+def clear_engine_cache() -> None:
+    """Forget every loaded (or failed) engine; the next use loads again."""
+    with _ENGINE_LOCK:
+        _ENGINE_CACHE.clear()
+
+
 class _LazyEngine:
-    """Load once on first use; a failed load is cached so it is not retried per page."""
+    """Load on first use through the process-level engine cache."""
 
     _loaded: Any = None
     _load_error: OcrUnavailable | None = None
 
+    def _cache_key(self) -> tuple:
+        return (type(self).__name__,)
+
     def _load(self):
-        if self._loaded is None:
-            if self._load_error is not None:
-                raise self._load_error
-            try:
-                self._loaded = self._load_impl()
-            except OcrUnavailable as exc:
-                self._load_error = exc
-                raise
-        return self._loaded
+        if self._loaded is not None:
+            return self._loaded
+        key = self._cache_key()
+        with _ENGINE_LOCK:
+            if key not in _ENGINE_CACHE:
+                try:
+                    _ENGINE_CACHE[key] = self._load_impl()
+                except OcrUnavailable as exc:
+                    _ENGINE_CACHE[key] = exc
+            cached = _ENGINE_CACHE[key]
+        if isinstance(cached, OcrUnavailable):
+            self._load_error = cached
+            raise cached
+        self._loaded = cached
+        return cached
 
     def _load_impl(self):  # pragma: no cover - overridden
         raise NotImplementedError
@@ -82,6 +106,9 @@ class LightOnExtractor(_LazyEngine):
     def supports(self, page_class: PageClass) -> bool:
         return page_class in _OCR_CLASSES
 
+    def _cache_key(self) -> tuple:
+        return (type(self).__name__, self.model, self.revision, self.mode)
+
     def _load_impl(self):
         try:
             from huggingface_hub import snapshot_download
@@ -92,9 +119,9 @@ class LightOnExtractor(_LazyEngine):
         try:
             path = snapshot_download(self.model, revision=self.revision)
             model, processor = load(path, trust_remote_code=False)
+            prompt = apply_chat_template(processor, model.config, self.mode, num_images=1)
         except Exception as exc:
-            raise OcrUnavailable(f"LightOnOCR weights unavailable: {exc}") from exc
-        prompt = apply_chat_template(processor, model.config, self.mode, num_images=1)
+            raise OcrUnavailable(f"LightOnOCR failed to load: {exc}") from exc
         return (model, processor, (generate, prompt))
 
     def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
@@ -119,6 +146,9 @@ class PaddleExtractor(_LazyEngine):
 
     def supports(self, page_class: PageClass) -> bool:
         return page_class in _OCR_CLASSES
+
+    def _cache_key(self) -> tuple:
+        return (type(self).__name__, self.pipeline_version, self.device)
 
     def _load_impl(self):
         try:
@@ -211,6 +241,8 @@ class EscalatingExtractor:
         self.ocr = ocr
         self.force_inspect = force_inspect
         self.unavailable: list[str] = []
+        # Wall time of every OCR call (render + model), for ``packet parse --timings``.
+        self.ocr_timings: list[dict] = []
 
     def supports(self, page_class: PageClass) -> bool:
         return True
@@ -221,8 +253,10 @@ class EscalatingExtractor:
     def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None,
                 layout=None) -> list[Block]:
         if self._wants_ocr(ref.page_class):
+            start = time.perf_counter()
             try:
                 blocks = call_extractor(self.ocr, ref, text, image)
+                self.ocr_timings.append({"page": ref.index, "seconds": time.perf_counter() - start})
                 if blocks or ref.page_class in {PageClass.SCAN, PageClass.SUSPECT_ENCODING}:
                     return blocks
             except OcrUnavailable as exc:
