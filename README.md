@@ -57,7 +57,7 @@ builds that document's section tree.
 
 ```
 source        lazy page iterator: text, size and rendered image only on demand
-classifier    TEXT | MIXED | SCAN | SUSPECT_ENCODING, from the text layer
+classifier    TEXT | MIXED | SCAN, from how much text the text layer has
 backends      native text (+ layout) or OCR  ->  PageIR (the page's blocks)
 furniture     HEADER / FOOTER / PAGE_NUMBER tagging from repeats across pages
 boundary      weighted signals -> one proposal per page
@@ -73,31 +73,34 @@ Words used here:
   not know or care which backend read the page.
 - **Furniture**: running headers, footers and page numbers. They are kept
   beside the body, not inside it, and they are the main boundary evidence.
-- **Text-layer page**: a page whose PDF has real, extractable text. Packet
-  never OCRs such a page (design rule 1).
+- **Text-layer page**: a page whose PDF has real, extractable text (the
+  classifier calls it TEXT: 40 or more characters). Packet does not OCR such
+  a page (design rule 1) unless you pass `--force-inspect`.
 
 ### Components
 
 ```mermaid
 flowchart LR
-  CLI["packet CLI<br/>parse / inspect / eval"] --> CFG["PipelineConfig<br/>split_on_boundary, thresholds, window"]
-  CFG --> PIPE["Pipeline.stream"]
+  CLI["packet CLI<br/>parse / inspect"] --> PIPE["Pipeline.stream"]
+  CFG["PipelineConfig<br/>split_on_boundary, thresholds, window"] --> PIPE
   PIPE --> SRC["PdfPageSource<br/>(pypdfium2)"]
   PIPE --> CLS["HeuristicClassifier"]
-  PIPE --> ESC["EscalatingExtractor<br/>(escalate policy)"]
-  ESC --> NAT["NativeTextExtractor<br/>+ layout signals"]
+  PIPE --> RT["Router"]
+  RT -- "packet CLI" --> ESC["EscalatingExtractor<br/>(escalate policy)"]
+  RT -- "Pipeline() and packet eval" --> NAT["NativeTextExtractor<br/>+ layout signals"]
+  ESC --> NAT
   ESC --> OCR["FallbackExtractor"]
   OCR --> LON["LightOnOCR-3-1B<br/>(MLX, default)"]
   OCR --> PAD["PaddleOCR-VL-1.6<br/>(fallback)"]
   NAT --> IR["PageIR<br/>(blocks per page)"]
   LON --> IR
   PAD --> IR
-  IR --> FUR["FurnitureTagger"]
+  IR --> FUR["FurnitureTagger<br/>(native pages; OCR keeps its labels)"]
   FUR --> BD["BoundaryDetector"]
   BD --> LA["LookaheadSplitter"]
   LA --> ASM["Assembler<br/>(Section tree)"]
   ASM --> OUT["PacketTree JSON"]
-  EVAL["Eval harness<br/>builtin / dlnet-whole"] --> PIPE
+  EVAL["packet eval<br/>builtin / dlnet-whole"] --> PIPE
 ```
 
 ### One file, page by page
@@ -118,7 +121,7 @@ sequenceDiagram
     P->>S: text_for(page)
     P->>C: classify(page, text)
     C-->>P: TEXT / MIXED / SCAN
-    P->>X: extract(page, text, image thunk, layout thunk)
+    P->>X: extract(page, text, image thunk, layout thunk) via Router
     X-->>P: PageIR (blocks)
     P->>F: tag_page(blocks)
     F-->>P: blocks with HEADER / FOOTER / PAGE_NUMBER
@@ -132,17 +135,27 @@ sequenceDiagram
     end
   end
   P->>L: flush()
+  P->>F: finalize(last document blocks)
   P->>A: build_document(last document)
   P-->>CLI: Packet (documents, furniture, sections)
 ```
 
 The image and layout arguments are thunks: functions that render the page or
 read its character positions only if the chosen backend asks for them. A
-text-layer page is never rendered.
+text-layer page is not rendered unless `--force-inspect` sends it to OCR.
 
 ### Reading a page
 
-The escalate policy (`EscalatingExtractor`) picks the reader from the page class:
+`HeuristicClassifier` sets the page class from the length of the page's
+text: 40 or more characters is TEXT, 1 to 39 is MIXED (often a scan with a
+stamped page number), and none is SCAN. A fourth class, SUSPECT_ENCODING
+(text that does not decode to real words), is routed to OCR but no current
+classifier sets it.
+
+The `packet` CLI reads pages through the escalate policy
+(`EscalatingExtractor`), which picks the reader from the page class.
+`Pipeline()` built in code, and `packet eval`, use only
+`NativeTextExtractor` and never OCR.
 
 - **TEXT**: native text only. `NativeTextExtractor` reads pdfium characters
   with their font size, weight and position (`packet.layout`), and turns them
@@ -162,7 +175,10 @@ The escalate policy (`EscalatingExtractor`) picks the reader from the page class
   A MIXED page whose OCR comes back empty keeps its thin text layer.
   `PACKET_OCR=off` turns OCR off; `--force-inspect` OCRs every page.
 
-`FurnitureTagger` then looks at each page's first and last lines. A top line
+`FurnitureTagger` then tags furniture on native-text pages. OCR pages keep
+the labels the OCR engine gave them (LightOn and Paddle mark headers,
+footers and page numbers themselves). On a native page it looks at the first
+and last lines. A top line
 is a `HEADER` when the same text, or the same small-type template (font size
 and position), is the top line of another page within 3 pages. A bottom line
 is a `FOOTER` when its text with digits ignored repeats the same way. A bare

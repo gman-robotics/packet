@@ -15,7 +15,8 @@ expands on.
 below: **§1 Boundary P/R/F1** and the **§5 False-OCR hard-fail gate**.
 Those are the two things the gate checks: `packet eval` exits 1 when any
 fixture's boundary F1 (tolerance 0) is below `--min-f1` (default 1.0), when
-the macro-average F1 is below `--min-macro-f1` (default: `--min-f1`), or on
+the macro-average F1 is below `--min-macro-f1` (default: `--min-f1` for the
+builtin set; 0.6 for `dlnet-whole` whatever `--min-f1` is), or on
 any false-OCR hard-fail page (`packet.eval.run.evaluate_gate`). The
 false-OCR check uses each page's real text layer (>= 40 chars), not the
 fixture's condition label. `citation_integrity` (§4) is implemented as a library function in
@@ -172,8 +173,8 @@ checked into git: `packet.eval.fixtures.build_builtin()` generates the
 four PDFs below on the fly (via `packet.eval.pdfutil`) and pairs each with
 its gold `Packet` in code, so the fixture *and* its label stay in sync by
 construction. `packet eval` writes the generated PDFs to
-`.packet-eval/builtin/` by default (override with `--dir` or
-`PACKET_EVAL_DIR`; see `evals/README.md`) — that directory is generated
+`.packet-eval/builtin/` by default (override with `--dir`; see
+`evals/README.md`) — that directory is generated
 output, not a fixture source, and is gitignored.
 
 1. **`text-layer`** — single born-digital document, 3-5 pages, consistent

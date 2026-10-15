@@ -29,7 +29,7 @@ of at least 40 characters emitted OCR/VLM blocks (false-OCR hard-fail). Otherwis
 prints `GATE PASS` and exits 0.
 
 ```bash
-PACKET_EVAL_DIR=/tmp/pkt packet eval
+packet eval --dir /tmp/pkt
 ```
 
 Whole-document packets (`packet-dlnet-whole`, GMA-216):
