@@ -25,4 +25,4 @@ Preconditions:
 ## Gotchas
 
 - Large PDFs produce long stdout; use `head` for spot checks but capture full stdout for proof when feasible.
-- Scanned fixtures classify as `scan`; native text extraction may emit few blocks until OCR backends are wired (see README status).
+- Scan pages classify as `scan` and go to OCR (see [ocr.md](./ocr.md)). The builtin `scan` fixture is blank, so it gives no blocks even with OCR on.

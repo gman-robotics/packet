@@ -20,7 +20,9 @@ eval "$(.cursor/skills/verify-packet/control-packet env)"
 
 `launch` runs `pip install -e ".[dev]"` when `packet` is missing, creates `$PACKET_VERIFY_ROOT` (default `/tmp/packet-verify-$PACKET_VERIFY_RUN_ID`), writes an ownership marker under that root, and prints doctor fields. Always `eval "$(.cursor/skills/verify-packet/control-packet env)"` in the same shell so later invocations reuse the persisted `PACKET_VERIFY_RUN_ID`.
 
-**Ready** when `.cursor/skills/verify-packet/control-packet doctor` prints `ok: true` with a resolved `packet` path and `package_version` matching `pyproject.toml`.
+**Ready** when `.cursor/skills/verify-packet/control-packet doctor` prints `ok: true` with a resolved `packet` path and `package_version` matching `pyproject.toml`. Doctor also prints `ocr_lighton` (`ready`, `missing-mlx` or `missing-weights`), `ocr_paddle` and `machine`; the OCR recipes need `ocr_lighton: ready`.
+
+Doctor also checks that `import packet` loads from this checkout's `src/`. `pip install -e` can leave a copied `site-packages/packet` (pyproject `force-include`) that shadows the editable install while `direct_url.json` still points here. If doctor says so, move that copy aside.
 
 **Teardown:** run `.cursor/skills/verify-packet/control-packet cleanup` after each verification session (see Cleanup). There is no daemon to keep alive between drives.
 
@@ -43,6 +45,7 @@ Conventions:
 
 - Set `PACKET_VERIFY_RUN_ID` so concurrent agents do not share cache dirs.
 - Materialize built-in eval PDFs once per run: `.cursor/skills/verify-packet/control-packet materialize-fixtures` (writes under `$PACKET_VERIFY_CACHE`, default `$PACKET_VERIFY_ROOT/cache`).
+- Build an image-only copy of a fixture for OCR checks: `.cursor/skills/verify-packet/control-packet make-scan` (default `multi-doc`; prints the path under `$PACKET_VERIFY_CACHE`).
 - Resolve a fixture path: `.cursor/skills/verify-packet/control-packet fixture text-layer` (also `multi-doc`, `shared-header`, `scan`).
 - Run CLI commands with captured evidence:
 
@@ -100,6 +103,7 @@ test -f "$PACKET_VERIFY_ARTIFACTS/proof.txt" && ls -la "$PACKET_VERIFY_ARTIFACTS
 | `.cursor/skills/verify-packet/control-packet doctor` | Read-only readiness YAML |
 | `.cursor/skills/verify-packet/control-packet materialize-fixtures` | Run `packet eval --dir $CACHE` to build PDFs |
 | `.cursor/skills/verify-packet/control-packet fixture <name>` | Print path to a builtin PDF |
+| `.cursor/skills/verify-packet/control-packet make-scan [name]` | Write an image-only copy of a builtin, so only OCR can read it |
 | `.cursor/skills/verify-packet/control-packet cli -- <args>` | Run `packet` with captured stdout/stderr/exit; exit code matches `packet` |
 | `.cursor/skills/verify-packet/control-packet cleanup` | Drop cache/scratch; keep artifacts |
 

@@ -210,11 +210,21 @@ data = json.loads(raw)
 url = data.get('url', '')
 if not url.startswith('file://'):
     raise SystemExit(1)
-print(pathlib.Path(url.removeprefix('file://')).resolve())
+import urllib.request
+print(pathlib.Path(urllib.request.url2pathname(url.removeprefix('file://'))).resolve())
 " 2>/dev/null)" || return 1
   local repo_real
   repo_real="$(realpath_safe "$REPO_ROOT")"
-  [[ "$editable_root" == "$repo_real" ]]
+  [[ "$editable_root" == "$repo_real" ]] || return 1
+  # The editable metadata can point here while a copied site-packages/packet shadows it
+  # (pyproject force-include copies src/packet into site-packages on `pip install -e`).
+  # Check where `import packet` really loads from.
+  local imported
+  imported="$(cd / && python3 -c "import packet, pathlib; print(pathlib.Path(packet.__file__).resolve().parent)" 2>/dev/null)" || return 1
+  if [[ "$imported" != "$repo_real/src/packet" ]]; then
+    echo "FAIL: import packet loads $imported, not $repo_real/src/packet (stale copy shadowing the editable install; move it aside)" >&2
+    return 1
+  fi
 }
 
 ensure_path() {
@@ -239,6 +249,26 @@ cmd_doctor() {
   fi
   local ver
   ver="$(python3 -c "import importlib.metadata as m; print(m.version('packet-dl'))" 2>/dev/null || echo unknown)"
+  # OCR readiness (read-only): LightOn needs mlx-vlm (Apple silicon) and its pinned
+  # weights in the Hugging Face cache; Paddle is the fallback. No downloads here.
+  local ocr
+  ocr="$(python3 - <<'PY' 2>/dev/null || echo 'ocr_lighton: unknown'
+import importlib.util, platform
+from packet.backends import LightOnExtractor as L
+mlx = importlib.util.find_spec("mlx_vlm") is not None
+weights = False
+try:
+    from huggingface_hub import snapshot_download
+    snapshot_download(L.model, revision=L.revision, local_files_only=True)
+    weights = True
+except Exception:
+    pass
+paddle = importlib.util.find_spec("paddleocr") is not None
+print(f"ocr_lighton: {'ready' if mlx and weights else 'missing-mlx' if not mlx else 'missing-weights'}")
+print(f"ocr_paddle: {'installed' if paddle else 'missing'}")
+print(f"machine: {platform.system()}-{platform.machine()}")
+PY
+)"
   cat <<EOF
 ok: true
 repo_root: $REPO_ROOT
@@ -248,6 +278,7 @@ verify_root: $PACKET_VERIFY_ROOT
 artifacts_dir: $ARTIFACTS_DIR
 cache_dir: $CACHE_DIR
 run_id: $PACKET_VERIFY_RUN_ID
+$ocr
 EOF
 }
 
@@ -261,7 +292,7 @@ cmd_launch() {
   local pkt
   pkt="$(packet_bin)" || return 1
   if ! packet_resolves_to_repo "$pkt"; then
-    echo "FAIL: packet on PATH is not this checkout; use pip install -e \".[dev]\" from $REPO_ROOT" >&2
+    echo "FAIL: packet is not this checkout (see above; if no reason is shown, run pip install -e \".[dev]\" from $REPO_ROOT)" >&2
     return 1
   fi
   mkdir -p "$ARTIFACTS_DIR" "$CACHE_DIR"
@@ -317,6 +348,32 @@ cmd_materialize_fixtures() {
   done
   echo "cache_dir=$CACHE_DIR"
   ls -1 "$CACHE_DIR/builtin/"*.pdf 2>/dev/null || true
+}
+
+# make-scan [name]: an image-only copy of a builtin fixture (default multi-doc), so the
+# pages classify SCAN and only OCR can read them. Written to $CACHE_DIR/scan-<name>.pdf.
+cmd_make_scan() {
+  local name="${1:-multi-doc}"
+  if [[ "$name" == */* ]]; then
+    echo "make-scan: fixture name must not contain '/': $name" >&2
+    return 2
+  fi
+  if ! python3 -c "import PIL, pypdfium2" 2>/dev/null; then
+    echo "make-scan: needs Pillow and pypdfium2 in the python3 on PATH (the packet env)" >&2
+    return 1
+  fi
+  local src
+  src="$(cmd_fixture "$name")" || return 2
+  local out="$CACHE_DIR/scan-${name}.pdf"
+  python3 - "$src" "$out" <<'PY' || return 1
+import sys
+import pypdfium2 as pdfium
+src, out = sys.argv[1], sys.argv[2]
+doc = pdfium.PdfDocument(src)
+imgs = [doc[i].render(scale=150 / 72).to_pil().convert("RGB") for i in range(len(doc))]
+imgs[0].save(out, save_all=True, append_images=imgs[1:], resolution=150)
+PY
+  echo "$out"
 }
 
 cmd_fixture() {
@@ -396,7 +453,7 @@ cmd_cleanup() {
 
 usage() {
   cat <<EOF
-usage: control-packet <doctor|launch|env|cli|materialize-fixtures|fixture|cleanup> [args]
+usage: control-packet <doctor|launch|env|cli|materialize-fixtures|fixture|make-scan|cleanup> [args]
 
 Environment:
   PACKET_VERIFY_RUN_ID   unique run id (set before launch, or read from ownership marker)
@@ -419,6 +476,7 @@ main() {
     cli) shift; cmd_cli "$@" ;;
     materialize-fixtures) shift; cmd_materialize_fixtures "$@" ;;
     fixture) shift; cmd_fixture "$@" ;;
+    make-scan) shift; cmd_make_scan "$@" ;;
     cleanup) shift; cmd_cleanup "$@" ;;
     env) shift; cmd_env "$@" ;;
     -h|--help|"") usage ;;
