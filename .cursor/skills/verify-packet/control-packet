@@ -210,7 +210,8 @@ data = json.loads(raw)
 url = data.get('url', '')
 if not url.startswith('file://'):
     raise SystemExit(1)
-print(pathlib.Path(url.removeprefix('file://')).resolve())
+import urllib.request
+print(pathlib.Path(urllib.request.url2pathname(url.removeprefix('file://'))).resolve())
 " 2>/dev/null)" || return 1
   local repo_real
   repo_real="$(realpath_safe "$REPO_ROOT")"
@@ -291,7 +292,7 @@ cmd_launch() {
   local pkt
   pkt="$(packet_bin)" || return 1
   if ! packet_resolves_to_repo "$pkt"; then
-    echo "FAIL: packet on PATH is not this checkout; use pip install -e \".[dev]\" from $REPO_ROOT" >&2
+    echo "FAIL: packet is not this checkout (see above; if no reason is shown, run pip install -e \".[dev]\" from $REPO_ROOT)" >&2
     return 1
   fi
   mkdir -p "$ARTIFACTS_DIR" "$CACHE_DIR"
@@ -353,6 +354,14 @@ cmd_materialize_fixtures() {
 # pages classify SCAN and only OCR can read them. Written to $CACHE_DIR/scan-<name>.pdf.
 cmd_make_scan() {
   local name="${1:-multi-doc}"
+  if [[ "$name" == */* ]]; then
+    echo "make-scan: fixture name must not contain '/': $name" >&2
+    return 2
+  fi
+  if ! python3 -c "import PIL, pypdfium2" 2>/dev/null; then
+    echo "make-scan: needs Pillow and pypdfium2 in the python3 on PATH (the packet env)" >&2
+    return 1
+  fi
   local src
   src="$(cmd_fixture "$name")" || return 2
   local out="$CACHE_DIR/scan-${name}.pdf"

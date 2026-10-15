@@ -18,12 +18,12 @@
 
 Preconditions:
 
-- `doctor` reports `ok: true` and `ocr_lighton: ready`. `ready` needs Apple silicon, `mlx-vlm` in the env, and the pinned LightOn weights already in the Hugging Face cache. Doctor never downloads. If it says `missing-mlx` or `missing-weights`, report `ocr-on-scan` and `ocr-force-inspect` as blocked, not verified.
-- Build the scan input: `S="$(.cursor/skills/verify-packet/control-packet make-scan)"`. This renders the `multi-doc` fixture to images at 150 dpi, so there is no text layer and every page classifies `scan`. (The builtin `scan` fixture is blank pages, so it cannot prove OCR read anything.)
+- `doctor` reports `ok: true` and `ocr_lighton: ready`. `ready` needs Apple silicon, `mlx-vlm` in the env, and the pinned LightOn weights already in the Hugging Face cache. Doctor never downloads. `unknown` means the probe itself failed (for example `packet` not importable). If it says `missing-mlx`, `missing-weights` or `unknown`, report `ocr-on-scan` and `ocr-force-inspect` as blocked, not verified.
+- Build the scan input: `S="$(.cursor/skills/verify-packet/control-packet make-scan)"`. This renders the `multi-doc` fixture to images at 150 dpi, so there is no text layer and every page classifies `scan`. It needs Pillow and pypdfium2 in the packet env. (The builtin `scan` fixture is blank pages, so it cannot prove OCR read anything.)
 
 Steps:
 
-- **OCR on.** `PACKET_VERIFY_CMD_LABEL=ocr-on .cursor/skills/verify-packet/control-packet cli -- parse "$S" -o "$PACKET_VERIFY_ARTIFACTS/ocr-on.json"`. Exit `0`. Stdout says `2 document(s), 4 pages`. In the JSON, the documents span pages 0–1 and 2–3, the titles start with `Northwind Invoice` and `Contoso Lease`, and every block has `source: "vlm"` and `extra.engine: "lighton"`.
+- **OCR on.** `PACKET_VERIFY_CMD_LABEL=ocr-on .cursor/skills/verify-packet/control-packet cli -- parse "$S" -o "$PACKET_VERIFY_ARTIFACTS/ocr-on.json"`. Exit `0`. Stdout says `2 document(s), 4 pages`. In the JSON, the documents span pages 0–1 and 2–3, the titles start with `Northwind Invoice` and `Contoso Lease`, and every block has `source: "vlm"` and `extra.engine: "lighton"`. `ocr-on.stderr` must not contain `OCR unavailable`: when no engine loads, packet still exits `0` and only says so on stderr.
 - **OCR off.** `PACKET_OCR=off PACKET_VERIFY_CMD_LABEL=ocr-off .cursor/skills/verify-packet/control-packet cli -- parse "$S" -o "$PACKET_VERIFY_ARTIFACTS/ocr-off.json"`. Exit `0`. One document spanning pages 0–3, `title: null`, no blocks. Compare with OCR on to see that the split came from OCR text.
 - **Force inspect.** `PACKET_VERIFY_CMD_LABEL=ocr-force .cursor/skills/verify-packet/control-packet cli -- inspect "$(.cursor/skills/verify-packet/control-packet fixture multi-doc)" --force-inspect`. Exit `0`. Every `block_emitted` id ends in `-oN` (an OCR block), for example `multi-doc-p0-o0`. Without the flag the same file gives native ids such as `multi-doc-p0-b0`.
 - **Proof.** Append `feature=ocr input=$S run_id=$PACKET_VERIFY_RUN_ID` to `proof.txt`. Keep both JSON files and the `ocr-*` captures.
