@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from packet.topic import MIN_WORDS, content_words, detect_language, topic_similarity
 from packet.types import Block, BlockKind, PageRef
 
 _PAGE_NUM = re.compile(
@@ -23,6 +24,11 @@ W_HEADER_CHANGED = 0.25
 W_MEDIA_BOX = 0.2
 W_TITLE_TOP = 0.45  # a title that opens the page (below any running header): proposes alone
 W_TITLE = 0.25  # a title lower on the page
+# Weak content evidence (GMA-218): never proposes alone, but counts as an independent
+# signal next to a title, header change or page-number reset.
+W_TOPIC_SHIFT = 0.2  # near-zero vocabulary overlap with the previous two pages
+W_LANGUAGE = 0.25  # the page's language differs from the previous page's
+TOPIC_SHIFT_MAX = 0.01  # cosine of content words at or below this is a topic shift
 PROPOSE = 0.4
 COMBINED = 0.6
 # Without a page-number reset, no combination may reach the splitter's immediate
@@ -50,6 +56,8 @@ class BoundaryDetector:
     _headers: list[str] = field(default_factory=list)
     _header_styles: list[tuple | None] = field(default_factory=list)
     _sizes: list[tuple[float | None, float | None, int]] = field(default_factory=list)
+    _words: list = field(default_factory=list)
+    _langs: list[str | None] = field(default_factory=list)
 
     def observe(self, ref: PageRef, blocks: list[Block]) -> BoundarySignal | None:
         page_num, page_total = _extract_page_number(blocks)
@@ -65,6 +73,10 @@ class BoundaryDetector:
         self._headers.append(header)
         self._header_styles.append(_header_style(blocks))
         self._sizes.append((ref.width, ref.height, ref.rotation))
+        words = content_words(blocks)
+        self._words.append(words)
+        self._langs.append(detect_language(" ".join(
+            b.text for b in blocks if b.kind not in _FURNITURE and b.text)))
 
         if ref.index == 0:
             return None
@@ -115,6 +127,14 @@ class BoundaryDetector:
             reasons.append("title_block")
             score += W_TITLE
 
+        if self._topic_shift():
+            reasons.append("topic_shift")
+            score += W_TOPIC_SHIFT
+        prev_lang, lang = self._langs[-2], self._langs[-1]
+        if prev_lang and lang and prev_lang != lang:
+            reasons.append("language_changed")
+            score += W_LANGUAGE
+
         # "sequence_completed" refines the reset, it is not independent evidence, and a
         # title lower on the page is too common inside documents (OCR labels table and
         # section captions as titles) to count toward a combination.
@@ -130,6 +150,18 @@ class BoundaryDetector:
             confidence=min(score, 0.95),
             reason="+".join(reasons),
         )
+
+
+    def _topic_shift(self) -> bool:
+        cur, prev = self._words[-1], self._words[-2]
+        if sum(cur.values()) < MIN_WORDS or sum(prev.values()) < MIN_WORDS:
+            return False
+        # Only prose compares: tables, figures and forms carry no recognisable language
+        # and their vocabulary says little about the topic.
+        if not (self._langs[-1] and self._langs[-2]):
+            return False
+        before = prev + (self._words[-3] if len(self._words) >= 3 else type(prev)())
+        return topic_similarity(before, cur) <= TOPIC_SHIFT_MAX
 
 
 def _head_candidate(b: Block) -> bool:
