@@ -46,6 +46,9 @@ class TextLine:
     bold: bool
 
 
+LOOSE_PER_PT = 1.15  # typical ascent - descent per point of font size
+
+
 def read_lines(textpage, box_top: float, box_left: float = 0.0) -> list[TextLine]:
     """Group a pdfium text page's characters into lines, in content-stream order, with
     coordinates measured from the crop box's top-left corner. Unrotated pages only."""
@@ -57,6 +60,7 @@ def read_lines(textpage, box_top: float, box_left: float = 0.0) -> list[TextLine
     sizes: Counter = Counter()
     bolds = 0
     lft, rgt, btm, top = (ctypes.c_double() for _ in range(4))
+    loose = pdfium_c.FS_RECTF()
     name = ctypes.create_string_buffer(128)
     flags = ctypes.c_int()
 
@@ -77,13 +81,20 @@ def read_lines(textpage, box_top: float, box_left: float = 0.0) -> list[TextLine
             last_mid = None
             continue
         if ch.isspace():
-            ch = " " if ch not in "\r\n" else ch  # NBSP, tabs, thin spaces separate words
+            ch = " "  # NBSP, tabs, thin spaces separate words
         elif unicodedata.category(ch) in ("Cc", "Cf"):
             continue  # pdfium soft-hyphen markers and other control/format characters
         pdfium_c.FPDFText_GetCharBox(raw, i, lft, rgt, btm, top)
         size = round(pdfium_c.FPDFText_GetFontSize(raw, i), 1)
         t, b = box_top - top.value, box_top - btm.value
-        mid = (t + b) / 2
+        # The loose box spans the font's ascent..descent, so its middle is the same for
+        # every glyph on a line (tight boxes differ for "a" and "K"). Producers that set
+        # the size in the text matrix report a 1pt font; take the size from the loose box.
+        pdfium_c.FPDFText_GetLooseCharBox(raw, i, loose)
+        loose_h = loose.top - loose.bottom
+        mid = box_top - (loose.top + loose.bottom) / 2 if loose_h > 0 else (t + b) / 2
+        if loose_h > 2 * size:
+            size = round(loose_h / LOOSE_PER_PT, 1)
         # Compare with the line's anchor (its first visible char), not the previous
         # char, so superscripts and footnote markers do not chain into a new line.
         if ch.strip() and last_mid is not None and abs(mid - last_mid) > max(size, 1) * 0.6:

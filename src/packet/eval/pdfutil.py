@@ -63,10 +63,12 @@ def write_text_pdf(path: Path, pages: list[list[str]]) -> Path:
 
 
 def write_layout_pdf(path: Path, pages: list[list[tuple]], size: tuple[int, int] = (612, 792),
-                     rotate: int = 0, origin: tuple[int, int] = (0, 0)) -> Path:
+                     rotate: int = 0, origin: tuple[int, int] = (0, 0), scaled: bool = False) -> Path:
     """Born-digital PDF with positioned lines. Each line is ``(text, font_size, y_top)``,
     optionally followed by ``bold`` and ``x``; ``y_top`` is measured down from the top
-    edge of the (unrotated) media box, which starts at ``origin`` and has ``/Rotate``."""
+    edge of the (unrotated) media box, which starts at ``origin`` and has ``/Rotate``.
+    ``scaled`` sets the size in the text matrix with a 1pt font (``1 Tf`` + ``Tm``), as
+    many producers do; pdfium then reports a font size of 1."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     w, h = size
@@ -88,8 +90,11 @@ def write_layout_pdf(path: Path, pages: list[list[tuple]], size: tuple[int, int]
             font = "F2" if len(spec) > 3 and spec[3] else "F1"
             x = spec[4] if len(spec) > 4 else 50
             safe = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-            cmds.append(f"BT /{font} {fs} Tf {origin[0] + x} {origin[1] + h - y_top - fs:.1f} Td "
-                        f"({safe}) Tj ET")
+            px, py = origin[0] + x, origin[1] + h - y_top - fs
+            if scaled:
+                cmds.append(f"BT /{font} 1 Tf {fs} 0 0 {fs} {px} {py:.1f} Tm ({safe}) Tj ET")
+            else:
+                cmds.append(f"BT /{font} {fs} Tf {px} {py:.1f} Td ({safe}) Tj ET")
         stream = ("\n".join(cmds) + "\n").encode("latin-1")
         cid = add(f"<< /Length {len(stream)} >>\nstream\n".encode("latin-1") + stream + b"\nendstream")
         page_ids.append(add(

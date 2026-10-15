@@ -89,7 +89,11 @@ class BoundaryDetector:
         # chapter opener drops its head) is an absence, not a new template.
         # Only a small-type running head counts: a body-size repeated first line that
         # stops (an inserted exhibit) is still a header change.
-        dropped = prev_style is not None and prev_style[2] and style is None and _is_layout(blocks)
+        # Only a chapter-opener shape (title at the top, same page geometry) counts: any
+        # other page that loses the head is still a header change.
+        dropped = (prev_style is not None and prev_style[2] and style is None and _is_layout(blocks)
+                   and _title_position(blocks) == "top"
+                   and not _size_jump(self._sizes[-2], self._sizes[-1]))
         # With layout styles on both pages, a running head whose text changes but whose
         # template (font size, position) does not is a chapter head, not a new document.
         if (self._tagged_header[-2] and header and prev_header and header != prev_header

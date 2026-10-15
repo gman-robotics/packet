@@ -185,3 +185,38 @@ def test_unicode_spaces_still_separate_words(tmp_path):
     with PdfPageSource(pdf) as src:
         text = src.lines_for(0)[0].text
     assert "Section 4" in text
+
+
+def test_text_matrix_scaled_fonts_keep_whole_lines_and_real_size(tmp_path):
+    # Producers that set size in Tm report a 1pt font; mixed-height glyphs must not
+    # split a line into fragments, and the size must reflect the rendered height.
+    spec = [[("Karoon Gas Australia Ltd Annual Report", 11, 100),
+             ("Big Title Here", 24, 60, True)]]
+    pdf = write_layout_pdf(tmp_path / "m.pdf", spec, scaled=True)
+    with PdfPageSource(pdf) as src:
+        lines = src.lines_for(0)
+    assert [ln.text for ln in lines] == ["Karoon Gas Australia Ltd Annual Report", "Big Title Here"]
+    assert abs(lines[0].size - 11) < 2 and abs(lines[1].size - 24) < 3
+
+
+def test_dropped_running_head_without_opener_title_is_still_header_changed():
+    from packet.boundary import BoundaryDetector
+    from packet.types import Block, SourceKind
+
+    def head(i):
+        return Block(id=f"h{i}", page=i, kind=BlockKind.HEADER, text="Acme Report", source=SourceKind.NATIVE,
+                     extra={"layout": True, "size": 8, "top": 20.0, "band": "top", "small": True})
+
+    def para(i, text):
+        return Block(id=f"p{i}", page=i, kind=BlockKind.PARAGRAPH, text=text, source=SourceKind.NATIVE,
+                     extra={"layout": True, "size": 11, "top": 100.0})
+
+    def title(i):
+        return Block(id=f"t{i}", page=i, kind=BlockKind.TITLE, text="Exhibit A", source=SourceKind.NATIVE,
+                     extra={"layout": True, "size": 22, "top": 60.0})
+
+    d = BoundaryDetector()
+    d.observe(PageRef(packet_id="p", index=0), [head(0), para(0, "a")])
+    d.observe(PageRef(packet_id="p", index=1), [head(1), para(1, "b")])
+    sig = d.observe(PageRef(packet_id="p", index=2), [para(2, "Unrelated patent text"), title(2)])
+    assert sig is not None and "header_changed" in sig.reason
