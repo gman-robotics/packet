@@ -38,9 +38,14 @@ _STOP = {
 }
 _STOPSETS = {lang: set(words.split()) for lang, words in _STOP.items()}
 # Content-word filter: long stopwords of every language plus words common to any document.
-_IGNORE = {w for s in _STOPSETS.values() for w in s if len(w) >= 4} | set(
-    ["that", "this", "with", "from", "have", "were", "been", "their", "they", "will", "would", "there", "these", "which", "other", "into", "more", "such", "than", "when", "also", "some", "only", "about", "over", "under", "after", "before", "between", "through", "each", "most", "being", "both", "same", "where", "while", "because", "could", "should", "does", "upon", "within", "without", "total", "year", "years", "page", "pages", "table", "figure", "note", "notes", "section", "shall", "article", "chapter", "part"]
+_GENERIC = (
+    "that this with from have were been their they will would there these which other "
+    "into more such than when also some only about over under after before between "
+    "through each most being both same where while because could should does upon "
+    "within without total year years page pages table figure note notes section shall "
+    "article chapter part"
 )
+_IGNORE = {w for s in _STOPSETS.values() for w in s if len(w) >= 4} | set(_GENERIC.split())
 
 MIN_WORDS = 40  # fewer content words than this: too little text to compare topics
 MIN_LANG_WORDS = 20
