@@ -165,7 +165,6 @@ class LightOnExtractor(_LazyEngine):
             if self._explicit_model:
                 raise OcrConfigError(
                     f"PACKET_OCR_MODEL={self.model!r}: failed to load ({exc})",
-                    pip_extra="ocr-mlx",
                 ) from exc
             raise OcrUnavailable(f"LightOnOCR failed to load: {exc}") from exc
         return (model, processor, (generate, prompt))
@@ -373,14 +372,18 @@ def default_ocr_extractor(config: OCRConfig | None = None) -> Extractor:
 def _ocr_config_from_env() -> OCRConfig | None | _LegacyOcrChain:
     """``None`` disables OCR. ``_LEGACY_OCR_CHAIN`` keeps the historical default chain."""
     raw = os.environ.get("PACKET_OCR", "").strip()
+    model = os.environ.get("PACKET_OCR_MODEL", "").strip() or None
     if not raw:
+        if model:
+            raise OcrConfigError("PACKET_OCR_MODEL needs PACKET_OCR=lighton or auto")
         return _LEGACY_OCR_CHAIN
     lowered = raw.lower()
     if lowered in {"off", "0", "none"}:
         return None
     if lowered in {"on", "1", "true", "yes"}:
+        if model:
+            raise OcrConfigError("PACKET_OCR_MODEL needs PACKET_OCR=lighton or auto")
         return _LEGACY_OCR_CHAIN
-    model = os.environ.get("PACKET_OCR_MODEL", "").strip() or None
     if lowered == "auto":
         return OCRConfig(engine="auto", model=model)
     if lowered in {"lighton", "mlx"}:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from packet.boundary import is_page_label, match_trailing_page_label
+from packet.boundary import keyword_page_label_fraction, match_trailing_page_label
 from packet.types import BBox, Block, PageRef, SourceKind
 from packet.types import BlockKind as K
 
@@ -28,64 +28,32 @@ PADDLE_LABELS: dict[str, K] = {
 }
 _TAG = re.compile(r"!\[([a-z_]+)(\+?)\]\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)[ \t]*\n?")
 _HASHES = re.compile(r"^(#+)\s*")
-_FOOTER_HINT = re.compile(
-    r"\b(confidential|proprietary|draft|internal|private)\b",
-    re.IGNORECASE,
-)
 
 
 def _page_size(ref: PageRef) -> tuple[float, float]:
     return float(ref.width or 612.0), float(ref.height or 792.0)
 
 
-def _is_footer_furniture_line(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped or is_page_label(stripped):
-        return False
-    if len(stripped) > 40:
-        return False
-    if _FOOTER_HINT.search(stripped):
-        return True
-    if stripped.isupper():
-        return True
-    return len(stripped) <= 16 and " " not in stripped
-
-
-def _split_trailing_page_furniture(text: str) -> list[tuple[K, str]]:
-    """Split block text into body, page labels, and short footer lines (reading order)."""
-    lines = [ln for ln in (text or "").splitlines()]
-    while lines and not lines[-1].strip():
-        lines.pop()
-    if not lines:
+def _split_block_page_labels(
+    text: str,
+    body_kind: K,
+    heading_level: int | None,
+) -> list[tuple[K, str, int | None]]:
+    stripped = (text or "").strip()
+    if not stripped:
         return []
+    if keyword_page_label_fraction(stripped) is not None:
+        return [(K.PAGE_NUMBER, stripped, None)]
 
-    tail: list[tuple[K, str]] = []
-    footers: list[str] = []
-    idx = len(lines) - 1
-    while idx >= 0:
-        stripped = lines[idx].strip()
-        if not stripped:
-            idx -= 1
-            continue
-        if is_page_label(stripped):
-            tail = [(K.PAGE_NUMBER, stripped)] + [(K.FOOTER, f) for f in footers]
-            lines = lines[:idx]
-            break
-        if _is_footer_furniture_line(stripped):
-            footers.insert(0, stripped)
-            idx -= 1
-            continue
-        break
-
-    pieces: list[tuple[K, str]] = []
+    pieces: list[tuple[K, str, int | None]] = []
     body_acc: list[str] = []
 
     def flush_body() -> None:
         if body_acc:
-            pieces.append((K.PARAGRAPH, "\n".join(body_acc)))
+            pieces.append((body_kind, "\n".join(body_acc), heading_level))
             body_acc.clear()
 
-    for line in lines:
+    for line in text.splitlines():
         if not line.strip():
             continue
         inline = match_trailing_page_label(line)
@@ -94,14 +62,13 @@ def _split_trailing_page_furniture(text: str) -> list[tuple[K, str]]:
             if body.strip():
                 body_acc.append(body.rstrip())
             flush_body()
-            pieces.append((K.PAGE_NUMBER, label))
-        elif is_page_label(line.strip()):
+            pieces.append((K.PAGE_NUMBER, label, None))
+        elif keyword_page_label_fraction(line.strip()) is not None:
             flush_body()
-            pieces.append((K.PAGE_NUMBER, line.strip()))
+            pieces.append((K.PAGE_NUMBER, line.strip(), None))
         else:
             body_acc.append(line.rstrip())
     flush_body()
-    pieces.extend(tail)
     return pieces
 
 
@@ -153,14 +120,11 @@ def _split_inline_page_furniture(blocks: list[Block]) -> list[Block]:
         if block.kind not in {K.PARAGRAPH, K.UNKNOWN, K.HEADING, K.TITLE}:
             out.append(block)
             continue
-        pieces = _split_trailing_page_furniture(block.text)
-        if len(pieces) == 1 and pieces[0][1].strip() == block.text.strip():
-            out.append(block)
-            continue
+        pieces = _split_block_page_labels(block.text, block.kind, block.heading_level)
         if not pieces:
             out.append(block)
             continue
-        for kind, txt in pieces:
+        for kind, txt, level in pieces:
             out.append(
                 block.model_copy(
                     update={
@@ -168,7 +132,7 @@ def _split_inline_page_furniture(blocks: list[Block]) -> list[Block]:
                         "kind": kind,
                         "text": txt,
                         "reading_order": len(out),
-                        "heading_level": None if kind != K.HEADING else block.heading_level,
+                        "heading_level": level if kind != K.PAGE_NUMBER else None,
                         "extra": dict(block.extra),
                     }
                 )

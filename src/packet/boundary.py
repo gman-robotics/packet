@@ -19,44 +19,51 @@ _WHOLE_P_PREFIX_PAGE = re.compile(
 
 
 _BARE_PN = re.compile(r"^\s*(?:page\s*)?(\d{1,4})\s*$", re.IGNORECASE)
-# Fraction page labels with an explicit ``page`` keyword (OCR inline split; stricter than ``_WHOLE_PAGE_NUM``).
-_PAGE_KEYWORD_FRAC = re.compile(r"^page\s+(\d+)\s*(?:of|/)\s*(\d+)\s*$", re.IGNORECASE)
-_BARE_FRAC_LINE = re.compile(r"^(\d+)\s*(?:of|/)\s*(\d+)\s*$")
-_INLINE_PAGE_SUFFIX = re.compile(
-    r"^(?P<body>.+?)(?P<label>\s+page\s+\d+\s*(?:of|/)\s*\d+)\s*$",
-    re.IGNORECASE,
-)
-_INLINE_P_SUFFIX = re.compile(
-    r"^(?P<body>.+?)(?P<label>\s+(?<![a-zA-Z])p\.?\s*\d+\s*(?:of|/)\s*\d+)\s*$",
-    re.IGNORECASE,
-)
+_PAGE_KEYWORD = re.compile(r"\bpage\b", re.IGNORECASE)
+_P_PREFIX_KEYWORD = re.compile(r"\bp\.", re.IGNORECASE)
 
 
-def is_page_label(text: str) -> bool:
-    """True when the entire line is a page label (whole-line forms only)."""
+def _page_fraction_whole_line(stripped: str) -> tuple[int, int] | None:
+    match = _WHOLE_PAGE_NUM.match(stripped) or _WHOLE_P_PREFIX_PAGE.match(stripped)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def fraction_on_whole_line(text: str) -> tuple[int, int] | None:
+    """First non-empty line's native whole-line page fraction, if any."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return _page_fraction_whole_line(stripped)
+    return None
+
+
+def keyword_page_label_fraction(text: str) -> tuple[int, int] | None:
+    """Native whole-line fraction that also includes a ``page`` or ``p.`` keyword (OCR split gate)."""
     stripped = text.strip()
     if not stripped:
-        return False
-    if _WHOLE_P_PREFIX_PAGE.match(stripped):
-        return True
-    if _PAGE_KEYWORD_FRAC.match(stripped):
-        return True
-    if _BARE_FRAC_LINE.match(stripped):
-        return True
-    return bool(_BARE_PN.match(stripped))
+        return None
+    frac = _page_fraction_whole_line(stripped)
+    if frac is None:
+        return None
+    if not (_PAGE_KEYWORD.search(stripped) or _P_PREFIX_KEYWORD.search(stripped)):
+        return None
+    return frac
 
 
 def match_trailing_page_label(line: str) -> tuple[str, str] | None:
-    """If ``line`` ends with an inline page suffix that includes ``page`` or ``p.``, split it."""
-    for pat in (_INLINE_P_SUFFIX, _INLINE_PAGE_SUFFIX):
-        m = pat.match(line.rstrip())
-        if not m:
+    """Split ``line`` when a trailing suffix passes ``keyword_page_label_fraction``."""
+    s = line.rstrip()
+    for start in range(len(s) - 1, 0, -1):
+        if not s[start - 1].isspace():
             continue
-        body = m.group("body").rstrip()
-        label = m.group("label").strip()
-        if body:
-            return body, label
+        suffix = s[start:].strip()
+        body = s[:start].rstrip()
+        if body and keyword_page_label_fraction(suffix) is not None:
+            return body, suffix
     return None
+
 
 # Signal weights. A signal at or above PROPOSE is proposed alone; two or more
 # independent weak signals together are lifted to COMBINED, which clears the
@@ -243,14 +250,7 @@ def _title_position(blocks: list[Block]) -> str | None:
 
 
 def _fraction_on_whole_line(text: str) -> tuple[int, int] | None:
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        match = _WHOLE_PAGE_NUM.match(stripped) or _WHOLE_P_PREFIX_PAGE.match(stripped)
-        if match:
-            return int(match.group(1)), int(match.group(2))
-    return None
+    return fraction_on_whole_line(text)
 
 
 def _extract_page_number(blocks: list[Block]) -> tuple[int | None, int | None]:

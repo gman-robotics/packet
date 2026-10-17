@@ -92,7 +92,12 @@ def test_mid_sentence_page_number_is_not_split():
 
 def test_multiline_page_label_and_footer_split():
     blocks = parse_lighton_grounding("Body line\nPage 1 of 2\nConfidential", SCAN)
-    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER, BlockKind.FOOTER]
+    assert [b.kind for b in blocks] == [
+        BlockKind.PARAGRAPH,
+        BlockKind.PAGE_NUMBER,
+        BlockKind.PARAGRAPH,
+    ]
+    assert blocks[2].text == "Confidential"
 
 
 def test_multiline_block_splits_inline_footer_on_inner_line():
@@ -158,6 +163,72 @@ def test_packet_ocr_model_rejected_for_paddle(monkeypatch):
     monkeypatch.setenv("PACKET_OCR_MODEL", "other/model")
     with pytest.raises(OcrConfigError, match="PACKET_OCR_MODEL"):
         default_extractors()
+
+
+def test_packet_ocr_model_rejected_on_legacy_chain(monkeypatch):
+    monkeypatch.delenv("PACKET_OCR", raising=False)
+    monkeypatch.setenv("PACKET_OCR_MODEL", "other/model")
+    with pytest.raises(OcrConfigError, match="needs PACKET_OCR=lighton or auto"):
+        default_extractors()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Steps\n1\nDo the thing",
+        "Amount due: 12.00\n1",
+        "Total\n12",
+        "Effective\n2024",
+    ],
+)
+def test_lighton_does_not_split_bare_digit_lines(text):
+    blocks = parse_lighton_grounding(text, SCAN)
+    assert all(b.kind != BlockKind.PAGE_NUMBER for b in blocks)
+
+
+def test_invoice_multiline_splits_page_one_of_two():
+    from packet.boundary import keyword_page_label_fraction
+
+    blocks = parse_lighton_grounding("Invoice\n12\nPage 1 of 2", SCAN)
+    assert blocks[-1].kind == BlockKind.PAGE_NUMBER
+    assert keyword_page_label_fraction(blocks[-1].text) == (1, 2)
+
+
+def test_heading_keeps_kind_when_inline_page_label_splits():
+    blocks = parse_lighton_grounding("# Northwind Invoice Page 1 of 2", SCAN)
+    assert blocks[0].kind == BlockKind.TITLE and blocks[0].heading_level == 1
+    assert blocks[0].text == "Northwind Invoice"
+    assert blocks[1].kind == BlockKind.PAGE_NUMBER
+
+
+def test_whole_block_page_label_becomes_page_number_not_title():
+    blocks = parse_lighton_grounding("Page 1 of 2", SCAN)
+    assert len(blocks) == 1
+    assert blocks[0].kind == BlockKind.PAGE_NUMBER
+
+
+def test_cli_model_load_error_is_one_stderr_line(monkeypatch, capsys, tmp_path):
+    from packet import cli
+    from packet.backends import LightOnExtractor, OcrConfigError
+
+    monkeypatch.setenv("PACKET_OCR", "lighton")
+    monkeypatch.setenv("PACKET_OCR_MODEL", "missing/repo")
+    monkeypatch.setattr("packet.backends._mlx_vlm_available", lambda: True)
+
+    def boom(self):
+        raise OcrConfigError("PACKET_OCR_MODEL='missing/repo': failed to load (404)")
+
+    monkeypatch.setattr(LightOnExtractor, "_load_impl", boom)
+    pdf = _image_only_pdf(tmp_path)
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["parse", str(pdf), "-o", str(tmp_path / "out.json")])
+    assert exited.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    lines = [ln for ln in captured.err.splitlines() if ln.strip()]
+    assert len(lines) == 1
+    assert lines[0].startswith("packet: PACKET_OCR_MODEL=")
+    assert "ocr-mlx" not in lines[0]
 
 
 _INLINE_LIGHTON_PAGES = [

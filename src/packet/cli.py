@@ -34,12 +34,16 @@ def _ocr_config_stderr_line(exc: OcrConfigError) -> str:
     return f"packet: {msg}"
 
 
+def _fail_ocr_config(exc: OcrConfigError) -> None:
+    print(_ocr_config_stderr_line(exc), file=sys.stderr)
+    raise SystemExit(2) from exc
+
+
 def _extractors_or_exit(force_inspect: bool = False):
     try:
         return default_extractors(force_inspect=force_inspect)
     except OcrConfigError as exc:
-        print(_ocr_config_stderr_line(exc), file=sys.stderr)
-        raise SystemExit(2) from exc
+        _fail_ocr_config(exc)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,8 +102,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"not found: {path}", file=sys.stderr)
         return 2
     pipe = Pipeline(extractors=_extractors_or_exit(force_inspect=args.force_inspect))
-    for event in pipe.stream(path):
-        print(f"{event.kind.value:20} page={event.page} {json.dumps(event.payload)[:180]}")
+    try:
+        for event in pipe.stream(path):
+            print(f"{event.kind.value:20} page={event.page} {json.dumps(event.payload)[:180]}")
+    except OcrConfigError as exc:
+        _fail_ocr_config(exc)
     return 0
 
 
@@ -157,6 +164,8 @@ def _cmd_parse(args) -> int:
                 print(f"wrote {out} ({packet.document_count()} document(s), "
                       f"{packet.origin.page_count} pages)")
             row.update(ok=True, pages=packet.origin.page_count, documents=packet.document_count())
+        except OcrConfigError as exc:
+            _fail_ocr_config(exc)
         except Exception as exc:  # one bad file must not stop a batch
             failed += 1
             row.update(ok=False, error=f"{type(exc).__name__}: {exc}")
