@@ -12,6 +12,10 @@ _WHOLE_PAGE_NUM = re.compile(
     r"^(?:page\s*)?(\d+)\s*(?:of|/)\s*(\d+)\s*$",
     re.IGNORECASE,
 )
+_WHOLE_P_PREFIX_PAGE = re.compile(
+    r"^p\.?\s*(\d+)\s*(?:of|/)\s*(\d+)\s*$",
+    re.IGNORECASE,
+)
 
 
 _BARE_PN = re.compile(r"^\s*(?:page\s*)?(\d{1,4})\s*$", re.IGNORECASE)
@@ -205,7 +209,7 @@ def _fraction_on_whole_line(text: str) -> tuple[int, int] | None:
         stripped = line.strip()
         if not stripped:
             continue
-        match = _WHOLE_PAGE_NUM.match(stripped)
+        match = _WHOLE_PAGE_NUM.match(stripped) or _WHOLE_P_PREFIX_PAGE.match(stripped)
         if match:
             return int(match.group(1)), int(match.group(2))
     return None

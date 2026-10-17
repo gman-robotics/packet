@@ -121,6 +121,8 @@ class LookaheadSplitter:
         if s.total is not None and num > s.total:
             return False
         gap = index - s.index
+        if gap > self.window + 1:
+            return False
         if s.num is None:
             # Opened on an unnumbered page. The first printed number belongs to
             # this document when it fits the pages since the split (the opening
