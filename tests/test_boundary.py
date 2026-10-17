@@ -1,4 +1,4 @@
-from packet.boundary import BoundaryDetector
+from packet.boundary import BoundaryDetector, _extract_page_number
 from packet.types import Block, BlockKind, PageRef, SourceKind
 
 
@@ -35,3 +35,13 @@ def test_printed_page_number_wins_over_n_of_m_in_header():
         _block(0, "Page 7 of 12", BlockKind.PAGE_NUMBER),
     ])
     assert (d.last_page_number, d.last_page_total) == (7, 12)
+
+
+def test_spectroscopic_fraction_in_body_is_not_page_number():
+    blocks = [_block(0, "2S\n1/2 → n′")]
+    assert _extract_page_number(blocks) == (None, None)
+
+
+def test_whole_line_page_fraction_in_footer():
+    blocks = [_block(0, "Page 1 of 2", BlockKind.FOOTER)]
+    assert _extract_page_number(blocks) == (1, 2)

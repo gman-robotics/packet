@@ -6,8 +6,10 @@ from dataclasses import dataclass, field
 from packet.topic import MIN_WORDS, content_words, detect_language, same_language, topic_similarity
 from packet.types import Block, BlockKind, PageRef
 
-_PAGE_NUM = re.compile(
-    r"\b(?:page\s*)?(\d+)\s*(?:of|/)\s*(\d+)\b",
+# Body and furniture lines count only when the entire line is a page label (not e.g. 1/2 in
+# spectroscopic notation embedded in prose).
+_WHOLE_PAGE_NUM = re.compile(
+    r"^(?:page\s*)?(\d+)\s*(?:of|/)\s*(\d+)\s*$",
     re.IGNORECASE,
 )
 
@@ -198,14 +200,25 @@ def _title_position(blocks: list[Block]) -> str | None:
     return "lower" if any(b.kind == BlockKind.TITLE for b in body) else None
 
 
+def _fraction_on_whole_line(text: str) -> tuple[int, int] | None:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = _WHOLE_PAGE_NUM.match(stripped)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    return None
+
+
 def _extract_page_number(blocks: list[Block]) -> tuple[int | None, int | None]:
     # A tagged PAGE_NUMBER wins: header/footer text often holds "N of M" or "N/M"
     # (a volume label, a date) that must not shadow the printed page number.
     for block in blocks:
         if block.kind == BlockKind.PAGE_NUMBER:
-            match = _PAGE_NUM.search(block.text)
-            if match:
-                return int(match.group(1)), int(match.group(2))
+            frac = _fraction_on_whole_line(block.text)
+            if frac:
+                return frac[0], frac[1]
             bare = _BARE_PN.match(block.text)
             if bare:
                 return int(bare.group(1)), None
@@ -213,13 +226,13 @@ def _extract_page_number(blocks: list[Block]) -> tuple[int | None, int | None]:
         is_furniture = block.kind in {BlockKind.PAGE_NUMBER, BlockKind.FOOTER, BlockKind.HEADER}
         if not is_furniture and (block.kind is not BlockKind.PARAGRAPH or len(block.text) > 40):
             continue
-        match = _PAGE_NUM.search(block.text)
-        if match:
-            return int(match.group(1)), int(match.group(2))
+        frac = _fraction_on_whole_line(block.text)
+        if frac:
+            return frac[0], frac[1]
     for block in blocks[-2:]:
-        match = _PAGE_NUM.search(block.text)
-        if match:
-            return int(match.group(1)), int(match.group(2))
+        frac = _fraction_on_whole_line(block.text)
+        if frac:
+            return frac[0], frac[1]
     return None, None
 
 
