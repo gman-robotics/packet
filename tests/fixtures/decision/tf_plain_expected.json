@@ -1,0 +1,6 @@
+{
+  "probability": 0.62,
+  "scores": null,
+  "flags": ["no_images", "no_logprobs", "no_structured_output"],
+  "degraded_pages": []
+}
