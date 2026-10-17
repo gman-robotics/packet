@@ -180,6 +180,9 @@ def test_format_rotation_empty_when_missing_or_invalid():
     assert _format_rotation([612, 792]) == ""
     assert _format_rotation([612, 792, None]) == ""
     assert _format_rotation([612, 792, 45]) == ""
+    assert _format_rotation([612, 792, 90.5]) == ""
+    assert _format_rotation([612, 792, "90"]) == ""
+    assert _format_rotation([612, 792, False]) == ""
     assert _format_rotation([612, 792, 0]) == "0"
     assert _format_rotation([612, 792, 90]) == "90"
 

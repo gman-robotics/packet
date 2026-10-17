@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
+import math
 import os
 import time
 import urllib.error
@@ -30,6 +32,14 @@ _BACKOFF_S = (0.5, 1.0)
 
 class _HttpRetryExhausted(Exception):
     """All retryable attempts failed for one decide call."""
+
+
+_RETRYABLE_ERRORS = (
+    TimeoutError,
+    urllib.error.URLError,
+    OSError,
+    http.client.IncompleteRead,
+)
 
 _BOUNDARY_RESPONSE_FORMAT: dict[str, Any] = {
     "type": "json_schema",
@@ -144,12 +154,15 @@ class HttpDecisionBackend:
 
         try:
             envelope = json.loads(raw_body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise DecisionBackendError(
-                _safe_http_error("invalid json", request.page_index)
-            ) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._record_strike(request.page_index)
+            return DecisionResult(probability=None, scores=None, label=None)
 
-        content = self._extract_message_content(envelope)
+        content = self._try_extract_message_content(envelope)
+        if content is None:
+            self._record_strike(request.page_index)
+            return DecisionResult(probability=None, scores=None, label=None)
+
         result = self._parse_message_content(content)
         if result.probability is None:
             self._record_strike(request.page_index)
@@ -227,18 +240,11 @@ class HttpDecisionBackend:
             attempts += 1
             try:
                 status, body = self._single_post(url, headers, payload)
-            except TimeoutError:
+            except _RETRYABLE_ERRORS:
                 if attempts >= max_attempts:
                     raise _HttpRetryExhausted()
                 self._sleep(_BACKOFF_S[min(attempts - 1, len(_BACKOFF_S) - 1)])
                 continue
-            except urllib.error.URLError as exc:
-                if isinstance(exc.reason, TimeoutError):
-                    if attempts >= max_attempts:
-                        raise _HttpRetryExhausted()
-                    self._sleep(_BACKOFF_S[min(attempts - 1, len(_BACKOFF_S) - 1)])
-                    continue
-                raise DecisionBackendError(_safe_http_error("connection", page_index)) from exc
 
             if status == 200:
                 return status, body
@@ -285,15 +291,21 @@ class HttpDecisionBackend:
         return status, body
 
     @staticmethod
-    def _extract_message_content(envelope: Any) -> str:
-        try:
-            choices = envelope["choices"]
-            message = choices[0]["message"]
-            content = message["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise DecisionBackendError("decision http missing message content") from exc
+    def _try_extract_message_content(envelope: Any) -> str | None:
+        if not isinstance(envelope, dict):
+            return None
+        choices = envelope.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return None
+        first = choices[0]
+        if not isinstance(first, dict):
+            return None
+        message = first.get("message")
+        if not isinstance(message, dict):
+            return None
+        content = message.get("content")
         if not isinstance(content, str):
-            raise DecisionBackendError("decision http message content must be a string")
+            return None
         return content
 
     def _parse_message_content(self, content: str) -> DecisionResult:
@@ -324,6 +336,8 @@ class HttpDecisionBackend:
             return DecisionResult(probability=None, scores=None, label=None)
 
         p = float(prob)
+        if not math.isfinite(p):
+            return DecisionResult(probability=None, scores=None, label=None)
         scores: list[dict[str, Any]] | None = None
         if isinstance(scores_raw, list):
             parsed_scores: list[dict[str, Any]] = []
@@ -348,7 +362,7 @@ class HttpDecisionBackend:
             value = float(text)
         except ValueError:
             return None
-        if value < 0.0 or value > 1.0:
+        if not math.isfinite(value) or value < 0.0 or value > 1.0:
             return None
         return value
 

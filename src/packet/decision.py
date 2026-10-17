@@ -107,14 +107,10 @@ def _format_rotation(size: tuple[Any, ...] | list[Any] | None) -> str:
     if not size or len(size) < 3:
         return ""
     rot = size[2]
-    if rot is None:
+    if rot is None or type(rot) is not int:
         return ""
-    try:
-        rot_int = int(rot)
-    except (TypeError, ValueError):
-        return ""
-    if rot_int in _VALID_ROTATIONS:
-        return str(rot_int)
+    if rot in _VALID_ROTATIONS:
+        return str(rot)
     return ""
 
 

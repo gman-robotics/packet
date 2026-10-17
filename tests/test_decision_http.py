@@ -6,6 +6,7 @@ import importlib
 import json
 import sys
 import threading
+import urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, ClassVar
@@ -18,7 +19,11 @@ from packet.decision import (
     DecisionRequest,
     load_decision_config,
 )
-from packet.decision_http import HttpDecisionBackend, load_http_decision_backend
+from packet.decision_http import (
+    _BOUNDARY_RESPONSE_FORMAT,
+    HttpDecisionBackend,
+    load_http_decision_backend,
+)
 from packet.types import Block, BlockKind, PageClass, PageRef, SourceKind
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "decision"
@@ -67,6 +72,7 @@ def _envelope(content: str) -> dict[str, Any]:
 class _FakeChatHandler(BaseHTTPRequestHandler):
     script: ClassVar[list[tuple[int, str | bytes, dict[str, str] | None]]] = []
     captured: ClassVar[list[dict[str, Any]]] = []
+    captured_headers: ClassVar[list[dict[str, str]]] = []
     connect_count: ClassVar[int] = 0
 
     def log_message(self, format: str, *args: Any) -> None:
@@ -78,6 +84,9 @@ class _FakeChatHandler(BaseHTTPRequestHandler):
         assert host == "127.0.0.1", f"unexpected host {host!r}"
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length)
+        _FakeChatHandler.captured_headers.append(
+            {name: self.headers[name] for name in self.headers}
+        )
         _FakeChatHandler.captured.append(json.loads(raw.decode("utf-8")))
         if not _FakeChatHandler.script:
             self.send_response(500)
@@ -108,6 +117,7 @@ class _FakeServer:
     def __init__(self) -> None:
         _FakeChatHandler.script = []
         _FakeChatHandler.captured = []
+        _FakeChatHandler.captured_headers = []
         _FakeChatHandler.connect_count = 0
         self._httpd = HTTPServer(("127.0.0.1", 0), _FakeChatHandler)
         self.port = self._httpd.server_address[1]
@@ -225,7 +235,7 @@ def test_structured_response_matches_expected():
         server.queue_json(200, _envelope(content))
         result = backend.decide(_page1_request())
         body = _FakeChatHandler.captured[-1]
-        assert body.get("response_format") is not None
+        assert body["response_format"] == _BOUNDARY_RESPONSE_FORMAT
         snap = _snapshot_backend(backend, result)
         assert snap["probability"] == expected["probability"]
         assert snap["label"] == expected["label"]
@@ -336,6 +346,203 @@ def test_third_strike_raises():
         assert "3" in msg
         assert garbage not in msg
         assert SENTINEL_KEY not in msg
+    finally:
+        server.close()
+
+
+def _retry_strike_with_urlopen(exc: BaseException) -> None:
+    sleeps: list[float] = []
+    server = _FakeServer()
+    try:
+        backend = _backend(server, max_retries=2, max_calls=10)
+        backend._sleep = sleeps.append  # type: ignore[method-assign]
+        calls = 0
+
+        def urlopen(req, timeout=None):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            raise exc
+
+        backend._urlopen = urlopen  # type: ignore[method-assign]
+        result = backend.decide(_page1_request())
+        assert result.probability is None
+        assert calls == 3
+        assert sleeps == [0.5, 1.0]
+        assert backend.degraded_pages == [1]
+    finally:
+        server.close()
+
+
+def test_timeout_bare_retries_to_strike():
+    _retry_strike_with_urlopen(TimeoutError("timed out"))
+
+
+def test_timeout_urlerror_retries_to_strike():
+    _retry_strike_with_urlopen(urllib.error.URLError(TimeoutError("timed out")))
+
+
+def test_connection_refused_retries_to_strike():
+    sleeps: list[float] = []
+    server = _FakeServer()
+    try:
+        backend = _backend(server, max_retries=2, max_calls=10)
+        backend._sleep = sleeps.append  # type: ignore[method-assign]
+        calls = 0
+
+        def urlopen(req, timeout=None):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            raise urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+
+        backend._urlopen = urlopen  # type: ignore[method-assign]
+        result = backend.decide(_page1_request())
+        assert result.probability is None
+        assert calls == 3
+        assert sleeps == [0.5, 1.0]
+        assert backend.degraded_pages == [1]
+    finally:
+        server.close()
+
+
+def test_connection_reset_on_read_retries_to_strike():
+    sleeps: list[float] = []
+    server = _FakeServer()
+    try:
+        backend = _backend(server, max_retries=2, max_calls=10)
+        backend._sleep = sleeps.append  # type: ignore[method-assign]
+        calls = 0
+
+        class _Resp:
+            status = 200
+
+            def read(self) -> bytes:
+                raise ConnectionResetError(104, "Connection reset by peer")
+
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        def urlopen(req, timeout=None):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            return _Resp()
+
+        backend._urlopen = urlopen  # type: ignore[method-assign]
+        result = backend.decide(_page1_request())
+        assert result.probability is None
+        assert calls == 3
+        assert sleeps == [0.5, 1.0]
+        assert backend.degraded_pages == [1]
+    finally:
+        server.close()
+
+
+def test_200_invalid_json_records_strike():
+    server = _FakeServer()
+    try:
+        backend = _backend(server, max_calls=10)
+        server.queue(200, b"{not-json")
+        result = backend.decide(_page1_request())
+        assert result.probability is None
+        assert backend.degraded_pages == [1]
+    finally:
+        server.close()
+
+
+def test_200_empty_choices_records_strike():
+    server = _FakeServer()
+    try:
+        backend = _backend(server, max_calls=10)
+        server.queue_json(200, {"choices": []})
+        result = backend.decide(_page1_request())
+        assert result.probability is None
+        assert backend.degraded_pages == [1]
+    finally:
+        server.close()
+
+
+def test_200_non_string_content_records_strike():
+    server = _FakeServer()
+    try:
+        backend = _backend(server, max_calls=10)
+        server.queue_json(200, {"choices": [{"message": {"content": 0.62}}]})
+        result = backend.decide(_page1_request())
+        assert result.probability is None
+        assert backend.degraded_pages == [1]
+    finally:
+        server.close()
+
+
+def test_third_strike_on_invalid_json_envelope():
+    server = _FakeServer()
+    try:
+        backend = _backend(server, max_calls=10)
+        for _ in range(3):
+            server.queue(200, b"not-json")
+        for page in (1, 2):
+            backend.decide(
+                DecisionRequest(
+                    task="boundary",
+                    page_index=page,
+                    facts=_facts_for_page(page),
+                    blocks=_page1_request().blocks,
+                    ref=PageRef(packet_id="p", index=page, page_class=PageClass.MIXED, class_confidence=0.45),
+                )
+            )
+        with pytest.raises(DecisionBackendError, match="unparseable"):
+            backend.decide(
+                DecisionRequest(
+                    task="boundary",
+                    page_index=3,
+                    facts=_facts_for_page(3),
+                    blocks=_page1_request().blocks,
+                    ref=PageRef(packet_id="p", index=3, page_class=PageClass.MIXED, class_confidence=0.45),
+                )
+            )
+    finally:
+        server.close()
+
+
+def test_plain_nan_inf_not_probability():
+    from packet.decision_http import HttpDecisionBackend as HB
+
+    assert HB._try_plain_probability("nan") is None
+    assert HB._try_plain_probability("inf") is None
+    server = _FakeServer()
+    try:
+        backend = _backend(server, max_calls=10)
+        server.queue_json(200, _envelope("nan"))
+        result = backend.decide(_page1_request())
+        assert result.probability is None
+        assert backend.degraded_pages == [1]
+    finally:
+        server.close()
+
+
+def test_auth_env_sends_bearer_not_in_body():
+    server = _FakeServer()
+    try:
+        backend = _backend(server, auth="env", max_calls=10)
+        server.queue_json(200, _envelope("0.5"))
+        backend.decide(_page1_request())
+        headers = _FakeChatHandler.captured_headers[-1]
+        assert headers.get("Authorization") == f"Bearer {SENTINEL_KEY}"
+        body_text = json.dumps(_FakeChatHandler.captured[-1])
+        assert SENTINEL_KEY not in body_text
+    finally:
+        server.close()
+
+
+def test_auth_none_omits_authorization():
+    server = _FakeServer()
+    try:
+        backend = _backend(server, auth="none", max_calls=10)
+        server.queue_json(200, _envelope("0.5"))
+        backend.decide(_page1_request())
+        headers = _FakeChatHandler.captured_headers[-1]
+        assert "Authorization" not in headers
     finally:
         server.close()
 
@@ -594,7 +801,7 @@ def test_logistic_config_userinfo_rejected(tmp_path: Path):
         load_decision_config(path)
 
 
-def test_load_http_config():
+def test_load_http_config(tmp_path: Path):
     data = {
         "backend": "http",
         "base_url": "http://127.0.0.1:8080/v1",
@@ -602,14 +809,11 @@ def test_load_http_config():
         "auth": "env",
         "max_calls": 5,
     }
-    path = FIXTURES / "_tmp_http_config.json"
+    path = tmp_path / "http_config.json"
     path.write_text(json.dumps(data))
-    try:
-        backend = load_decision_config(path)
-        assert isinstance(backend, HttpDecisionBackend)
-        assert backend.max_calls == 5
-    finally:
-        path.unlink(missing_ok=True)
+    backend = load_decision_config(path)
+    assert isinstance(backend, HttpDecisionBackend)
+    assert backend.max_calls == 5
 
 
 def test_http_backend_from_loader_factory():
