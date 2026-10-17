@@ -19,12 +19,22 @@ _WHOLE_P_PREFIX_PAGE = re.compile(
 
 
 _BARE_PN = re.compile(r"^\s*(?:page\s*)?(\d{1,4})\s*$", re.IGNORECASE)
-_PAGE_KEYWORD = re.compile(r"\bpage\b", re.IGNORECASE)
-_P_PREFIX_KEYWORD = re.compile(r"\bp\.", re.IGNORECASE)
+_WHOLE_PAGE_PREFIXED = re.compile(
+    r"^page\s*(\d+)\s*(?:of|/)\s*(\d+)\s*$",
+    re.IGNORECASE,
+)
 
 
 def _page_fraction_whole_line(stripped: str) -> tuple[int, int] | None:
     match = _WHOLE_PAGE_NUM.match(stripped) or _WHOLE_P_PREFIX_PAGE.match(stripped)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def _prefixed_page_label_fraction_whole_line(stripped: str) -> tuple[int, int] | None:
+    """``page…`` or ``p.`` whole-line fraction (not bare ``N of M`` / ``N/M``)."""
+    match = _WHOLE_PAGE_PREFIXED.match(stripped) or _WHOLE_P_PREFIX_PAGE.match(stripped)
     if match:
         return int(match.group(1)), int(match.group(2))
     return None
@@ -40,16 +50,11 @@ def fraction_on_whole_line(text: str) -> tuple[int, int] | None:
 
 
 def keyword_page_label_fraction(text: str) -> tuple[int, int] | None:
-    """Native whole-line fraction that also includes a ``page`` or ``p.`` keyword (OCR split gate)."""
+    """Whole-line page fraction with a required ``page`` or ``p.`` prefix (OCR split gate)."""
     stripped = text.strip()
     if not stripped:
         return None
-    frac = _page_fraction_whole_line(stripped)
-    if frac is None:
-        return None
-    if not (_PAGE_KEYWORD.search(stripped) or _P_PREFIX_KEYWORD.search(stripped)):
-        return None
-    return frac
+    return _prefixed_page_label_fraction_whole_line(stripped)
 
 
 def match_trailing_page_label(line: str) -> tuple[str, str] | None:

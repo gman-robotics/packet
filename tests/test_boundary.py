@@ -1,4 +1,11 @@
-from packet.boundary import BoundaryDetector, _extract_page_number
+import pytest
+
+from packet.boundary import (
+    BoundaryDetector,
+    _extract_page_number,
+    _prefixed_page_label_fraction_whole_line,
+    keyword_page_label_fraction,
+)
 from packet.types import Block, BlockKind, PageRef, SourceKind
 
 
@@ -52,3 +59,33 @@ def test_whole_line_p_prefix_page_labels():
     assert _extract_page_number([_block(0, "p 1 of 2", BlockKind.PAGE_NUMBER)]) == (1, 2)
     assert _extract_page_number([_block(0, "P. 1/2", BlockKind.FOOTER)]) == (1, 2)
     assert _extract_page_number([_block(0, "- 1 -", BlockKind.PAGE_NUMBER)]) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("page1 of 2", (1, 2)),
+        ("Page1 of 2", (1, 2)),
+        ("Page 1 of 2", (1, 2)),
+        ("p. 1 of 2", (1, 2)),
+        ("1 of 2", None),
+        ("1/2", None),
+        ("Chapter 1 of 2", None),
+        ("Total Page 3", None),
+        ("pages 1 of 2", None),
+        ("see pp. 1 of 2", None),
+    ],
+)
+def test_keyword_page_label_matches_prefixed_native_rule(text, expected):
+    assert keyword_page_label_fraction(text) == expected
+    stripped = text.strip()
+    native = _prefixed_page_label_fraction_whole_line(stripped)
+    assert keyword_page_label_fraction(text) == native
+
+
+def test_trailing_page1_label_on_invoice_line():
+    from packet.boundary import match_trailing_page_label
+
+    split = match_trailing_page_label("Amount due: 12.00 page1 of 2")
+    assert split == ("Amount due: 12.00", "page1 of 2")
+    assert keyword_page_label_fraction(split[1]) == (1, 2)

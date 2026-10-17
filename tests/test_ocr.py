@@ -190,9 +190,78 @@ Page 1 of 2"""
     assert blocks[1].kind == BlockKind.PAGE_NUMBER
 
 
-def test_untagged_whole_page_label_stays_paragraph():
+def test_untagged_whole_page_label_becomes_page_number():
     blocks = parse_lighton_grounding("Page 1 of 2", SCAN)
-    assert len(blocks) == 1 and blocks[0].kind == BlockKind.PARAGRAPH
+    assert len(blocks) == 1 and blocks[0].kind == BlockKind.PAGE_NUMBER
+
+
+def test_whole_page_label_never_becomes_document_title():
+    from packet.assemble import Assembler
+
+    blocks = parse_lighton_grounding("Page 1 of 2\n\nNorthwind Invoice Amount due: 12.00", SCAN)
+    assert blocks[0].kind == BlockKind.PAGE_NUMBER
+    assert blocks[1].kind == BlockKind.PARAGRAPH
+    doc = Assembler().build_document("d", blocks)
+    assert doc.title == "Northwind Invoice Amount due: 12.00"
+
+
+def test_tagged_title_whole_page_label_is_page_number_not_title():
+    raw = """![title](80,70,920,140)
+# Page 1 of 2
+![text](80,100,920,200)
+Northwind Invoice Amount due: 12.00"""
+    blocks = parse_lighton_grounding(raw, SCAN)
+    assert blocks[0].kind == BlockKind.PAGE_NUMBER
+    assert blocks[1].text == "Northwind Invoice Amount due: 12.00"
+
+
+def test_markdown_title_whole_page_label_is_page_number():
+    blocks = parse_lighton_grounding("# Page 1 of 2\n\nNorthwind Invoice Amount due: 12.00", SCAN)
+    assert blocks[0].kind == BlockKind.PAGE_NUMBER
+    assert blocks[1].text == "Northwind Invoice Amount due: 12.00"
+
+
+def test_page_label_block_does_not_emit_title_top_boundary_signal():
+    from packet.boundary import BoundaryDetector
+
+    def _ref(i: int) -> PageRef:
+        return PageRef(packet_id="p", index=i, width=612.0, height=792.0)
+
+    det = BoundaryDetector()
+    det.observe(
+        _ref(0),
+        parse_lighton_grounding(_lighton_real_page_text(1), _ref(0)),
+    )
+    sig = det.observe(
+        _ref(1),
+        parse_lighton_grounding("Page 1 of 2\n\nNorthwind Invoice Amount due: 12.00", _ref(1)),
+    )
+    assert sig is None or "title_top" not in sig.reason
+
+
+def test_pre_tag_text_expanded_only_once():
+    raw = """Intro Page 1 of 2 Page 2 of 2
+![text](80,175,920,225)
+More body"""
+    blocks = parse_lighton_grounding(raw, SCAN)
+    pn = [b for b in blocks if b.kind == BlockKind.PAGE_NUMBER]
+    assert len(pn) == 1 and pn[0].text == "Page 2 of 2"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["1. Pay rent Page 1 of 2", "- Item Page 1 of 2"],
+)
+def test_list_item_trailing_page_label_splits(text):
+    blocks = parse_lighton_grounding(text, SCAN)
+    assert [b.kind for b in blocks] == [BlockKind.LIST_ITEM, BlockKind.PAGE_NUMBER]
+
+
+def test_tagged_list_does_not_split_trailing_page_label():
+    raw = """![list](80,175,920,225)
+1. Pay rent Page 1 of 2"""
+    blocks = parse_lighton_grounding(raw, SCAN)
+    assert len(blocks) == 1 and blocks[0].kind == BlockKind.LIST_ITEM
 
 
 def test_cli_model_load_error_is_one_stderr_line(monkeypatch, capsys, tmp_path):
@@ -280,6 +349,12 @@ class _BoRealLightonPages:
 def test_lighton_real_fixture_files_match_expected_sha256():
     for page in range(4):
         _load_lighton_real_fixture_bytes(page)
+
+
+def test_page1_of_2_trailing_split_on_text_block():
+    blocks = parse_lighton_grounding("Amount due: 12.00 page1 of 2", SCAN)
+    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
+    assert blocks[1].text == "page1 of 2"
 
 
 def test_bo_real_lighton_format_splits_body_and_page_number():
