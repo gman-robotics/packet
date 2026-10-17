@@ -73,6 +73,77 @@ def test_parse_lighton_empty_is_empty():
     assert parse_lighton_grounding("  \n", SCAN) == []
 
 
+def test_inline_page_footer_splits_from_lighton_paragraph():
+    blocks = parse_lighton_grounding("Northwind Invoice Amount due: 12.00 Page 1 of 2", SCAN)
+    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
+    assert "12.00" in blocks[0].text and blocks[1].text == "Page 1 of 2"
+    assert all(b.source == SourceKind.VLM and b.extra.get("engine") == "lighton" for b in blocks)
+
+
+def test_no_footer_leaves_lighton_block_unchanged():
+    blocks = parse_lighton_grounding("Just body text without a page label.", SCAN)
+    assert len(blocks) == 1 and blocks[0].kind == BlockKind.PARAGRAPH
+
+
+def test_mid_sentence_page_number_is_not_split():
+    blocks = parse_lighton_grounding("See Page 3 for the appendix details.", SCAN)
+    assert len(blocks) == 1 and "Page 3" in blocks[0].text
+
+
+def test_multiline_page_label_and_footer_split():
+    blocks = parse_lighton_grounding("Body line\nPage 1 of 2\nConfidential", SCAN)
+    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER, BlockKind.FOOTER]
+
+
+_INLINE_LIGHTON_PAGES = [
+    "Northwind Invoice Amount due: 12.00 Page 1 of 2",
+    "Thank you for your business. Page 2 of 2",
+    "Contoso Lease Premises: 1 Main St Page 1 of 2",
+    "Signatures follow. Page 2 of 2",
+]
+
+
+class _InlineLightonPages:
+    needs_image = True
+
+    def supports(self, page_class):
+        return True
+
+    def extract(self, ref, text, image=None):
+        return parse_lighton_grounding(_INLINE_LIGHTON_PAGES[ref.index], ref)
+
+
+def test_inline_lighton_pages_split_multi_doc_fixture(tmp_path):
+    from packet.eval.fixtures import build_builtin
+
+    fx = next(f for f in build_builtin(tmp_path) if f.name == "multi-doc")
+    pipe = Pipeline(
+        extractors=[
+            EscalatingExtractor(
+                native=NativeTextExtractor(),
+                ocr=_InlineLightonPages(),
+                force_inspect=True,
+            )
+        ]
+    )
+    packet = pipe.parse(fx.pdf)
+    assert packet.document_count() == 2 and packet.origin.page_count == 4
+
+
+def test_cli_ocr_config_error_is_one_line_without_traceback(monkeypatch, capsys, tmp_path):
+    from packet import cli
+    from packet.eval.pdfutil import write_text_pdf
+
+    monkeypatch.setenv("PACKET_OCR", "lighton")
+    monkeypatch.setattr("packet.backends._mlx_vlm_available", lambda: False)
+    pdf = write_text_pdf(tmp_path / "one.pdf", [["Hello world with enough text here."]])
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["parse", str(pdf), "-o", str(tmp_path / "out.json")])
+    assert exited.value.code == 2
+    err = capsys.readouterr().err
+    assert "mlx" in err.lower() and "Traceback" not in err
+
+
 def test_parse_paddle_blocks_scales_pixels_to_points():
     raw = [{"label": "doc_title", "bbox": [100, 50, 500, 90], "text": "Lease"},
            {"label": "number", "bbox": [1000, 1600, 1100, 1630], "text": "3"},

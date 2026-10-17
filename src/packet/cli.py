@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-from packet.backends import default_extractors
+from packet.backends import OcrConfigError, default_extractors
 from packet.pipeline import Pipeline
 
 
@@ -18,6 +18,22 @@ def _unit_interval(value: str) -> float:
     if not (0.0 <= x <= 1.0):  # rejects nan, inf, negatives, > 1
         raise argparse.ArgumentTypeError(f"must be within [0, 1]: {value!r}")
     return x
+
+
+def _extractors_or_exit(force_inspect: bool = False):
+    try:
+        return default_extractors(force_inspect=force_inspect)
+    except OcrConfigError as exc:
+        print(f"packet: {exc}", file=sys.stderr)
+        hint = (
+            "install mlx-vlm for LightOn (Apple silicon) or paddleocr for Paddle"
+        )
+        if "paddle" in str(exc).lower():
+            hint = "install paddleocr and paddlepaddle for Paddle OCR"
+        elif "mlx" in str(exc).lower() or "lighton" in str(exc).lower():
+            hint = "install mlx-vlm on Apple silicon for LightOn OCR"
+        print(f"packet: {hint}", file=sys.stderr)
+        raise SystemExit(2) from exc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     if not path.exists():
         print(f"not found: {path}", file=sys.stderr)
         return 2
-    pipe = Pipeline(extractors=default_extractors(force_inspect=args.force_inspect))
+    pipe = Pipeline(extractors=_extractors_or_exit(force_inspect=args.force_inspect))
     for event in pipe.stream(path):
         print(f"{event.kind.value:20} page={event.page} {json.dumps(event.payload)[:180]}")
     return 0
@@ -102,7 +118,7 @@ def _cmd_parse(args) -> int:
 
     # One pipeline and one set of extractors for the whole run; OCR engines also sit in
     # the process-level cache, so the model loads once however many files there are.
-    extractors = default_extractors(force_inspect=args.force_inspect)
+    extractors = _extractors_or_exit(force_inspect=args.force_inspect)
     pipe = Pipeline(extractors=extractors)
     if args.no_split:
         pipe.config.split_on_boundary = False

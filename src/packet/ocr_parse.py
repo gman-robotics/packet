@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from packet.boundary import _WHOLE_P_PREFIX_PAGE, _WHOLE_PAGE_NUM
 from packet.types import BBox, Block, PageRef, SourceKind
 from packet.types import BlockKind as K
 
@@ -27,6 +28,14 @@ PADDLE_LABELS: dict[str, K] = {
 }
 _TAG = re.compile(r"!\[([a-z_]+)(\+?)\]\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)[ \t]*\n?")
 _HASHES = re.compile(r"^(#+)\s*")
+_TRAILING_PAGE_FRAC = re.compile(
+    r"^(?P<body>.+?)(?P<label>\s+(?:page\s*)?\d+\s*(?:of|/)\s*\d+)\s*$",
+    re.IGNORECASE,
+)
+_TRAILING_P_PREFIX_FRAC = re.compile(
+    r"^(?P<body>.+?)(?P<label>\s+p\.?\s*\d+\s*(?:of|/)\s*\d+)\s*$",
+    re.IGNORECASE,
+)
 
 
 def _page_size(ref: PageRef) -> tuple[float, float]:
@@ -72,6 +81,85 @@ def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
                       x1=x1 / 1000 * wpt, y1=y1 / 1000 * hpt),
             extra=extra,
         ))
+    return _split_inline_page_furniture(out)
+
+
+def _whole_line_page_label(line: str) -> tuple[K, str] | None:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    if _WHOLE_PAGE_NUM.match(stripped) or _WHOLE_P_PREFIX_PAGE.match(stripped):
+        return K.PAGE_NUMBER, stripped
+    return None
+
+
+def _split_trailing_page_furniture(text: str) -> tuple[str, list[tuple[K, str]]]:
+    """Pull a trailing page label (and footer lines under it) off paragraph text."""
+    text = (text or "").strip()
+    if not text:
+        return "", []
+    lines = [ln for ln in text.splitlines()]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return "", []
+
+    suffix: list[tuple[K, str]] = []
+    footers: list[str] = []
+    page_idx: int | None = None
+    for i in range(len(lines) - 1, -1, -1):
+        stripped = lines[i].strip()
+        if not stripped:
+            continue
+        label = _whole_line_page_label(stripped)
+        if label:
+            page_idx = i
+            suffix.append(label)
+            break
+        footers.append(stripped)
+    if page_idx is not None:
+        suffix.extend((K.FOOTER, f) for f in reversed(footers))
+        body = "\n".join(lines[:page_idx]).strip()
+    else:
+        body = "\n".join(lines).strip()
+
+    for pat in (_TRAILING_P_PREFIX_FRAC, _TRAILING_PAGE_FRAC):
+        m = pat.match(body)
+        if m:
+            body = m.group("body").rstrip()
+            suffix.append((K.PAGE_NUMBER, m.group("label").strip()))
+            break
+    return body, suffix
+
+
+def _split_inline_page_furniture(blocks: list[Block]) -> list[Block]:
+    out: list[Block] = []
+    for block in blocks:
+        if block.kind not in {K.PARAGRAPH, K.UNKNOWN, K.HEADING, K.TITLE}:
+            out.append(block)
+            continue
+        body, pieces = _split_trailing_page_furniture(block.text)
+        if not pieces:
+            out.append(block)
+            continue
+        if body:
+            out.append(block.model_copy(update={"text": body, "reading_order": len(out)}))
+        for kind, txt in pieces:
+            out.append(
+                block.model_copy(
+                    update={
+                        "id": f"{block.id}-f{len(out)}",
+                        "kind": kind,
+                        "text": txt,
+                        "reading_order": len(out),
+                        "heading_level": None,
+                        "extra": dict(block.extra),
+                    }
+                )
+            )
+    for i, block in enumerate(out):
+        if block.reading_order != i:
+            out[i] = block.model_copy(update={"reading_order": i})
     return out
 
 
@@ -92,7 +180,7 @@ def _markdown_blocks(raw: str, ref: PageRef) -> list[Block]:
         out.append(Block(id=f"{ref.packet_id}-p{ref.index}-o{i}", page=ref.index, kind=kind, text=p,
                          reading_order=i, source=SourceKind.VLM, confidence=0.8,
                          heading_level=level, extra={"engine": "lighton"}))
-    return out
+    return _split_inline_page_furniture(out)
 
 
 def parse_paddle_blocks(raw: list[dict[str, Any]], ref: PageRef, dpi: float) -> list[Block]:
