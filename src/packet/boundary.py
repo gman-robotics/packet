@@ -19,6 +19,44 @@ _WHOLE_P_PREFIX_PAGE = re.compile(
 
 
 _BARE_PN = re.compile(r"^\s*(?:page\s*)?(\d{1,4})\s*$", re.IGNORECASE)
+# Fraction page labels with an explicit ``page`` keyword (OCR inline split; stricter than ``_WHOLE_PAGE_NUM``).
+_PAGE_KEYWORD_FRAC = re.compile(r"^page\s+(\d+)\s*(?:of|/)\s*(\d+)\s*$", re.IGNORECASE)
+_BARE_FRAC_LINE = re.compile(r"^(\d+)\s*(?:of|/)\s*(\d+)\s*$")
+_INLINE_PAGE_SUFFIX = re.compile(
+    r"^(?P<body>.+?)(?P<label>\s+page\s+\d+\s*(?:of|/)\s*\d+)\s*$",
+    re.IGNORECASE,
+)
+_INLINE_P_SUFFIX = re.compile(
+    r"^(?P<body>.+?)(?P<label>\s+(?<![a-zA-Z])p\.?\s*\d+\s*(?:of|/)\s*\d+)\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_page_label(text: str) -> bool:
+    """True when the entire line is a page label (whole-line forms only)."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if _WHOLE_P_PREFIX_PAGE.match(stripped):
+        return True
+    if _PAGE_KEYWORD_FRAC.match(stripped):
+        return True
+    if _BARE_FRAC_LINE.match(stripped):
+        return True
+    return bool(_BARE_PN.match(stripped))
+
+
+def match_trailing_page_label(line: str) -> tuple[str, str] | None:
+    """If ``line`` ends with an inline page suffix that includes ``page`` or ``p.``, split it."""
+    for pat in (_INLINE_P_SUFFIX, _INLINE_PAGE_SUFFIX):
+        m = pat.match(line.rstrip())
+        if not m:
+            continue
+        body = m.group("body").rstrip()
+        label = m.group("label").strip()
+        if body:
+            return body, label
+    return None
 
 # Signal weights. A signal at or above PROPOSE is proposed alone; two or more
 # independent weak signals together are lifted to COMBINED, which clears the

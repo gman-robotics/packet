@@ -95,6 +95,71 @@ def test_multiline_page_label_and_footer_split():
     assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER, BlockKind.FOOTER]
 
 
+def test_multiline_block_splits_inline_footer_on_inner_line():
+    blocks = parse_lighton_grounding(
+        "Northwind Invoice\nAmount due: 12.00 Page 1 of 2",
+        SCAN,
+    )
+    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
+    assert "Northwind" in blocks[0].text and blocks[1].text == "Page 1 of 2"
+
+
+def test_lowercase_page_label_splits():
+    blocks = parse_lighton_grounding("Amount due: 12.00 page 1 of 2", SCAN)
+    assert blocks[-1].kind == BlockKind.PAGE_NUMBER and blocks[-1].text == "page 1 of 2"
+
+
+def test_body_after_page_label_is_not_footer():
+    blocks = parse_lighton_grounding(
+        "Some intro\nPage 1 of 2\nThe parties agree to pay rent.",
+        SCAN,
+    )
+    assert [b.kind for b in blocks] == [
+        BlockKind.PARAGRAPH,
+        BlockKind.PAGE_NUMBER,
+        BlockKind.PARAGRAPH,
+    ]
+    assert blocks[2].text.startswith("The parties")
+
+
+def test_split_blocks_follow_reading_order():
+    blocks = parse_lighton_grounding("Intro Page 1 of 2\nPage 3 of 4", SCAN)
+    assert [b.text for b in blocks] == ["Intro", "Page 1 of 2", "Page 3 of 4"]
+    assert [b.kind for b in blocks] == [
+        BlockKind.PARAGRAPH,
+        BlockKind.PAGE_NUMBER,
+        BlockKind.PAGE_NUMBER,
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Section 1 of 3",
+        "Table 1 of 2",
+        "Chapter 2 of 5",
+        "Step 1 of 3",
+        "Qty 3/4",
+        "Cell 12.00 1/2",
+        "Figure 1/2",
+        "2S 1/2",
+        "see pp. 1 of 2",
+        "pages 1 of 2",
+    ],
+)
+def test_lighton_split_does_not_invent_page_numbers(text):
+    blocks = parse_lighton_grounding(text, SCAN)
+    assert len(blocks) == 1
+    assert all(b.kind != BlockKind.PAGE_NUMBER for b in blocks)
+
+
+def test_packet_ocr_model_rejected_for_paddle(monkeypatch):
+    monkeypatch.setenv("PACKET_OCR", "paddle")
+    monkeypatch.setenv("PACKET_OCR_MODEL", "other/model")
+    with pytest.raises(OcrConfigError, match="PACKET_OCR_MODEL"):
+        default_extractors()
+
+
 _INLINE_LIGHTON_PAGES = [
     "Northwind Invoice Amount due: 12.00 Page 1 of 2",
     "Thank you for your business. Page 2 of 2",
@@ -128,6 +193,8 @@ def test_inline_lighton_pages_split_multi_doc_fixture(tmp_path):
     )
     packet = pipe.parse(fx.pdf)
     assert packet.document_count() == 2 and packet.origin.page_count == 4
+    spans = [(d.page_start, d.page_end) for d in packet.documents]
+    assert spans == [(0, 1), (2, 3)]
 
 
 def test_cli_ocr_config_error_is_one_line_without_traceback(monkeypatch, capsys, tmp_path):

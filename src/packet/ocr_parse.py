@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from packet.boundary import _WHOLE_P_PREFIX_PAGE, _WHOLE_PAGE_NUM
+from packet.boundary import is_page_label, match_trailing_page_label
 from packet.types import BBox, Block, PageRef, SourceKind
 from packet.types import BlockKind as K
 
@@ -28,18 +28,81 @@ PADDLE_LABELS: dict[str, K] = {
 }
 _TAG = re.compile(r"!\[([a-z_]+)(\+?)\]\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)[ \t]*\n?")
 _HASHES = re.compile(r"^(#+)\s*")
-_TRAILING_PAGE_FRAC = re.compile(
-    r"^(?P<body>.+?)(?P<label>\s+(?:page\s*)?\d+\s*(?:of|/)\s*\d+)\s*$",
-    re.IGNORECASE,
-)
-_TRAILING_P_PREFIX_FRAC = re.compile(
-    r"^(?P<body>.+?)(?P<label>\s+p\.?\s*\d+\s*(?:of|/)\s*\d+)\s*$",
+_FOOTER_HINT = re.compile(
+    r"\b(confidential|proprietary|draft|internal|private)\b",
     re.IGNORECASE,
 )
 
 
 def _page_size(ref: PageRef) -> tuple[float, float]:
     return float(ref.width or 612.0), float(ref.height or 792.0)
+
+
+def _is_footer_furniture_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped or is_page_label(stripped):
+        return False
+    if len(stripped) > 40:
+        return False
+    if _FOOTER_HINT.search(stripped):
+        return True
+    if stripped.isupper():
+        return True
+    return len(stripped) <= 16 and " " not in stripped
+
+
+def _split_trailing_page_furniture(text: str) -> list[tuple[K, str]]:
+    """Split block text into body, page labels, and short footer lines (reading order)."""
+    lines = [ln for ln in (text or "").splitlines()]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return []
+
+    tail: list[tuple[K, str]] = []
+    footers: list[str] = []
+    idx = len(lines) - 1
+    while idx >= 0:
+        stripped = lines[idx].strip()
+        if not stripped:
+            idx -= 1
+            continue
+        if is_page_label(stripped):
+            tail = [(K.PAGE_NUMBER, stripped)] + [(K.FOOTER, f) for f in footers]
+            lines = lines[:idx]
+            break
+        if _is_footer_furniture_line(stripped):
+            footers.insert(0, stripped)
+            idx -= 1
+            continue
+        break
+
+    pieces: list[tuple[K, str]] = []
+    body_acc: list[str] = []
+
+    def flush_body() -> None:
+        if body_acc:
+            pieces.append((K.PARAGRAPH, "\n".join(body_acc)))
+            body_acc.clear()
+
+    for line in lines:
+        if not line.strip():
+            continue
+        inline = match_trailing_page_label(line)
+        if inline:
+            body, label = inline
+            if body.strip():
+                body_acc.append(body.rstrip())
+            flush_body()
+            pieces.append((K.PAGE_NUMBER, label))
+        elif is_page_label(line.strip()):
+            flush_body()
+            pieces.append((K.PAGE_NUMBER, line.strip()))
+        else:
+            body_acc.append(line.rstrip())
+    flush_body()
+    pieces.extend(tail)
+    return pieces
 
 
 def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
@@ -84,66 +147,19 @@ def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
     return _split_inline_page_furniture(out)
 
 
-def _whole_line_page_label(line: str) -> tuple[K, str] | None:
-    stripped = line.strip()
-    if not stripped:
-        return None
-    if _WHOLE_PAGE_NUM.match(stripped) or _WHOLE_P_PREFIX_PAGE.match(stripped):
-        return K.PAGE_NUMBER, stripped
-    return None
-
-
-def _split_trailing_page_furniture(text: str) -> tuple[str, list[tuple[K, str]]]:
-    """Pull a trailing page label (and footer lines under it) off paragraph text."""
-    text = (text or "").strip()
-    if not text:
-        return "", []
-    lines = [ln for ln in text.splitlines()]
-    while lines and not lines[-1].strip():
-        lines.pop()
-    if not lines:
-        return "", []
-
-    suffix: list[tuple[K, str]] = []
-    footers: list[str] = []
-    page_idx: int | None = None
-    for i in range(len(lines) - 1, -1, -1):
-        stripped = lines[i].strip()
-        if not stripped:
-            continue
-        label = _whole_line_page_label(stripped)
-        if label:
-            page_idx = i
-            suffix.append(label)
-            break
-        footers.append(stripped)
-    if page_idx is not None:
-        suffix.extend((K.FOOTER, f) for f in reversed(footers))
-        body = "\n".join(lines[:page_idx]).strip()
-    else:
-        body = "\n".join(lines).strip()
-
-    for pat in (_TRAILING_P_PREFIX_FRAC, _TRAILING_PAGE_FRAC):
-        m = pat.match(body)
-        if m:
-            body = m.group("body").rstrip()
-            suffix.append((K.PAGE_NUMBER, m.group("label").strip()))
-            break
-    return body, suffix
-
-
 def _split_inline_page_furniture(blocks: list[Block]) -> list[Block]:
     out: list[Block] = []
     for block in blocks:
         if block.kind not in {K.PARAGRAPH, K.UNKNOWN, K.HEADING, K.TITLE}:
             out.append(block)
             continue
-        body, pieces = _split_trailing_page_furniture(block.text)
+        pieces = _split_trailing_page_furniture(block.text)
+        if len(pieces) == 1 and pieces[0][1].strip() == block.text.strip():
+            out.append(block)
+            continue
         if not pieces:
             out.append(block)
             continue
-        if body:
-            out.append(block.model_copy(update={"text": body, "reading_order": len(out)}))
         for kind, txt in pieces:
             out.append(
                 block.model_copy(
@@ -152,7 +168,7 @@ def _split_inline_page_furniture(blocks: list[Block]) -> list[Block]:
                         "kind": kind,
                         "text": txt,
                         "reading_order": len(out),
-                        "heading_level": None,
+                        "heading_level": None if kind != K.HEADING else block.heading_level,
                         "extra": dict(block.extra),
                     }
                 )

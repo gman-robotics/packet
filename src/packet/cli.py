@@ -24,12 +24,12 @@ def _unit_interval(value: str) -> float:
 
 def _ocr_config_stderr_line(exc: OcrConfigError) -> str:
     msg = str(exc)
-    if msg.startswith("PACKET_OCR=lighton"):
+    if exc.pip_extra == "ocr-mlx":
         return (
             f"packet: {msg}; install with pip install '{_DISTRIBUTION}[ocr-mlx]' "
             "on Apple silicon"
         )
-    if msg.startswith("PACKET_OCR=paddle"):
+    if exc.pip_extra == "ocr-paddle":
         return f"packet: {msg}; install with pip install '{_DISTRIBUTION}[ocr-paddle]'"
     return f"packet: {msg}"
 
