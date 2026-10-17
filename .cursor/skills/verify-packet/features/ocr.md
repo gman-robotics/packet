@@ -1,6 +1,6 @@
 # OCR paths (LightOnOCR on MLX, force-inspect, OCR off)
 
-`packet inspect` and `packet parse` send scan and mixed pages to OCR: LightOnOCR-3-1B on MLX first, then PaddleOCR-VL if LightOn is missing or returns nothing. `--force-inspect` sends every page to OCR, text pages included. `PACKET_OCR=off` turns OCR off, so scan pages come out with no text. `packet eval` never runs OCR.
+`packet inspect` and `packet parse` send scan and mixed pages to OCR: LightOnOCR-3-1B on MLX first, then PaddleOCR-VL when LightOn cannot run or raises. An empty LightOn result is final and does not load Paddle. `--force-inspect` sends every page to OCR, text pages included. `PACKET_OCR=off` turns OCR off, so scan pages come out with no text. `packet eval` never runs OCR.
 
 ## Sub-features
 
