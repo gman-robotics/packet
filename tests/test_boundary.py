@@ -45,3 +45,10 @@ def test_spectroscopic_fraction_in_body_is_not_page_number():
 def test_whole_line_page_fraction_in_footer():
     blocks = [_block(0, "Page 1 of 2", BlockKind.FOOTER)]
     assert _extract_page_number(blocks) == (1, 2)
+
+
+def test_whole_line_p_prefix_page_labels():
+    assert _extract_page_number([_block(0, "p. 1 of 2", BlockKind.FOOTER)]) == (1, 2)
+    assert _extract_page_number([_block(0, "p 1 of 2", BlockKind.PAGE_NUMBER)]) == (1, 2)
+    assert _extract_page_number([_block(0, "P. 1/2", BlockKind.FOOTER)]) == (1, 2)
+    assert _extract_page_number([_block(0, "- 1 -", BlockKind.PAGE_NUMBER)]) == (None, None)

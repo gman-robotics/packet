@@ -146,6 +146,16 @@ def test_splitter_memory_is_bounded():
     assert len(sp._obs) <= 3
 
 
+def test_old_sequence_does_not_continue_beyond_lookahead_window():
+    # dlw-00 shape: first doc numbered 1..2, long gap, bare 3 must not veto a split.
+    obs = [_obs(0, num=1), _obs(1, num=2)]
+    obs += [_obs(i) for i in range(2, 6)]
+    obs += [_obs(6, 0.45), _obs(7), _obs(8, num=3)]
+    d = _run(obs, window=2)
+    assert 6 in _splits(d)
+    assert next(x for x in d if x.page == 6).reason == "implied_page_one"
+
+
 def test_in_window_blank_still_resumes_old_sequence():
     # report 2 of 5, exhibit (mid), blank, then 3 of 5 — gap 3, resume is last+1
     d = _run([_obs(0, num=1, total=5), _obs(1, num=2, total=5), _obs(2, 0.7),
