@@ -87,11 +87,23 @@ def _may_split_trailing_label(block: Block) -> bool:
     return block.kind in {K.PARAGRAPH, K.TITLE, K.HEADING, K.LIST_ITEM, K.UNKNOWN}
 
 
+def _extra_with_split(extra: dict[str, Any], split: str) -> dict[str, Any]:
+    out = dict(extra)
+    out["split"] = split
+    return out
+
+
 def _retype_if_whole_page_label(block: Block) -> Block:
     if block.kind == K.PAGE_NUMBER:
         return block
     if keyword_page_label_fraction((block.text or "").strip()) is not None:
-        return block.model_copy(update={"kind": K.PAGE_NUMBER, "heading_level": None})
+        return block.model_copy(
+            update={
+                "kind": K.PAGE_NUMBER,
+                "heading_level": None,
+                "extra": _extra_with_split(block.extra, "whole-label"),
+            }
+        )
     return block
 
 
@@ -103,11 +115,17 @@ def _expand_trailing_page_labels(blocks: list[Block]) -> list[Block]:
             out.append(block)
             continue
         pieces = _split_trailing_page_label(block.text, block.kind, block.heading_level)
+        if not pieces:
+            out.append(block)
+            continue
         if len(pieces) == 1:
             kind, txt, level = pieces[0]
             if kind == block.kind and txt == block.text and level == block.heading_level:
                 out.append(block)
             else:
+                extra = dict(block.extra)
+                if kind == K.PAGE_NUMBER:
+                    extra["split"] = "whole-label"
                 out.append(
                     block.model_copy(
                         update={
@@ -116,12 +134,15 @@ def _expand_trailing_page_labels(blocks: list[Block]) -> list[Block]:
                             "text": txt,
                             "reading_order": len(out),
                             "heading_level": level if kind != K.PAGE_NUMBER else None,
-                            "extra": dict(block.extra),
+                            "extra": extra,
                         }
                     )
                 )
             continue
         for kind, txt, level in pieces:
+            extra = dict(block.extra)
+            if kind == K.PAGE_NUMBER:
+                extra["split"] = "trailing-label"
             out.append(
                 block.model_copy(
                     update={
@@ -130,7 +151,7 @@ def _expand_trailing_page_labels(blocks: list[Block]) -> list[Block]:
                         "text": txt,
                         "reading_order": len(out),
                         "heading_level": level if kind != K.PAGE_NUMBER else None,
-                        "extra": dict(block.extra),
+                        "extra": extra,
                     }
                 )
             )

@@ -3,7 +3,8 @@ import pytest
 from packet.boundary import (
     BoundaryDetector,
     _extract_page_number,
-    _prefixed_page_label_fraction_whole_line,
+    _native_prefixed_page_label_fraction,
+    _page_fraction_whole_line,
     keyword_page_label_fraction,
 )
 from packet.types import Block, BlockKind, PageRef, SourceKind
@@ -76,11 +77,22 @@ def test_whole_line_p_prefix_page_labels():
         ("see pp. 1 of 2", None),
     ],
 )
-def test_keyword_page_label_matches_prefixed_native_rule(text, expected):
-    assert keyword_page_label_fraction(text) == expected
+def test_keyword_page_label_matches_native_prefixed_gate(text, expected):
     stripped = text.strip()
-    native = _prefixed_page_label_fraction_whole_line(stripped)
-    assert keyword_page_label_fraction(text) == native
+    assert keyword_page_label_fraction(text) == _native_prefixed_page_label_fraction(stripped)
+    assert keyword_page_label_fraction(text) == expected
+
+
+def test_ocr_gate_rejects_bare_native_whole_line_fraction():
+    """Fails if OCR gate diverges from native matchers on bare ``N of M``."""
+    assert _page_fraction_whole_line("1 of 2") == (1, 2)
+    assert keyword_page_label_fraction("1 of 2") is None
+
+
+def test_ocr_gate_agrees_with_native_on_page_prefixed_fraction():
+    """Fails if ``_WHOLE_PAGE_NUM`` page arm changes without updating the OCR gate."""
+    for sample in ("Page 1 of 2", "page1 of 2", "Page1 of 2"):
+        assert keyword_page_label_fraction(sample) == _page_fraction_whole_line(sample)
 
 
 def test_trailing_page1_label_on_invoice_line():
