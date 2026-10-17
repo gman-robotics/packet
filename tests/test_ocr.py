@@ -73,6 +73,29 @@ def test_parse_lighton_empty_is_empty():
     assert parse_lighton_grounding("  \n", SCAN) == []
 
 
+def test_empty_text_tag_region_keeps_empty_paragraph_block():
+    """Pre-T6/#27 grounding always emitted a block per tag, including empty ``![text]``."""
+    blocks = parse_lighton_grounding("![text](80,175,920,225)", SCAN)
+    assert len(blocks) == 1
+    assert blocks[0].kind == BlockKind.PARAGRAPH and blocks[0].text == ""
+    assert blocks[0].extra.get("label") == "text"
+
+
+def test_page_number_split_provenance():
+    trailing = parse_lighton_grounding(_lighton_real_page_text(0), SCAN)
+    assert trailing[1].extra.get("split") == "trailing-label"
+    assert "split" not in trailing[0].extra
+
+    whole = parse_lighton_grounding("Page 1 of 2", SCAN)
+    assert whole[0].kind == BlockKind.PAGE_NUMBER
+    assert whole[0].extra.get("split") == "whole-label"
+
+    tagged = parse_lighton_grounding(GROUNDING, SCAN)
+    model_pn = next(b for b in tagged if b.extra.get("label") == "page_number")
+    assert model_pn.kind == BlockKind.PAGE_NUMBER
+    assert "split" not in model_pn.extra
+
+
 def test_untagged_inline_trailing_page_label_splits():
     blocks = parse_lighton_grounding("Northwind Invoice Amount due: 12.00 Page 1 of 2", SCAN)
     assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
@@ -111,6 +134,18 @@ def test_footer_tag_with_page_label_becomes_page_number():
 Page 1 of 2"""
     blocks = parse_lighton_grounding(raw, SCAN)
     assert len(blocks) == 1 and blocks[0].kind == BlockKind.PAGE_NUMBER
+    assert blocks[0].extra.get("split") == "whole-label"
+
+
+def test_header_tag_with_page_label_becomes_page_number_with_provenance():
+    raw = """![header](50,20,950,40)
+Page 1 of 2"""
+    blocks = parse_lighton_grounding(raw, SCAN)
+    assert len(blocks) == 1 and blocks[0].kind == BlockKind.PAGE_NUMBER
+    assert blocks[0].extra.get("split") == "whole-label"
+    assert "split" not in parse_lighton_grounding(
+        "![page_number](800,960,950,980)\nPage 1 of 2", SCAN
+    )[0].extra
 
 
 @pytest.mark.parametrize(
@@ -426,6 +461,7 @@ def test_bo_real_lighton_pages_split_multi_doc_fixture(tmp_path):
         (1, 2),
         (2, 2),
     ]
+    assert all(b.extra.get("split") == "trailing-label" for b in pn_blocks)
 
 
 def test_tagged_lighton_pages_split_multi_doc_fixture(tmp_path):

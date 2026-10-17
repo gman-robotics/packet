@@ -39,12 +39,12 @@ def _page_size(ref: PageRef) -> tuple[float, float]:
     return float(ref.width or 612.0), float(ref.height or 792.0)
 
 
-def _lighton_block_kind(label: str, text: str, kind: K) -> K:
+def _lighton_block_kind(label: str, text: str, kind: K) -> tuple[K, str | None]:
     if label == "page_number":
-        return K.PAGE_NUMBER
+        return K.PAGE_NUMBER, None
     if label in {"header", "footer"} and keyword_page_label_fraction(text) is not None:
-        return K.PAGE_NUMBER
-    return kind
+        return K.PAGE_NUMBER, "whole-label"
+    return kind, None
 
 
 def _split_trailing_page_label(
@@ -56,9 +56,6 @@ def _split_trailing_page_label(
     stripped = (text or "").strip()
     if not stripped:
         return []
-
-    if keyword_page_label_fraction(stripped) is not None:
-        return [(K.PAGE_NUMBER, stripped, None)]
 
     inline = match_trailing_page_label(stripped)
     if inline:
@@ -87,11 +84,23 @@ def _may_split_trailing_label(block: Block) -> bool:
     return block.kind in {K.PARAGRAPH, K.TITLE, K.HEADING, K.LIST_ITEM, K.UNKNOWN}
 
 
+def _extra_with_split(extra: dict[str, Any], split: str) -> dict[str, Any]:
+    out = dict(extra)
+    out["split"] = split
+    return out
+
+
 def _retype_if_whole_page_label(block: Block) -> Block:
     if block.kind == K.PAGE_NUMBER:
         return block
     if keyword_page_label_fraction((block.text or "").strip()) is not None:
-        return block.model_copy(update={"kind": K.PAGE_NUMBER, "heading_level": None})
+        return block.model_copy(
+            update={
+                "kind": K.PAGE_NUMBER,
+                "heading_level": None,
+                "extra": _extra_with_split(block.extra, "whole-label"),
+            }
+        )
     return block
 
 
@@ -103,6 +112,9 @@ def _expand_trailing_page_labels(blocks: list[Block]) -> list[Block]:
             out.append(block)
             continue
         pieces = _split_trailing_page_label(block.text, block.kind, block.heading_level)
+        if not pieces:
+            out.append(block)
+            continue
         if len(pieces) == 1:
             kind, txt, level = pieces[0]
             if kind == block.kind and txt == block.text and level == block.heading_level:
@@ -122,6 +134,9 @@ def _expand_trailing_page_labels(blocks: list[Block]) -> list[Block]:
                 )
             continue
         for kind, txt, level in pieces:
+            extra = dict(block.extra)
+            if kind == K.PAGE_NUMBER:
+                extra["split"] = "trailing-label"
             out.append(
                 block.model_copy(
                     update={
@@ -130,7 +145,7 @@ def _expand_trailing_page_labels(blocks: list[Block]) -> list[Block]:
                         "text": txt,
                         "reading_order": len(out),
                         "heading_level": level if kind != K.PAGE_NUMBER else None,
-                        "extra": dict(block.extra),
+                        "extra": extra,
                     }
                 )
             )
@@ -166,11 +181,13 @@ def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
             text = _HASHES.sub("", text, count=1)
             if level == 1:
                 kind = K.TITLE
-        kind = _lighton_block_kind(label, text, kind)
+        kind, split_key = _lighton_block_kind(label, text, kind)
         x0, y0, x1, y1 = (min(1000, max(0, int(m.group(k)))) for k in range(3, 7))
         x0, x1 = min(x0, x1), max(x0, x1)
         y0, y1 = min(y0, y1), max(y0, y1)
         extra: dict[str, Any] = {"label": label, "continuation": cont, "engine": "lighton"}
+        if split_key:
+            extra = _extra_with_split(extra, split_key)
         if kind == K.TABLE or label == "chart":
             extra["html"] = text
         out.append(Block(
