@@ -20,7 +20,9 @@ _ALLOWED_SOURCE_KINDS = frozenset(
     {SourceKind.NATIVE, SourceKind.OCR, SourceKind.VLM, SourceKind.MERGED}
 )
 _VALID_ROTATIONS = frozenset({0, 90, 180, 270})
-_FORBIDDEN_CONFIG_KEYS = re.compile(r"(api[_-]?key|authorization|token)", re.IGNORECASE)
+_FORBIDDEN_CONFIG_KEYS = re.compile(
+    r"^(api[_-]?key|authorization|token)$", re.IGNORECASE
+)
 _FORBIDDEN_QUERY_KEYS = frozenset({"api_key", "token", "authorization"})
 
 
@@ -101,10 +103,18 @@ def _format_page_int(value: int | None) -> str:
     return str(int(value))
 
 
-def _format_rotation(size: tuple[Any, ...] | list[Any]) -> str:
-    rot = int(size[2]) if len(size) > 2 else 0
-    if rot in _VALID_ROTATIONS:
-        return str(rot)
+def _format_rotation(size: tuple[Any, ...] | list[Any] | None) -> str:
+    if not size or len(size) < 3:
+        return ""
+    rot = size[2]
+    if rot is None:
+        return ""
+    try:
+        rot_int = int(rot)
+    except (TypeError, ValueError):
+        return ""
+    if rot_int in _VALID_ROTATIONS:
+        return str(rot_int)
     return ""
 
 
@@ -219,12 +229,16 @@ def load_decision_config(path: Path) -> DecisionBackend:
         )
     data: dict[str, Any] = parsed
     _reject_secret_fields(data)
+    if isinstance(data.get("base_url"), str):
+        _reject_url_secrets(data["base_url"])
     backend = data.get("backend")
     if backend == "logistic":
         weights = data.get("weights")
         if not isinstance(weights, str) or not weights.strip():
             raise DecisionBackendError("logistic backend requires weights path")
         return load_logistic_decision_backend(path.parent / weights)
-    if isinstance(data.get("base_url"), str):
-        _reject_url_secrets(data["base_url"])
+    if backend == "http":
+        from packet.decision_http import load_http_decision_backend
+
+        return load_http_decision_backend(data)
     raise DecisionBackendError(f"unknown decision backend {backend!r}")
