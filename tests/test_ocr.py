@@ -140,8 +140,14 @@ def test_cli_ocr_config_error_is_one_line_without_traceback(monkeypatch, capsys,
     with pytest.raises(SystemExit) as exited:
         cli.main(["parse", str(pdf), "-o", str(tmp_path / "out.json")])
     assert exited.value.code == 2
-    err = capsys.readouterr().err
-    assert "mlx" in err.lower() and "Traceback" not in err
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    lines = [ln for ln in captured.err.splitlines() if ln.strip()]
+    assert len(lines) == 1
+    assert lines[0] == (
+        "packet: PACKET_OCR=lighton: mlx-vlm is not installed; "
+        "install with pip install 'packet-dl[ocr-mlx]' on Apple silicon"
+    )
 
 
 def test_parse_paddle_blocks_scales_pixels_to_points():

@@ -9,6 +9,8 @@ from pathlib import Path
 from packet.backends import OcrConfigError, default_extractors
 from packet.pipeline import Pipeline
 
+_DISTRIBUTION = "packet-dl"
+
 
 def _unit_interval(value: str) -> float:
     try:
@@ -20,19 +22,23 @@ def _unit_interval(value: str) -> float:
     return x
 
 
+def _ocr_config_stderr_line(exc: OcrConfigError) -> str:
+    msg = str(exc)
+    if msg.startswith("PACKET_OCR=lighton"):
+        return (
+            f"packet: {msg}; install with pip install '{_DISTRIBUTION}[ocr-mlx]' "
+            "on Apple silicon"
+        )
+    if msg.startswith("PACKET_OCR=paddle"):
+        return f"packet: {msg}; install with pip install '{_DISTRIBUTION}[ocr-paddle]'"
+    return f"packet: {msg}"
+
+
 def _extractors_or_exit(force_inspect: bool = False):
     try:
         return default_extractors(force_inspect=force_inspect)
     except OcrConfigError as exc:
-        print(f"packet: {exc}", file=sys.stderr)
-        hint = (
-            "install mlx-vlm for LightOn (Apple silicon) or paddleocr for Paddle"
-        )
-        if "paddle" in str(exc).lower():
-            hint = "install paddleocr and paddlepaddle for Paddle OCR"
-        elif "mlx" in str(exc).lower() or "lighton" in str(exc).lower():
-            hint = "install mlx-vlm on Apple silicon for LightOn OCR"
-        print(f"packet: {hint}", file=sys.stderr)
+        print(_ocr_config_stderr_line(exc), file=sys.stderr)
         raise SystemExit(2) from exc
 
 
