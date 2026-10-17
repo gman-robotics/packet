@@ -134,6 +134,18 @@ def test_footer_tag_with_page_label_becomes_page_number():
 Page 1 of 2"""
     blocks = parse_lighton_grounding(raw, SCAN)
     assert len(blocks) == 1 and blocks[0].kind == BlockKind.PAGE_NUMBER
+    assert blocks[0].extra.get("split") == "whole-label"
+
+
+def test_header_tag_with_page_label_becomes_page_number_with_provenance():
+    raw = """![header](50,20,950,40)
+Page 1 of 2"""
+    blocks = parse_lighton_grounding(raw, SCAN)
+    assert len(blocks) == 1 and blocks[0].kind == BlockKind.PAGE_NUMBER
+    assert blocks[0].extra.get("split") == "whole-label"
+    assert "split" not in parse_lighton_grounding(
+        "![page_number](800,960,950,980)\nPage 1 of 2", SCAN
+    )[0].extra
 
 
 @pytest.mark.parametrize(

@@ -8,9 +8,14 @@ from packet.types import Block, BlockKind, PageRef
 
 # Body and furniture lines count only when the entire line is a page label (not e.g. 1/2 in
 # spectroscopic notation embedded in prose).
+_PAGE_PREFIX = r"page\s*"
 _PAGE_FRAC_TAIL = r"(\d+)\s*(?:of|/)\s*(\d+)\s*$"
 _WHOLE_PAGE_NUM = re.compile(
-    rf"^(?:page\s*)?{_PAGE_FRAC_TAIL}",
+    rf"^(?:{_PAGE_PREFIX})?{_PAGE_FRAC_TAIL}",
+    re.IGNORECASE,
+)
+_WHOLE_PAGE_PREFIXED = re.compile(
+    rf"^{_PAGE_PREFIX}{_PAGE_FRAC_TAIL}",
     re.IGNORECASE,
 )
 _WHOLE_P_PREFIX_PAGE = re.compile(
@@ -20,7 +25,6 @@ _WHOLE_P_PREFIX_PAGE = re.compile(
 
 
 _BARE_PN = re.compile(r"^\s*(?:page\s*)?(\d{1,4})\s*$", re.IGNORECASE)
-_PAGE_PREFIX_REQUIRED = re.compile(r"^page\s*\d", re.IGNORECASE)
 
 
 def _page_fraction_whole_line(stripped: str) -> tuple[int, int] | None:
@@ -31,12 +35,9 @@ def _page_fraction_whole_line(stripped: str) -> tuple[int, int] | None:
 
 
 def _native_prefixed_page_label_fraction(stripped: str) -> tuple[int, int] | None:
-    """Native ``_WHOLE_PAGE_NUM`` / ``_WHOLE_P_PREFIX_PAGE`` with a required page or ``p.`` prefix."""
-    match = _WHOLE_P_PREFIX_PAGE.match(stripped)
+    """Native page or ``p.`` prefix arms only (not bare ``N of M`` / ``N/M``)."""
+    match = _WHOLE_P_PREFIX_PAGE.match(stripped) or _WHOLE_PAGE_PREFIXED.match(stripped)
     if match:
-        return int(match.group(1)), int(match.group(2))
-    match = _WHOLE_PAGE_NUM.match(stripped)
-    if match and _PAGE_PREFIX_REQUIRED.match(stripped):
         return int(match.group(1)), int(match.group(2))
     return None
 

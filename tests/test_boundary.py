@@ -3,7 +3,6 @@ import pytest
 from packet.boundary import (
     BoundaryDetector,
     _extract_page_number,
-    _native_prefixed_page_label_fraction,
     _page_fraction_whole_line,
     keyword_page_label_fraction,
 )
@@ -62,13 +61,29 @@ def test_whole_line_p_prefix_page_labels():
     assert _extract_page_number([_block(0, "- 1 -", BlockKind.PAGE_NUMBER)]) == (None, None)
 
 
+_OCR_PREFIXED_PAGE_LABEL_CORPUS = [
+    "Page 1 of 2",
+    "page 1 of 2",
+    "page1 of 2",
+    "Page1 of 2",
+    "PAGE 1/2",
+    "p. 1 of 2",
+    "p 1 of 2",
+    "P. 1/2",
+]
+
+
+@pytest.mark.parametrize("line", _OCR_PREFIXED_PAGE_LABEL_CORPUS)
+def test_ocr_keyword_matches_native_on_prefixed_whole_lines(line):
+    """OCR gate must track native ``page`` / ``p.`` prefix arms (not a duplicate helper)."""
+    native = _page_fraction_whole_line(line)
+    assert native is not None
+    assert keyword_page_label_fraction(line) == native
+
+
 @pytest.mark.parametrize(
     "text,expected",
     [
-        ("page1 of 2", (1, 2)),
-        ("Page1 of 2", (1, 2)),
-        ("Page 1 of 2", (1, 2)),
-        ("p. 1 of 2", (1, 2)),
         ("1 of 2", None),
         ("1/2", None),
         ("Chapter 1 of 2", None),
@@ -77,9 +92,7 @@ def test_whole_line_p_prefix_page_labels():
         ("see pp. 1 of 2", None),
     ],
 )
-def test_keyword_page_label_matches_native_prefixed_gate(text, expected):
-    stripped = text.strip()
-    assert keyword_page_label_fraction(text) == _native_prefixed_page_label_fraction(stripped)
+def test_keyword_page_label_rejects_non_gate_lines(text, expected):
     assert keyword_page_label_fraction(text) == expected
 
 
@@ -89,10 +102,9 @@ def test_ocr_gate_rejects_bare_native_whole_line_fraction():
     assert keyword_page_label_fraction("1 of 2") is None
 
 
-def test_ocr_gate_agrees_with_native_on_page_prefixed_fraction():
-    """Fails if ``_WHOLE_PAGE_NUM`` page arm changes without updating the OCR gate."""
-    for sample in ("Page 1 of 2", "page1 of 2", "Page1 of 2"):
-        assert keyword_page_label_fraction(sample) == _page_fraction_whole_line(sample)
+def test_ocr_gate_tracks_native_prefix_arms_not_wider_native_optional():
+    """Fails if native optional prefix widens (e.g. ``pg``) without OCR following."""
+    assert keyword_page_label_fraction("pg 1 of 2") == _page_fraction_whole_line("pg 1 of 2")
 
 
 def test_trailing_page1_label_on_invoice_line():
