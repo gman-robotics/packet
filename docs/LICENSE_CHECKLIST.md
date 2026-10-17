@@ -64,8 +64,8 @@ No Marker integration exists in code yet.
 Referenced in `DESIGN.md` (Escalation policy, Backend adapters) and
 selected as the **fallback** OCR engine (`PaddleExtractor`, PaddleOCR-VL-1.6
 page pipeline) behind LightOnOCR-3 (section 6), per
-`bench/ocr_compare/REPORT.md`. The adapter itself is wired in the
-`bo/packet-ocr` slice; on `main` at the time of this check it is still a stub. Packet never bundles or vendors
+`bench/ocr_compare/REPORT.md`. `PaddleExtractor` is implemented in
+`src/packet/backends.py` (PaddleOCR-VL-1.6 page pipeline). Packet never bundles or vendors
 the Paddle code or weights: the user installs `paddleocr`/`paddlepaddle`
 themselves and the weights are downloaded by paddleocr/paddlex at first
 use into the user's cache.
@@ -98,8 +98,8 @@ pre-flight check.
 
 Selected as the **default** OCR engine: `LightOnOCR-3-1B` in grounding
 mode, run with MLX (`mlx-vlm`) on Apple silicon, per
-`bench/ocr_compare/REPORT.md`. `LightOnExtractor` is wired in the
-`bo/packet-ocr` slice; on `main` at the time of this check it is still a stub.
+`bench/ocr_compare/REPORT.md`. `LightOnExtractor` is implemented in
+`src/packet/backends.py` (LightOnOCR-3-1B grounding on MLX).
 Only the 1B is used; the 0.8B/4B cards were read for comparison only. Packet never bundles or vendors the
 weights; they are downloaded by the user (or lazily from Hugging Face at
 first use) into the user's HF cache. `mlx-vlm` is not a Packet dependency or extra; the user installs it.
