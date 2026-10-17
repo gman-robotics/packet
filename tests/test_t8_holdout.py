@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
-import t8_holdout as t8  # noqa: E402
+import t8_holdout as t8
 
 F1 = {"dlw-00": 1.0, "dlw-01": 1.0, "dlw-02": 1.0, "dlw-03": 1.0, "dlw-04": 0.8, "dlw-05": 1.0, "dlw-12": 0.8}
 
