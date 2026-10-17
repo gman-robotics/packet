@@ -73,11 +73,10 @@ def test_parse_lighton_empty_is_empty():
     assert parse_lighton_grounding("  \n", SCAN) == []
 
 
-def test_inline_page_footer_splits_from_lighton_paragraph():
+def test_untagged_inline_page_label_stays_single_body_block():
     blocks = parse_lighton_grounding("Northwind Invoice Amount due: 12.00 Page 1 of 2", SCAN)
-    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
-    assert "12.00" in blocks[0].text and blocks[1].text == "Page 1 of 2"
-    assert all(b.source == SourceKind.VLM and b.extra.get("engine") == "lighton" for b in blocks)
+    assert len(blocks) == 1 and blocks[0].kind == BlockKind.PARAGRAPH
+    assert "Page 1 of 2" in blocks[0].text
 
 
 def test_no_footer_leaves_lighton_block_unchanged():
@@ -85,56 +84,36 @@ def test_no_footer_leaves_lighton_block_unchanged():
     assert len(blocks) == 1 and blocks[0].kind == BlockKind.PARAGRAPH
 
 
-def test_mid_sentence_page_number_is_not_split():
+def test_mid_sentence_page_number_stays_body():
     blocks = parse_lighton_grounding("See Page 3 for the appendix details.", SCAN)
     assert len(blocks) == 1 and "Page 3" in blocks[0].text
 
 
-def test_multiline_page_label_and_footer_split():
-    blocks = parse_lighton_grounding("Body line\nPage 1 of 2\nConfidential", SCAN)
-    assert [b.kind for b in blocks] == [
-        BlockKind.PARAGRAPH,
-        BlockKind.PAGE_NUMBER,
-        BlockKind.PARAGRAPH,
-    ]
-    assert blocks[2].text == "Confidential"
+def test_tagged_page_number_and_footer_kinds():
+    raw = """![text](80,175,920,225)
+Body line
+![page_number](800,960,950,980)
+Page 1 of 2
+![footer](50,970,500,990)
+Confidential"""
+    blocks = parse_lighton_grounding(raw, SCAN)
+    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER, BlockKind.FOOTER]
 
 
-def test_multiline_block_splits_inline_footer_on_inner_line():
-    blocks = parse_lighton_grounding(
-        "Northwind Invoice\nAmount due: 12.00 Page 1 of 2",
-        SCAN,
-    )
-    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
-    assert "Northwind" in blocks[0].text and blocks[1].text == "Page 1 of 2"
+def test_footer_tag_with_page_label_becomes_page_number():
+    raw = """![footer](800,960,950,980)
+Page 1 of 2"""
+    blocks = parse_lighton_grounding(raw, SCAN)
+    assert len(blocks) == 1 and blocks[0].kind == BlockKind.PAGE_NUMBER
 
 
-def test_lowercase_page_label_splits():
-    blocks = parse_lighton_grounding("Amount due: 12.00 page 1 of 2", SCAN)
-    assert blocks[-1].kind == BlockKind.PAGE_NUMBER and blocks[-1].text == "page 1 of 2"
-
-
-def test_body_after_page_label_is_not_footer():
-    blocks = parse_lighton_grounding(
-        "Some intro\nPage 1 of 2\nThe parties agree to pay rent.",
-        SCAN,
-    )
-    assert [b.kind for b in blocks] == [
-        BlockKind.PARAGRAPH,
-        BlockKind.PAGE_NUMBER,
-        BlockKind.PARAGRAPH,
-    ]
-    assert blocks[2].text.startswith("The parties")
-
-
-def test_split_blocks_follow_reading_order():
-    blocks = parse_lighton_grounding("Intro Page 1 of 2\nPage 3 of 4", SCAN)
-    assert [b.text for b in blocks] == ["Intro", "Page 1 of 2", "Page 3 of 4"]
-    assert [b.kind for b in blocks] == [
-        BlockKind.PARAGRAPH,
-        BlockKind.PAGE_NUMBER,
-        BlockKind.PAGE_NUMBER,
-    ]
+@pytest.mark.parametrize(
+    "text",
+    ["Total\n12", "Invoice\n12"],
+)
+def test_untagged_total_or_invoice_with_digit_stays_body(text):
+    blocks = parse_lighton_grounding(text, SCAN)
+    assert len(blocks) == 1 and blocks[0].kind == BlockKind.PARAGRAPH
 
 
 @pytest.mark.parametrize(
@@ -152,7 +131,7 @@ def test_split_blocks_follow_reading_order():
         "pages 1 of 2",
     ],
 )
-def test_lighton_split_does_not_invent_page_numbers(text):
+def test_untagged_text_does_not_invent_page_numbers(text):
     blocks = parse_lighton_grounding(text, SCAN)
     assert len(blocks) == 1
     assert all(b.kind != BlockKind.PAGE_NUMBER for b in blocks)
@@ -186,25 +165,25 @@ def test_lighton_does_not_split_bare_digit_lines(text):
     assert all(b.kind != BlockKind.PAGE_NUMBER for b in blocks)
 
 
-def test_invoice_multiline_splits_page_one_of_two():
-    from packet.boundary import keyword_page_label_fraction
-
+def test_untagged_multiline_page_label_stays_body():
     blocks = parse_lighton_grounding("Invoice\n12\nPage 1 of 2", SCAN)
-    assert blocks[-1].kind == BlockKind.PAGE_NUMBER
-    assert keyword_page_label_fraction(blocks[-1].text) == (1, 2)
+    assert len(blocks) == 1 and blocks[0].kind == BlockKind.PARAGRAPH
 
 
-def test_heading_keeps_kind_when_inline_page_label_splits():
-    blocks = parse_lighton_grounding("# Northwind Invoice Page 1 of 2", SCAN)
+def test_heading_keeps_kind_and_level_with_tags():
+    raw = """![title](80,70,920,140)
+# Northwind Invoice
+![page_number](800,960,950,980)
+Page 1 of 2"""
+    blocks = parse_lighton_grounding(raw, SCAN)
     assert blocks[0].kind == BlockKind.TITLE and blocks[0].heading_level == 1
     assert blocks[0].text == "Northwind Invoice"
     assert blocks[1].kind == BlockKind.PAGE_NUMBER
 
 
-def test_whole_block_page_label_becomes_page_number_not_title():
+def test_untagged_whole_page_label_stays_paragraph():
     blocks = parse_lighton_grounding("Page 1 of 2", SCAN)
-    assert len(blocks) == 1
-    assert blocks[0].kind == BlockKind.PAGE_NUMBER
+    assert len(blocks) == 1 and blocks[0].kind == BlockKind.PARAGRAPH
 
 
 def test_cli_model_load_error_is_one_stderr_line(monkeypatch, capsys, tmp_path):
@@ -231,25 +210,32 @@ def test_cli_model_load_error_is_one_stderr_line(monkeypatch, capsys, tmp_path):
     assert "ocr-mlx" not in lines[0]
 
 
-_INLINE_LIGHTON_PAGES = [
-    "Northwind Invoice Amount due: 12.00 Page 1 of 2",
-    "Thank you for your business. Page 2 of 2",
-    "Contoso Lease Premises: 1 Main St Page 1 of 2",
-    "Signatures follow. Page 2 of 2",
+def _tagged_lighton_page(body: str, page_label: str) -> str:
+    return f"""![text](80,175,920,400)
+{body}
+![page_number](800,960,950,980)
+{page_label}"""
+
+
+_TAGGED_LIGHTON_PAGES = [
+    _tagged_lighton_page("Northwind Invoice Amount due: 12.00", "Page 1 of 2"),
+    _tagged_lighton_page("Thank you for your business.", "Page 2 of 2"),
+    _tagged_lighton_page("Contoso Lease Premises: 1 Main St", "Page 1 of 2"),
+    _tagged_lighton_page("Signatures follow.", "Page 2 of 2"),
 ]
 
 
-class _InlineLightonPages:
+class _TaggedLightonPages:
     needs_image = True
 
     def supports(self, page_class):
         return True
 
     def extract(self, ref, text, image=None):
-        return parse_lighton_grounding(_INLINE_LIGHTON_PAGES[ref.index], ref)
+        return parse_lighton_grounding(_TAGGED_LIGHTON_PAGES[ref.index], ref)
 
 
-def test_inline_lighton_pages_split_multi_doc_fixture(tmp_path):
+def test_tagged_lighton_pages_split_multi_doc_fixture(tmp_path):
     from packet.eval.fixtures import build_builtin
 
     fx = next(f for f in build_builtin(tmp_path) if f.name == "multi-doc")
@@ -257,7 +243,7 @@ def test_inline_lighton_pages_split_multi_doc_fixture(tmp_path):
         extractors=[
             EscalatingExtractor(
                 native=NativeTextExtractor(),
-                ocr=_InlineLightonPages(),
+                ocr=_TaggedLightonPages(),
                 force_inspect=True,
             )
         ]

@@ -1,11 +1,16 @@
-"""Pure mappers from OCR engine output to Packet ``Block``s (no model imports)."""
+"""Pure mappers from OCR engine output to Packet ``Block``s (no model imports).
+
+LightOn grounding labels (`header`, `footer`, `page_number`, …) are defined on the
+`lightonai/LightOnOCR-3-1B` model card (Prompt Modes / grounding); output uses
+``![label](x0,y0,x1,y1)`` placeholders in 0–1000 page coordinates.
+"""
 
 from __future__ import annotations
 
 import re
 from typing import Any
 
-from packet.boundary import keyword_page_label_fraction, match_trailing_page_label
+from packet.boundary import keyword_page_label_fraction
 from packet.types import BBox, Block, PageRef, SourceKind
 from packet.types import BlockKind as K
 
@@ -34,42 +39,12 @@ def _page_size(ref: PageRef) -> tuple[float, float]:
     return float(ref.width or 612.0), float(ref.height or 792.0)
 
 
-def _split_block_page_labels(
-    text: str,
-    body_kind: K,
-    heading_level: int | None,
-) -> list[tuple[K, str, int | None]]:
-    stripped = (text or "").strip()
-    if not stripped:
-        return []
-    if keyword_page_label_fraction(stripped) is not None:
-        return [(K.PAGE_NUMBER, stripped, None)]
-
-    pieces: list[tuple[K, str, int | None]] = []
-    body_acc: list[str] = []
-
-    def flush_body() -> None:
-        if body_acc:
-            pieces.append((body_kind, "\n".join(body_acc), heading_level))
-            body_acc.clear()
-
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        inline = match_trailing_page_label(line)
-        if inline:
-            body, label = inline
-            if body.strip():
-                body_acc.append(body.rstrip())
-            flush_body()
-            pieces.append((K.PAGE_NUMBER, label, None))
-        elif keyword_page_label_fraction(line.strip()) is not None:
-            flush_body()
-            pieces.append((K.PAGE_NUMBER, line.strip(), None))
-        else:
-            body_acc.append(line.rstrip())
-    flush_body()
-    return pieces
+def _lighton_block_kind(label: str, text: str, kind: K) -> K:
+    if label == "page_number":
+        return K.PAGE_NUMBER
+    if label in {"header", "footer"} and keyword_page_label_fraction(text) is not None:
+        return K.PAGE_NUMBER
+    return kind
 
 
 def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
@@ -98,6 +73,7 @@ def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
             text = _HASHES.sub("", text, count=1)
             if level == 1:
                 kind = K.TITLE
+        kind = _lighton_block_kind(label, text, kind)
         x0, y0, x1, y1 = (min(1000, max(0, int(m.group(k)))) for k in range(3, 7))
         x0, x1 = min(x0, x1), max(x0, x1)
         y0, y1 = min(y0, y1), max(y0, y1)
@@ -111,35 +87,6 @@ def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
                       x1=x1 / 1000 * wpt, y1=y1 / 1000 * hpt),
             extra=extra,
         ))
-    return _split_inline_page_furniture(out)
-
-
-def _split_inline_page_furniture(blocks: list[Block]) -> list[Block]:
-    out: list[Block] = []
-    for block in blocks:
-        if block.kind not in {K.PARAGRAPH, K.UNKNOWN, K.HEADING, K.TITLE}:
-            out.append(block)
-            continue
-        pieces = _split_block_page_labels(block.text, block.kind, block.heading_level)
-        if not pieces:
-            out.append(block)
-            continue
-        for kind, txt, level in pieces:
-            out.append(
-                block.model_copy(
-                    update={
-                        "id": f"{block.id}-f{len(out)}",
-                        "kind": kind,
-                        "text": txt,
-                        "reading_order": len(out),
-                        "heading_level": level if kind != K.PAGE_NUMBER else None,
-                        "extra": dict(block.extra),
-                    }
-                )
-            )
-    for i, block in enumerate(out):
-        if block.reading_order != i:
-            out[i] = block.model_copy(update={"reading_order": i})
     return out
 
 
@@ -160,7 +107,7 @@ def _markdown_blocks(raw: str, ref: PageRef) -> list[Block]:
         out.append(Block(id=f"{ref.packet_id}-p{ref.index}-o{i}", page=ref.index, kind=kind, text=p,
                          reading_order=i, source=SourceKind.VLM, confidence=0.8,
                          heading_level=level, extra={"engine": "lighton"}))
-    return _split_inline_page_furniture(out)
+    return out
 
 
 def parse_paddle_blocks(raw: list[dict[str, Any]], ref: PageRef, dpi: float) -> list[Block]:
