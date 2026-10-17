@@ -1,10 +1,16 @@
-"""Pure mappers from OCR engine output to Packet ``Block``s (no model imports)."""
+"""Pure mappers from OCR engine output to Packet ``Block``s (no model imports).
+
+LightOn grounding labels (`header`, `footer`, `page_number`, …) are defined on the
+`lightonai/LightOnOCR-3-1B` model card (Prompt Modes / grounding); output uses
+``![label](x0,y0,x1,y1)`` placeholders in 0–1000 page coordinates.
+"""
 
 from __future__ import annotations
 
 import re
 from typing import Any
 
+from packet.boundary import keyword_page_label_fraction, match_trailing_page_label
 from packet.types import BBox, Block, PageRef, SourceKind
 from packet.types import BlockKind as K
 
@@ -33,6 +39,107 @@ def _page_size(ref: PageRef) -> tuple[float, float]:
     return float(ref.width or 612.0), float(ref.height or 792.0)
 
 
+def _lighton_block_kind(label: str, text: str, kind: K) -> K:
+    if label == "page_number":
+        return K.PAGE_NUMBER
+    if label in {"header", "footer"} and keyword_page_label_fraction(text) is not None:
+        return K.PAGE_NUMBER
+    return kind
+
+
+def _split_trailing_page_label(
+    text: str,
+    body_kind: K,
+    heading_level: int | None,
+) -> list[tuple[K, str, int | None]]:
+    """At most one trailing page label per block (``![text]`` / untagged markdown only)."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return []
+
+    if keyword_page_label_fraction(stripped) is not None:
+        return [(K.PAGE_NUMBER, stripped, None)]
+
+    inline = match_trailing_page_label(stripped)
+    if inline:
+        body, label = inline
+        if body.strip():
+            return [(body_kind, body.strip(), heading_level), (K.PAGE_NUMBER, label, None)]
+        return [(K.PAGE_NUMBER, label, None)]
+
+    lines = stripped.splitlines()
+    if len(lines) >= 2:
+        last = lines[-1].strip()
+        if keyword_page_label_fraction(last) is not None:
+            body = "\n".join(lines[:-1]).strip()
+            if body:
+                return [(body_kind, body, heading_level), (K.PAGE_NUMBER, last, None)]
+
+    return [(body_kind, stripped, heading_level)]
+
+
+def _may_split_trailing_label(block: Block) -> bool:
+    if block.kind == K.PAGE_NUMBER:
+        return False
+    label = block.extra.get("label")
+    if label is not None and label != "text":
+        return False
+    return block.kind in {K.PARAGRAPH, K.TITLE, K.HEADING, K.LIST_ITEM, K.UNKNOWN}
+
+
+def _retype_if_whole_page_label(block: Block) -> Block:
+    if block.kind == K.PAGE_NUMBER:
+        return block
+    if keyword_page_label_fraction((block.text or "").strip()) is not None:
+        return block.model_copy(update={"kind": K.PAGE_NUMBER, "heading_level": None})
+    return block
+
+
+def _expand_trailing_page_labels(blocks: list[Block]) -> list[Block]:
+    out: list[Block] = []
+    for block in blocks:
+        block = _retype_if_whole_page_label(block)
+        if not _may_split_trailing_label(block):
+            out.append(block)
+            continue
+        pieces = _split_trailing_page_label(block.text, block.kind, block.heading_level)
+        if len(pieces) == 1:
+            kind, txt, level = pieces[0]
+            if kind == block.kind and txt == block.text and level == block.heading_level:
+                out.append(block)
+            else:
+                out.append(
+                    block.model_copy(
+                        update={
+                            "id": f"{block.id}-t{len(out)}",
+                            "kind": kind,
+                            "text": txt,
+                            "reading_order": len(out),
+                            "heading_level": level if kind != K.PAGE_NUMBER else None,
+                            "extra": dict(block.extra),
+                        }
+                    )
+                )
+            continue
+        for kind, txt, level in pieces:
+            out.append(
+                block.model_copy(
+                    update={
+                        "id": f"{block.id}-t{len(out)}",
+                        "kind": kind,
+                        "text": txt,
+                        "reading_order": len(out),
+                        "heading_level": level if kind != K.PAGE_NUMBER else None,
+                        "extra": dict(block.extra),
+                    }
+                )
+            )
+    for i, block in enumerate(out):
+        if block.reading_order != i:
+            out[i] = block.model_copy(update={"reading_order": i})
+    return out
+
+
 def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
     """Grounding output: ``![label](x0,y0,x1,y1)`` (0-1000 page coords) before each block.
     Falls back to markdown paragraphs when the model answered without tags."""
@@ -40,11 +147,11 @@ def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
     wpt, hpt = _page_size(ref)
     tags = list(_TAG.finditer(raw))
     if not tags:
-        return _markdown_blocks(raw, ref)
+        return _expand_trailing_page_labels(_markdown_blocks(raw, ref, expand_trailing=False))
     out: list[Block] = []
     pre = raw[: tags[0].start()].strip()
     if pre:  # text the model emitted before its first tag
-        out.extend(_markdown_blocks(pre, ref))
+        out.extend(_markdown_blocks(pre, ref, expand_trailing=False))
     base = len(out)
     for j, m in enumerate(tags):
         i = base + j
@@ -59,6 +166,7 @@ def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
             text = _HASHES.sub("", text, count=1)
             if level == 1:
                 kind = K.TITLE
+        kind = _lighton_block_kind(label, text, kind)
         x0, y0, x1, y1 = (min(1000, max(0, int(m.group(k)))) for k in range(3, 7))
         x0, x1 = min(x0, x1), max(x0, x1)
         y0, y1 = min(y0, y1), max(y0, y1)
@@ -72,10 +180,10 @@ def parse_lighton_grounding(raw: str, ref: PageRef) -> list[Block]:
                       x1=x1 / 1000 * wpt, y1=y1 / 1000 * hpt),
             extra=extra,
         ))
-    return out
+    return _expand_trailing_page_labels(out)
 
 
-def _markdown_blocks(raw: str, ref: PageRef) -> list[Block]:
+def _markdown_blocks(raw: str, ref: PageRef, *, expand_trailing: bool = True) -> list[Block]:
     out: list[Block] = []
     parts = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
     for i, p in enumerate(parts):
@@ -92,6 +200,8 @@ def _markdown_blocks(raw: str, ref: PageRef) -> list[Block]:
         out.append(Block(id=f"{ref.packet_id}-p{ref.index}-o{i}", page=ref.index, kind=kind, text=p,
                          reading_order=i, source=SourceKind.VLM, confidence=0.8,
                          heading_level=level, extra={"engine": "lighton"}))
+    if expand_trailing:
+        return _expand_trailing_page_labels(out)
     return out
 
 

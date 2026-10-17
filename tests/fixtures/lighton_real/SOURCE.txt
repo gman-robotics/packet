@@ -1,0 +1,3 @@
+Byte-exact MLX grounding output from Bo's make-scan smoke (Northwind 4-page multi-doc PDF).
+Model: lightonai/LightOnOCR-3-1B @ revision 23d54408.
+One ![text] block per page; page label folded into the line (no header/footer/page_number tags).

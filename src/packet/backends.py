@@ -8,6 +8,7 @@ Hugging Face / PaddleX cache. Nothing is bundled (docs/LICENSE_CHECKLIST.md).
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import os
 import sys
@@ -15,6 +16,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from packet.extract import Extractor, NativeTextExtractor, call_extractor
@@ -30,6 +32,42 @@ _OCR_CLASSES = {PageClass.SCAN, PageClass.MIXED, PageClass.SUSPECT_ENCODING}
 
 class OcrUnavailable(RuntimeError):
     """The OCR engine cannot run here (not installed, no weights, unsupported platform)."""
+
+
+class OcrConfigError(ValueError):
+    """Invalid OCR settings (unknown engine name, explicit engine not available here)."""
+
+    def __init__(self, message: str, *, pip_extra: str | None = None) -> None:
+        super().__init__(message)
+        self.pip_extra = pip_extra
+
+
+@dataclass(frozen=True)
+class OCRConfig:
+    """Opt-in OCR factory settings. ``Pipeline()`` does not use this; CLI parse/inspect does.
+
+    ``model`` is the Hugging Face repo id for LightOn only (`PACKET_OCR=lighton` or `auto` when
+    mlx-vlm is available). It is passed to ``snapshot_download`` with the pinned ``revision``.
+    It is rejected for ``paddle`` and for ``auto`` when mlx-vlm is missing.
+    """
+
+    engine: str = "auto"
+    model: str | None = None
+
+
+class _LegacyOcrChain:
+    """Sentinel: use the historical LightOn-then-Paddle chain (not ``engine=auto``)."""
+
+
+_LEGACY_OCR_CHAIN = _LegacyOcrChain()
+
+
+def _mlx_vlm_available() -> bool:
+    return importlib.util.find_spec("mlx_vlm") is not None
+
+
+def _paddle_available() -> bool:
+    return importlib.util.find_spec("paddleocr") is not None
 
 
 class DoclingExtractor:
@@ -98,8 +136,11 @@ class LightOnExtractor(_LazyEngine):
     mode = "grounding"
     backend = "mlx"
 
-    def __init__(self, max_tokens: int = 4096):
+    def __init__(self, max_tokens: int = 4096, model: str | None = None, explicit_model: bool = False):
         self.max_tokens = max_tokens
+        self._explicit_model = explicit_model or model is not None
+        if model is not None:
+            self.model = model
         self._loaded = None
         self._load_error = None
 
@@ -121,6 +162,10 @@ class LightOnExtractor(_LazyEngine):
             model, processor = load(path, trust_remote_code=False)
             prompt = apply_chat_template(processor, model.config, self.mode, num_images=1)
         except Exception as exc:
+            if self._explicit_model:
+                raise OcrConfigError(
+                    f"PACKET_OCR_MODEL={self.model!r}: failed to load ({exc})",
+                ) from exc
             raise OcrUnavailable(f"LightOnOCR failed to load: {exc}") from exc
         return (model, processor, (generate, prompt))
 
@@ -269,14 +314,96 @@ class EscalatingExtractor:
         return []
 
 
-def default_ocr_extractor() -> FallbackExtractor:
-    """Default OCR: LightOnOCR-3-1B grounding on MLX, PaddleOCR-VL-1.6 pipeline as fallback."""
+def _default_ocr_chain() -> FallbackExtractor:
+    """LightOnOCR-3-1B grounding on MLX, PaddleOCR-VL-1.6 pipeline as fallback."""
     return FallbackExtractor(LightOnExtractor(), PaddleExtractor())
+
+
+def build_ocr_extractor(config: OCRConfig) -> Extractor:
+    """Resolve ``config`` to a concrete OCR engine. CUDA ``auto`` waits on T4 (not wired here)."""
+    engine = config.engine.strip().lower()
+    if config.model and engine == "paddle":
+        raise OcrConfigError(
+            "PACKET_OCR_MODEL is only supported with PACKET_OCR=lighton or auto (mlx-vlm)"
+        )
+    if engine == "auto":
+        if config.model:
+            if not _mlx_vlm_available():
+                raise OcrConfigError(
+                    "PACKET_OCR=auto with PACKET_OCR_MODEL requires mlx-vlm",
+                    pip_extra="ocr-mlx",
+                )
+            return LightOnExtractor(model=config.model, explicit_model=True)
+        if _mlx_vlm_available():
+            return FallbackExtractor(LightOnExtractor(), PaddleExtractor())
+        if not _paddle_available():
+            raise OcrConfigError(
+                "PACKET_OCR=auto: no mlx-vlm and paddleocr is not installed",
+                pip_extra="ocr-paddle",
+            )
+        return PaddleExtractor()
+    if engine == "lighton":
+        if not _mlx_vlm_available():
+            raise OcrConfigError(
+                "PACKET_OCR=lighton: mlx-vlm is not installed",
+                pip_extra="ocr-mlx",
+            )
+        return LightOnExtractor(
+            model=config.model,
+            explicit_model=config.model is not None,
+        )
+    if engine == "paddle":
+        if not _paddle_available():
+            raise OcrConfigError(
+                "PACKET_OCR=paddle: paddleocr is not installed",
+                pip_extra="ocr-paddle",
+            )
+        return PaddleExtractor()
+    raise OcrConfigError(f"unknown OCR engine {config.engine!r}")
+
+
+def default_ocr_extractor(config: OCRConfig | None = None) -> Extractor:
+    """Default OCR routing. No ``config`` keeps the historical LightOn-then-Paddle chain."""
+    if config is None:
+        return _default_ocr_chain()
+    return build_ocr_extractor(config)
+
+
+def _ocr_config_from_env() -> OCRConfig | None | _LegacyOcrChain:
+    """``None`` disables OCR. ``_LEGACY_OCR_CHAIN`` keeps the historical default chain."""
+    raw = os.environ.get("PACKET_OCR", "").strip()
+    model = os.environ.get("PACKET_OCR_MODEL", "").strip() or None
+    if not raw:
+        if model:
+            raise OcrConfigError("PACKET_OCR_MODEL needs PACKET_OCR=lighton or auto")
+        return _LEGACY_OCR_CHAIN
+    lowered = raw.lower()
+    if lowered in {"off", "0", "none"}:
+        return None
+    if lowered in {"on", "1", "true", "yes"}:
+        if model:
+            raise OcrConfigError("PACKET_OCR_MODEL needs PACKET_OCR=lighton or auto")
+        return _LEGACY_OCR_CHAIN
+    if lowered == "auto":
+        return OCRConfig(engine="auto", model=model)
+    if lowered in {"lighton", "mlx"}:
+        return OCRConfig(engine="lighton", model=model)
+    if lowered == "paddle":
+        if model:
+            raise OcrConfigError(
+                "PACKET_OCR_MODEL is only supported with PACKET_OCR=lighton or auto (mlx-vlm)"
+            )
+        return OCRConfig(engine="paddle", model=None)
+    raise OcrConfigError(f"unknown PACKET_OCR value {raw!r}")
 
 
 def default_extractors(force_inspect: bool = False) -> list[Extractor]:
     """Packet's default routing. ``PACKET_OCR=off`` disables OCR (native text only)."""
-    ocr = None if os.environ.get("PACKET_OCR", "").lower() in {"off", "0", "none"} else (
-        default_ocr_extractor()
-    )
+    cfg = _ocr_config_from_env()
+    if cfg is None:
+        ocr = None
+    elif cfg is _LEGACY_OCR_CHAIN:
+        ocr = default_ocr_extractor()
+    else:
+        ocr = default_ocr_extractor(cfg)
     return [EscalatingExtractor(NativeTextExtractor(), ocr, force_inspect=force_inspect)]

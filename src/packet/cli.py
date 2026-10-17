@@ -6,8 +6,10 @@ import sys
 import time
 from pathlib import Path
 
-from packet.backends import default_extractors
+from packet.backends import OcrConfigError, default_extractors
 from packet.pipeline import Pipeline
+
+_DISTRIBUTION = "packet-dl"
 
 
 def _unit_interval(value: str) -> float:
@@ -18,6 +20,30 @@ def _unit_interval(value: str) -> float:
     if not (0.0 <= x <= 1.0):  # rejects nan, inf, negatives, > 1
         raise argparse.ArgumentTypeError(f"must be within [0, 1]: {value!r}")
     return x
+
+
+def _ocr_config_stderr_line(exc: OcrConfigError) -> str:
+    msg = str(exc)
+    if exc.pip_extra == "ocr-mlx":
+        return (
+            f"packet: {msg}; install with pip install '{_DISTRIBUTION}[ocr-mlx]' "
+            "on Apple silicon"
+        )
+    if exc.pip_extra == "ocr-paddle":
+        return f"packet: {msg}; install with pip install '{_DISTRIBUTION}[ocr-paddle]'"
+    return f"packet: {msg}"
+
+
+def _fail_ocr_config(exc: OcrConfigError) -> None:
+    print(_ocr_config_stderr_line(exc), file=sys.stderr)
+    raise SystemExit(2) from exc
+
+
+def _extractors_or_exit(force_inspect: bool = False):
+    try:
+        return default_extractors(force_inspect=force_inspect)
+    except OcrConfigError as exc:
+        _fail_ocr_config(exc)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,9 +101,12 @@ def main(argv: list[str] | None = None) -> int:
     if not path.exists():
         print(f"not found: {path}", file=sys.stderr)
         return 2
-    pipe = Pipeline(extractors=default_extractors(force_inspect=args.force_inspect))
-    for event in pipe.stream(path):
-        print(f"{event.kind.value:20} page={event.page} {json.dumps(event.payload)[:180]}")
+    pipe = Pipeline(extractors=_extractors_or_exit(force_inspect=args.force_inspect))
+    try:
+        for event in pipe.stream(path):
+            print(f"{event.kind.value:20} page={event.page} {json.dumps(event.payload)[:180]}")
+    except OcrConfigError as exc:
+        _fail_ocr_config(exc)
     return 0
 
 
@@ -102,7 +131,7 @@ def _cmd_parse(args) -> int:
 
     # One pipeline and one set of extractors for the whole run; OCR engines also sit in
     # the process-level cache, so the model loads once however many files there are.
-    extractors = default_extractors(force_inspect=args.force_inspect)
+    extractors = _extractors_or_exit(force_inspect=args.force_inspect)
     pipe = Pipeline(extractors=extractors)
     if args.no_split:
         pipe.config.split_on_boundary = False
@@ -135,6 +164,8 @@ def _cmd_parse(args) -> int:
                 print(f"wrote {out} ({packet.document_count()} document(s), "
                       f"{packet.origin.page_count} pages)")
             row.update(ok=True, pages=packet.origin.page_count, documents=packet.document_count())
+        except OcrConfigError as exc:
+            _fail_ocr_config(exc)
         except Exception as exc:  # one bad file must not stop a batch
             failed += 1
             row.update(ok=False, error=f"{type(exc).__name__}: {exc}")

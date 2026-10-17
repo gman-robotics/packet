@@ -19,6 +19,56 @@ _WHOLE_P_PREFIX_PAGE = re.compile(
 
 
 _BARE_PN = re.compile(r"^\s*(?:page\s*)?(\d{1,4})\s*$", re.IGNORECASE)
+_WHOLE_PAGE_PREFIXED = re.compile(
+    r"^page\s*(\d+)\s*(?:of|/)\s*(\d+)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _page_fraction_whole_line(stripped: str) -> tuple[int, int] | None:
+    match = _WHOLE_PAGE_NUM.match(stripped) or _WHOLE_P_PREFIX_PAGE.match(stripped)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def _prefixed_page_label_fraction_whole_line(stripped: str) -> tuple[int, int] | None:
+    """``page…`` or ``p.`` whole-line fraction (not bare ``N of M`` / ``N/M``)."""
+    match = _WHOLE_PAGE_PREFIXED.match(stripped) or _WHOLE_P_PREFIX_PAGE.match(stripped)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def fraction_on_whole_line(text: str) -> tuple[int, int] | None:
+    """First non-empty line's native whole-line page fraction, if any."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return _page_fraction_whole_line(stripped)
+    return None
+
+
+def keyword_page_label_fraction(text: str) -> tuple[int, int] | None:
+    """Whole-line page fraction with a required ``page`` or ``p.`` prefix (OCR split gate)."""
+    stripped = text.strip()
+    if not stripped:
+        return None
+    return _prefixed_page_label_fraction_whole_line(stripped)
+
+
+def match_trailing_page_label(line: str) -> tuple[str, str] | None:
+    """Split ``line`` when a trailing suffix passes ``keyword_page_label_fraction``."""
+    s = line.rstrip()
+    for start in range(len(s) - 1, 0, -1):
+        if not s[start - 1].isspace():
+            continue
+        suffix = s[start:].strip()
+        body = s[:start].rstrip()
+        if body and keyword_page_label_fraction(suffix) is not None:
+            return body, suffix
+    return None
+
 
 # Signal weights. A signal at or above PROPOSE is proposed alone; two or more
 # independent weak signals together are lifted to COMBINED, which clears the
@@ -205,14 +255,7 @@ def _title_position(blocks: list[Block]) -> str | None:
 
 
 def _fraction_on_whole_line(text: str) -> tuple[int, int] | None:
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        match = _WHOLE_PAGE_NUM.match(stripped) or _WHOLE_P_PREFIX_PAGE.match(stripped)
-        if match:
-            return int(match.group(1)), int(match.group(2))
-    return None
+    return fraction_on_whole_line(text)
 
 
 def _extract_page_number(blocks: list[Block]) -> tuple[int | None, int | None]:
