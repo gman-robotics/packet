@@ -31,6 +31,19 @@ from packet.types import Block, BlockKind, PageRef, SourceKind
 DLW12_SILENT_CUT_PAGE = 25  # T8 holdout page index (page_end 24, key '25')
 
 
+def _minimal_weights_json(**overrides: object) -> str:
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "feature_names": FEATURE_NAMES,
+        "mean": [0.0] * len(FEATURE_NAMES),
+        "std": [1.0] * len(FEATURE_NAMES),
+        "weights": [0.0] * len(FEATURE_NAMES),
+        "bias": 0.0,
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
 def _ref(i: int) -> PageRef:
     return PageRef(packet_id="p", index=i, width=612, height=792)
 
@@ -267,6 +280,12 @@ def test_model_reason_only_when_model_raised_confidence():
         ("1", "JSON object"),
         ('"x"', "JSON object"),
         ('{"schema_version": 99}', "schema_version"),
+        (_minimal_weights_json(schema_version=True), "schema_version"),
+        (_minimal_weights_json(std=[0.0] * len(FEATURE_NAMES)), "std entries must be"),
+        (
+            _minimal_weights_json(weights=[int("9" * 309)] + [0.0] * (len(FEATURE_NAMES) - 1)),
+            "invalid weights",
+        ),
         (
             json.dumps({"schema_version": 1, "feature_names": ["x"], "mean": [], "std": [], "weights": [], "bias": 0}),
             "feature_names",
@@ -344,6 +363,36 @@ def test_cli_missing_weights_prints_one_line_stderr(tmp_path, capsys):
     pdf = tmp_path / "x.pdf"
     pdf.write_bytes(b"%PDF-1.4\n%EOF\n")
     rc = cli.main(["parse", str(pdf), "-o", str(tmp_path / "out.json"), "--boundary-weights", str(tmp_path / "nope.json")])
+    err = capsys.readouterr().err.strip()
+    assert rc == 2
+    assert err.count("\n") == 0
+    assert err.startswith("packet:")
+
+
+def test_cli_huge_integer_coefficient_exits_2(tmp_path, capsys):
+    from packet import cli
+
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%EOF\n")
+    weights = tmp_path / "w.json"
+    weights.write_text(
+        _minimal_weights_json(weights=[int("9" * 309)] + [0.0] * (len(FEATURE_NAMES) - 1))
+    )
+    rc = cli.main(["parse", str(pdf), "-o", str(tmp_path / "out.json"), "--boundary-weights", str(weights)])
+    err = capsys.readouterr().err.strip()
+    assert rc == 2
+    assert err.count("\n") == 0
+    assert err.startswith("packet:")
+
+
+def test_cli_zero_std_exits_2(tmp_path, capsys):
+    from packet import cli
+
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%EOF\n")
+    weights = tmp_path / "w.json"
+    weights.write_text(_minimal_weights_json(std=[0.0] * len(FEATURE_NAMES)))
+    rc = cli.main(["parse", str(pdf), "-o", str(tmp_path / "out.json"), "--boundary-weights", str(weights)])
     err = capsys.readouterr().err.strip()
     assert rc == 2
     assert err.count("\n") == 0

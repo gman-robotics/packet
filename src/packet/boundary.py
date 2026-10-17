@@ -121,7 +121,6 @@ class BoundaryDetector:
     _sizes: list[tuple[float | None, float | None, int]] = field(default_factory=list)
     _words: list = field(default_factory=list)
     _langs: list[str | None] = field(default_factory=list)
-    _bodies: list[str] = field(default_factory=list)
     _page_facts: list[dict] = field(default_factory=list)
 
     def observe(
@@ -145,8 +144,6 @@ class BoundaryDetector:
         self._sizes.append((ref.width, ref.height, ref.rotation))
         words = content_words(blocks)
         self._words.append(words)
-        body = "\n".join(b.text for b in blocks if b.text)
-        self._bodies.append(body)
         self._langs.append(detect_language(" ".join(
             b.text for b in blocks if b.kind not in _FURNITURE and b.text)))
         from packet.boundary_model import page_fact_row
@@ -261,12 +258,6 @@ class BoundaryDetector:
             return False
         before = prev + (self._words[-3] if len(self._words) >= 3 else type(prev)())
         return topic_similarity(before, cur) <= TOPIC_SHIFT_MAX
-
-
-def _head_candidate(b: Block) -> bool:
-    """A small top-band line FurnitureTagger may tag as a HEADER once its repeat is seen."""
-    x = b.extra or {}
-    return bool(x.get("layout") and x.get("band") == "top" and x.get("small"))
 
 
 def _is_layout(blocks: list[Block]) -> bool:

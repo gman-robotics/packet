@@ -217,7 +217,10 @@ def export_weights_json(
 def _finite_coefficient(value: Any, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise BoundaryWeightsError(f"malformed boundary weights: invalid {label}")
-    out = float(value)
+    try:
+        out = float(value)
+    except OverflowError as exc:
+        raise BoundaryWeightsError(f"malformed boundary weights: invalid {label}") from exc
     if not math.isfinite(out):
         raise BoundaryWeightsError(f"malformed boundary weights: non-finite {label}")
     return out
@@ -239,9 +242,10 @@ def load_logistic_scorer(path: Path) -> LogisticBoundaryScorer:
             f"malformed boundary weights: expected JSON object, got {type(parsed).__name__}"
         )
     data: dict[str, Any] = parsed
-    if data.get("schema_version") != SCHEMA_VERSION:
+    schema = data.get("schema_version")
+    if isinstance(schema, bool) or schema != SCHEMA_VERSION:
         raise BoundaryWeightsError(
-            f"unsupported boundary weights schema_version {data.get('schema_version')!r} "
+            f"unsupported boundary weights schema_version {schema!r} "
             f"(expected {SCHEMA_VERSION})"
         )
     names = data.get("feature_names")
@@ -264,6 +268,8 @@ def load_logistic_scorer(path: Path) -> LogisticBoundaryScorer:
     bias = _finite_coefficient(data["bias"], "bias")
     mean = [_finite_coefficient(x, "mean") for x in data["mean"]]
     std = [_finite_coefficient(x, "std") for x in data["std"]]
+    if any(s <= 0 for s in std):
+        raise BoundaryWeightsError("malformed boundary weights: std entries must be > 0")
     weights = [_finite_coefficient(x, "weights") for x in data["weights"]]
     return LogisticBoundaryScorer(
         feature_names=list(FEATURE_NAMES),
