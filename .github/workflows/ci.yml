@@ -13,12 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.15"
 
       - name: Install package
         run: |
@@ -33,8 +33,12 @@ jobs:
           python -m pytest -q -m "not needs_network and not needs_gpu and not needs_models and not needs_ocr_extras" --tb=short
 
       - name: Builtin eval GATE
+        env:
+          PYTHONPATH: src
         run: |
+          set -o pipefail
           export PATH="${HOME}/.local/bin:${PATH}"
+          python -c "import packet, pathlib; p=pathlib.Path(packet.__file__).resolve(); r=(pathlib.Path('src')/'packet').resolve(); assert p.is_relative_to(r), p"
           CACHE="${RUNNER_TEMP}/packet-eval"
           mkdir -p "$CACHE"
           packet eval --dir "$CACHE" | tee "${RUNNER_TEMP}/eval-builtin.txt"
@@ -43,8 +47,11 @@ jobs:
       - name: verify-packet headless smoke
         env:
           PACKET_VERIFY_RUN_ID: "ci-${{ github.run_id }}-${{ github.run_attempt }}"
+          PYTHONPATH: src
         run: |
+          set -o pipefail
           export PATH="${HOME}/.local/bin:${PATH}"
+          python -c "import packet, pathlib; p=pathlib.Path(packet.__file__).resolve(); r=(pathlib.Path('src')/'packet').resolve(); assert p.is_relative_to(r), p"
           .cursor/skills/verify-packet/control-packet launch
           eval "$(.cursor/skills/verify-packet/control-packet env)"
           .cursor/skills/verify-packet/control-packet ci-headless

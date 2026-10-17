@@ -22,7 +22,7 @@ eval "$(.cursor/skills/verify-packet/control-packet env)"
 
 **Ready** when `.cursor/skills/verify-packet/control-packet doctor` prints `ok: true` with a resolved `packet` path and `package_version` matching `pyproject.toml`. Doctor also prints `ocr_lighton` (`ready`, `missing-mlx` or `missing-weights`), `ocr_paddle` and `machine`; the OCR recipes need `ocr_lighton: ready`.
 
-Doctor also checks that `import packet` loads from this checkout's `src/`. `pip install -e` can leave a copied `site-packages/packet` (pyproject `force-include`) that shadows the editable install while `direct_url.json` still points here. If doctor says so, move that copy aside.
+Doctor also checks that `import packet` resolves to this checkout: either `src/packet` on `PYTHONPATH`, or a `site-packages/packet` copy whose every `.py` file matches `src/packet` byte-for-byte. `pip install -e` can leave that copied tree (pyproject `force-include`) while `direct_url.json` still points here; if any file diverges, doctor fails and you should reinstall with `pip install -e ".[dev]"` from the repo root.
 
 **Teardown:** run `.cursor/skills/verify-packet/control-packet cleanup` after each verification session (see Cleanup). There is no daemon to keep alive between drives.
 

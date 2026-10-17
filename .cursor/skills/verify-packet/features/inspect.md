@@ -4,7 +4,7 @@ Inspect streams the pipeline event log for each page of a PDF: classification, b
 
 ## Sub-features
 
-- `inspect-events` prints `page_classified`, `block_emitted` (including furniture kinds such as `page_number`, `header`, and `footer` on native-text pages), and lifecycle events (`document_opened`, `document_closed`, `packet_closed`). Use the `multi-doc` fixture when you need `boundary_proposed` lines. Each line is `{kind padded} page={n} {json payload}` truncated to about 180 characters.
+- `inspect-events` prints `page_classified`, `block_emitted` (including furniture kinds such as `page_number`, `header`, and `footer` on native-text pages), and lifecycle events (`document_opened`, `document_closed`, `packet_closed`). Use the `multi-doc` fixture when you need `boundary_proposed` lines. Each line is `{kind padded} page={n} {json payload}` where the JSON payload is sliced to 180 characters.
 - `inspect-missing` exits non-zero when the path does not exist.
 
 ## How to get to it (user POV)

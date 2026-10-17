@@ -38,6 +38,7 @@ target-version = "py311"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = ["--strict-markers"]
 markers = [
   "needs_network: test needs live network or external downloads",
   "needs_gpu: test needs GPU hardware",

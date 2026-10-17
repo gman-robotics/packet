@@ -228,10 +228,35 @@ print(pathlib.Path(urllib.request.url2pathname(url.removeprefix('file://'))).res
   # Hatch `force-include` copies src/packet into site-packages on `pip install -e`; that is
   # normal. Reject only when the imported tree no longer matches this checkout.
   if [[ "$imported" == *"/site-packages/packet" ]]; then
-    local a b
-    a="$(sha256sum "$expected/__init__.py" | awk '{print $1}')"
-    b="$(sha256sum "$imported/__init__.py" | awk '{print $1}')"
-    if [[ "$a" == "$b" ]]; then
+    if python3 - "$expected" "$imported" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+def py_tree(root: pathlib.Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        out[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return out
+
+expected = pathlib.Path(sys.argv[1])
+imported = pathlib.Path(sys.argv[2])
+exp, got = py_tree(expected), py_tree(imported)
+if exp == got:
+    raise SystemExit(0)
+missing = sorted(set(exp) - set(got))
+extra = sorted(set(got) - set(exp))
+mismatch = sorted(k for k in exp if k in got and exp[k] != got[k])
+for name in missing:
+    print(f"missing in site-packages copy: {name}", file=sys.stderr)
+for name in extra:
+    print(f"extra in site-packages copy: {name}", file=sys.stderr)
+for name in mismatch:
+    print(f"content mismatch: {name}", file=sys.stderr)
+raise SystemExit(1)
+PY
+    then
       return 0
     fi
   fi
