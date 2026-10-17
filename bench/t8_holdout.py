@@ -9,16 +9,15 @@ The model only adds a signal where the detector's is weaker, capped at 0.74
     python bench/t8_holdout.py [--cache DIR] [--out DIR] [--note bench/t8_holdout.md]
 
 Writes the note (train/scored ids, residual-shape count with evidence, heuristic
-then model holdout macro/micro, per-packet rows, ``ship``). No weights are saved:
-the model is retrained from the data on every run. ``Pipeline()`` is untouched.
+then model holdout macro/micro, per-packet rows, ``ship``). Optionally exports a
+JSON weights file (``--export-weights``). ``Pipeline()`` is unchanged unless a
+scorer is configured on ``PipelineConfig``.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import math
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,16 +25,22 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
+from packet.boundary_model import (  # noqa: E402
+    FEATURE_NAMES as FEATURES,
+    Weights,
+    combined_confidence,
+    export_weights_json,
+    featurize_from_facts,
+    predict_probability,
+    train_logistic,
+)
+
 PROPOSE = 0.4  # LookaheadSplitter's propose level: below it a score is no signal
 CAP = 0.74  # decision 3A: a model score never reaches the 0.75 immediate commit
 
-FEATURES: list[str] = [
-    "has_num", "num_is_one", "has_total", "prev_has_num",
-    "arxiv_stamp", "title_top", "title_lower",
-    "log_words", "prev_log_words",
-    "head_abstract", "head_intro", "head_affil",
-    "prev_refs", "media_jump", "lang_change", "topic_sim",
-]
+
+def predict(w: Weights, x: list[float]) -> float:
+    return predict_probability(w, x)
 
 
 # ---- split (2C) ----
@@ -79,52 +84,6 @@ def assert_real_only(rows: list[dict]) -> None:
         raise ValueError(f"synthetic rows in training (decision 10A forbids them): {bad}")
 
 
-# ---- model ----
-
-Weights = tuple[list[float], list[float], list[float], float]  # mean, sd, coef, bias
-
-
-def train_logistic(X: list[list[float]], y: list[int], l2: float = 1.0, epochs: int = 3000,
-                   lr: float = 0.2) -> Weights:
-    """Deterministic batch gradient descent on standardized features, class-balanced
-    (positives are rare), L2 on the coefficients."""
-    n, k = len(X), len(X[0])
-    mean = [sum(r[j] for r in X) / n for j in range(k)]
-    sd = [math.sqrt(sum((r[j] - mean[j]) ** 2 for r in X) / n) or 1.0 for j in range(k)]
-    Z = [[(r[j] - mean[j]) / sd[j] for j in range(k)] for r in X]
-    pos = sum(y) or 1
-    wpos, wneg = n / (2 * pos), n / (2 * max(n - pos, 1))
-    coef, bias = [0.0] * k, 0.0
-    for _ in range(epochs):
-        g, gb = [l2 * c / n for c in coef], 0.0
-        for z, t in zip(Z, y):
-            p = _sig(bias + sum(c * v for c, v in zip(coef, z)))
-            e = (p - t) * (wpos if t else wneg) / n
-            gb += e
-            for j in range(k):
-                g[j] += e * z[j]
-        coef = [c - lr * gj for c, gj in zip(coef, g)]
-        bias -= lr * gb
-    return (mean, sd, coef, bias)
-
-
-def _sig(x: float) -> float:
-    return 1 / (1 + math.exp(-x)) if x >= 0 else math.exp(x) / (1 + math.exp(x))
-
-
-def predict(w: Weights, x: list[float]) -> float:
-    mean, sd, coef, bias = w
-    return _sig(bias + sum(c * (v - m) / s for c, v, m, s in zip(coef, x, mean, sd)))
-
-
-def combined_confidence(heur: float | None, p: float) -> float | None:
-    """Model score as a signal: capped at 0.74, ignored below the propose level, and
-    never lowers the detector's own confidence."""
-    m = min(p, CAP) if p >= PROPOSE else None
-    vals = [v for v in (heur, m) if v is not None]
-    return max(vals) if vals else None
-
-
 # ---- ship rule (2C) ----
 
 def _micro_f1(t: tuple[int, int, int]) -> float:
@@ -151,19 +110,13 @@ def ship_decision(heur: dict[str, float], model: dict[str, float], *, saturated:
 
 # ---- data: per-page facts from the real pipeline pieces ----
 
-ARXIV = re.compile(r"arxiv:\s*\d{4}\.\d{4,5}", re.IGNORECASE)
-AFFIL = re.compile(r"universit|institut|department|laborator|@|college|school of", re.IGNORECASE)
-REFS = re.compile(r"^\s*(references|bibliography)\b", re.IGNORECASE | re.MULTILINE)
-
-
 def page_facts(pdf: Path) -> list[dict]:
-    from packet.boundary import BoundaryDetector, _size_jump, _title_position
+    from packet.boundary import BoundaryDetector
     from packet.classify import HeuristicClassifier
     from packet.extract import NativeTextExtractor, Router
     from packet.furniture import FurnitureTagger
     from packet.pipeline import _lazy_lines, _lazy_render
     from packet.source import PdfPageSource
-    from packet.topic import content_words, detect_language
 
     det, cl, router, tg = BoundaryDetector(), HeuristicClassifier(), Router([NativeTextExtractor()]), FurnitureTagger()
     out: list[dict] = []
@@ -174,35 +127,16 @@ def page_facts(pdf: Path) -> list[dict]:
             blocks = tg.tag_page(c, router.extract(c, text, image=_lazy_render(src, c.index),
                                                    layout=_lazy_lines(src, c.index)))
             sig = det.observe(c, blocks)
-            body = "\n".join(b.text for b in blocks if b.text)
             out.append({
-                "page": ref.index, "blocks": len(blocks), "signal": sig,
-                "page_number": det.last_page_number, "page_total": det.last_page_total,
-                "title": _title_position(blocks), "text": body, "words": content_words(blocks),
-                "size": (ref.width, ref.height, ref.rotation), "lang": detect_language(body),
-                "_size_jump": _size_jump,
+                **det._page_facts[-1],
+                "page": ref.index,
+                "blocks": len(blocks),
+                "signal": sig,
             })
     return out
 
 
-def featurize(facts: list[dict], i: int) -> list[float]:
-    from packet.topic import same_language, topic_similarity
-
-    f, prev = facts[i], facts[i - 1] if i > 0 else None
-    head = f["text"][:600].lower()
-    nwords = sum(f["words"].values())
-    pw = sum(prev["words"].values()) if prev else 0
-    return [
-        float(f["page_number"] is not None), float(f["page_number"] == 1), float(f["page_total"] is not None),
-        float(prev is not None and prev["page_number"] is not None),
-        float(bool(ARXIV.search(f["text"]))), float(f["title"] == "top"), float(f["title"] == "lower"),
-        math.log1p(nwords), math.log1p(pw),
-        float("abstract" in head), float("introduction" in head), float(bool(AFFIL.search(head))),
-        float(bool(prev and REFS.search(prev["text"]))),
-        float(bool(prev and f["_size_jump"](prev["size"], f["size"]))),
-        float(bool(prev and not same_language(prev["lang"], f["lang"]))),
-        topic_similarity(prev["words"], f["words"]) if prev and nwords and pw else 1.0,
-    ]
+featurize = featurize_from_facts
 
 
 def split_boundaries(facts: list[dict], scores: list[float] | None) -> list[int]:
@@ -241,7 +175,7 @@ def score(gold: list[int], pred: list[int]) -> tuple[float, tuple[int, int, int]
 
 # ---- the run ----
 
-def run(cache: Path, out: Path) -> dict:
+def run(cache: Path, out: Path, export_weights: Path | None = None) -> dict:
     from packet.eval.metrics import document_boundaries
     from packet.eval.run import run_dlnet_whole
     from packet.eval.wholedoc import build_fixtures, fetch, load_manifest
@@ -268,6 +202,8 @@ def run(cache: Path, out: Path) -> dict:
             X.append(featurize(facts[n], i))
             y.append(int(i - 1 in gold[n]))
     w = train_logistic(X, y)
+    if export_weights is not None:
+        export_weights_json(export_weights, w, training_packets=s.train)
 
     per: dict[str, dict] = {}
     for n in s.scored:
@@ -301,7 +237,7 @@ def write_note(r: dict, path: Path) -> None:
     L = ["# T8 holdout boundary model (GMA-256)", "",
          ("Generated by `python bench/t8_holdout.py`. Decisions: 2C ship bar, 3A cap 0.74, 10A real data only. "
           "Splitter: T5's `LookaheadSplitter` with `PipelineConfig()` defaults (window 2, commit 0.75, fallback 0.55). "
-          "No weights are stored; `Pipeline()` and `packet eval` are unchanged and still score the heuristic."), "",
+          "Weights are optional (`--export-weights`); default `Pipeline()` and `packet eval` use the heuristic only."), "",
          f"- T5 head dlnet-whole macro (heuristic, `packet eval` path): {r['dlnet_macro_t5']:.5f}. T2 baseline macro recorded in the plan: 0.9077 (unrounded figure as logged; not 0.908).",
          f"- Residual miss (every packet under F1 1.0 on the T5 head): {', '.join(s['miss']) or 'none'}. dlw-00 is 1.0 after T2+T5, so it is saturated, not a miss.",
          f"- Scored packets: {', '.join(s['scored'])} (saturated: {', '.join(s['saturated'])}).",
@@ -332,8 +268,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=Path(".packet-eval"))
     ap.add_argument("--note", type=Path, default=REPO / "bench" / "t8_holdout.md")
     ap.add_argument("--json", type=Path)
+    ap.add_argument("--export-weights", type=Path, help="write JSON logistic weights for T9")
     a = ap.parse_args(argv)
-    r = run(a.cache, a.out)
+    r = run(a.cache, a.out, export_weights=a.export_weights)
     (mh, mm), (uh, um) = r["macro"], r["micro"]
     print(f"heuristic holdout macro {mh:.4f} micro {uh:.4f}")
     print(f"model     holdout macro {mm:.4f} micro {um:.4f}")

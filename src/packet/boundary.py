@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
+from packet.boundary_layout import size_jump, title_position
 from packet.topic import MIN_WORDS, content_words, detect_language, same_language, topic_similarity
 from packet.types import Block, BlockKind, PageRef
+
+if TYPE_CHECKING:
+    from packet.boundary_model import BoundaryScorer
 
 # Body and furniture lines count only when the entire line is a page label (not e.g. 1/2 in
 # spectroscopic notation embedded in prose).
@@ -116,8 +121,14 @@ class BoundaryDetector:
     _sizes: list[tuple[float | None, float | None, int]] = field(default_factory=list)
     _words: list = field(default_factory=list)
     _langs: list[str | None] = field(default_factory=list)
+    _page_facts: list[dict] = field(default_factory=list)
 
-    def observe(self, ref: PageRef, blocks: list[Block]) -> BoundarySignal | None:
+    def observe(
+        self,
+        ref: PageRef,
+        blocks: list[Block],
+        scorer: BoundaryScorer | None = None,
+    ) -> BoundarySignal | None:
         page_num, page_total = _extract_page_number(blocks)
         self.last_page_number = page_num
         self.last_page_total = page_total
@@ -135,6 +146,11 @@ class BoundaryDetector:
         self._words.append(words)
         self._langs.append(detect_language(" ".join(
             b.text for b in blocks if b.kind not in _FURNITURE and b.text)))
+        from packet.boundary_model import page_fact_row
+
+        self._page_facts.append(
+            page_fact_row(ref, blocks, page_number=page_num, page_total=page_total)
+        )
 
         if ref.index == 0:
             return None
@@ -162,8 +178,8 @@ class BoundaryDetector:
         # Only a chapter-opener shape (title at the top, same page geometry) counts: any
         # other page that loses the head is still a header change.
         dropped = (prev_style is not None and prev_style[2] and style is None and _is_layout(blocks)
-                   and _title_position(blocks) == "top"
-                   and not _size_jump(self._sizes[-2], self._sizes[-1]))
+                   and title_position(blocks) == "top"
+                   and not size_jump(self._sizes[-2], self._sizes[-1]))
         # With layout styles on both pages, a running head whose text changes but whose
         # template (font size, position) does not is a chapter head, not a new document.
         if (self._tagged_header[-2] and header and prev_header and header != prev_header
@@ -173,11 +189,11 @@ class BoundaryDetector:
 
         prev_size = self._sizes[-2]
         curr_size = self._sizes[-1]
-        if _size_jump(prev_size, curr_size):
+        if size_jump(prev_size, curr_size):
             reasons.append("media_box_changed")
             score += W_MEDIA_BOX
 
-        title = _title_position(blocks)
+        title = title_position(blocks)
         if title == "top":
             reasons.append("title_top")
             score += W_TITLE_TOP
@@ -204,14 +220,31 @@ class BoundaryDetector:
             score -= W_TOPIC_SHIFT
         if len(independent) >= 2:
             score = max(score, COMBINED)
-        if "page_number_reset" not in reasons:
-            score = min(score, CAP_WITHOUT_RESET)
-        if score < PROPOSE:
+        heur_conf = score if score >= PROPOSE else None
+        conf = heur_conf
+        model_used = False
+        if scorer is not None:
+            from packet.boundary_model import (
+                combined_confidence,
+                featurize_from_facts,
+                model_raised_confidence,
+            )
+
+            features = featurize_from_facts(self._page_facts, ref.index)
+            model_p = scorer.probability(features)
+            model_used = model_raised_confidence(heur_conf, model_p)
+            conf = combined_confidence(heur_conf, model_p)
+        if conf is None:
             return None
+        if "page_number_reset" not in reasons:
+            conf = min(conf, CAP_WITHOUT_RESET)
+        reason = "+".join(reasons)
+        if model_used:
+            reason = f"{reason}+model" if reason else "model"
         return BoundarySignal(
             after_page=ref.index - 1,
-            confidence=min(score, 0.95),
-            reason="+".join(reasons),
+            confidence=min(conf, 0.95),
+            reason=reason or "boundary",
         )
 
 
@@ -227,12 +260,6 @@ class BoundaryDetector:
         return topic_similarity(before, cur) <= TOPIC_SHIFT_MAX
 
 
-def _head_candidate(b: Block) -> bool:
-    """A small top-band line FurnitureTagger may tag as a HEADER once its repeat is seen."""
-    x = b.extra or {}
-    return bool(x.get("layout") and x.get("band") == "top" and x.get("small"))
-
-
 def _is_layout(blocks: list[Block]) -> bool:
     return any(b.extra.get("layout") for b in blocks)
 
@@ -246,14 +273,6 @@ def _header_style(blocks: list[Block]) -> tuple | None:
                                 or (x.get("band") == "top" and x.get("small"))):
             return (x.get("size"), round(float(x.get("top") or 0) / 4), bool(x.get("small")))
     return None
-
-
-def _title_position(blocks: list[Block]) -> str | None:
-    """``top`` when the first non-furniture block is a TITLE, ``lower`` for any other TITLE."""
-    body = [b for b in blocks if b.kind not in _FURNITURE and not _head_candidate(b)]
-    if body and body[0].kind == BlockKind.TITLE:
-        return "top"
-    return "lower" if any(b.kind == BlockKind.TITLE for b in body) else None
 
 
 def _fraction_on_whole_line(text: str) -> tuple[int, int] | None:
@@ -300,14 +319,3 @@ def _leading_fingerprint(blocks: list[Block]) -> str:
     return first[:80]
 
 
-def _size_jump(
-    prev: tuple[float | None, float | None, int],
-    curr: tuple[float | None, float | None, int],
-) -> bool:
-    if None in prev[:2] or None in curr[:2]:
-        return False
-    if prev[2] != curr[2]:
-        return True
-    dw = abs((prev[0] or 0) - (curr[0] or 0))
-    dh = abs((prev[1] or 0) - (curr[1] or 0))
-    return dw > 20 or dh > 20

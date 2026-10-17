@@ -64,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
                        help="append one JSON line per PDF: seconds, pages, OCR page seconds")
     parse.add_argument("--no-split", action="store_true", help="force a single logical document")
     parse.add_argument("--force-inspect", action="store_true", help="OCR every page, even text pages")
+    parse.add_argument(
+        "--boundary-weights",
+        default=None,
+        help="JSON logistic boundary weights (optional; load errors exit 2)",
+    )
 
     ev = sub.add_parser("eval", help="run built-in packet fixtures")
     ev.add_argument("--json", action="store_true")
@@ -132,7 +137,17 @@ def _cmd_parse(args) -> int:
     # One pipeline and one set of extractors for the whole run; OCR engines also sit in
     # the process-level cache, so the model loads once however many files there are.
     extractors = _extractors_or_exit(force_inspect=args.force_inspect)
-    pipe = Pipeline(extractors=extractors)
+    from packet.boundary_model import BoundaryWeightsError, load_logistic_scorer
+    from packet.pipeline import PipelineConfig
+
+    config = PipelineConfig()
+    if args.boundary_weights:
+        try:
+            config.scorer = load_logistic_scorer(Path(args.boundary_weights))
+        except BoundaryWeightsError as exc:
+            print(f"packet: {exc}", file=sys.stderr)
+            return 2
+    pipe = Pipeline(extractors=extractors, config=config)
     if args.no_split:
         pipe.config.split_on_boundary = False
     out_dir = Path(args.out_dir) if args.out_dir else None

@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from packet.assemble import Assembler
 from packet.boundary import BoundaryDetector
+from packet.boundary_model import BoundaryScorer
 from packet.classify import Classifier, HeuristicClassifier
 from packet.domain import DomainAdapter, apply_domains
 from packet.events import Event
@@ -26,6 +27,7 @@ class PipelineConfig:
     boundary_commit_confidence: float = 0.75
     lookahead_window: int = 2
     domain_adapters: list[DomainAdapter] = field(default_factory=list)
+    scorer: BoundaryScorer | None = None
 
 
 class Pipeline:
@@ -76,7 +78,7 @@ class Pipeline:
                 for block in blocks:
                     yield Event.block_emitted(block)
 
-                signal = detector.observe(classified, blocks)
+                signal = detector.observe(classified, blocks, scorer=self.config.scorer)
                 if signal is not None:
                     yield Event.boundary_proposed(
                         signal.after_page, signal.confidence, signal.reason
