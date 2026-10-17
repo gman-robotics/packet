@@ -221,10 +221,22 @@ print(pathlib.Path(urllib.request.url2pathname(url.removeprefix('file://'))).res
   # Check where `import packet` really loads from.
   local imported
   imported="$(cd / && python3 -c "import packet, pathlib; print(pathlib.Path(packet.__file__).resolve().parent)" 2>/dev/null)" || return 1
-  if [[ "$imported" != "$repo_real/src/packet" ]]; then
-    echo "FAIL: import packet loads $imported, not $repo_real/src/packet (stale copy shadowing the editable install; move it aside)" >&2
-    return 1
+  local expected="$repo_real/src/packet"
+  if [[ "$imported" == "$expected" ]]; then
+    return 0
   fi
+  # Hatch `force-include` copies src/packet into site-packages on `pip install -e`; that is
+  # normal. Reject only when the imported tree no longer matches this checkout.
+  if [[ "$imported" == *"/site-packages/packet" ]]; then
+    local a b
+    a="$(sha256sum "$expected/__init__.py" | awk '{print $1}')"
+    b="$(sha256sum "$imported/__init__.py" | awk '{print $1}')"
+    if [[ "$a" == "$b" ]]; then
+      return 0
+    fi
+  fi
+  echo "FAIL: import packet loads $imported, not $expected (stale site-packages copy; reinstall with pip install -e \".[dev]\" from $repo_real)" >&2
+  return 1
 }
 
 ensure_path() {
@@ -400,6 +412,37 @@ cmd_env() {
   printf 'export PACKET_VERIFY_CACHE=%q\n' "$CACHE_DIR"
 }
 
+# ci-headless: doctor, materialize builtins, inspect/parse smoke, and builtin eval GATE.
+# Skips OCR recipes (need mlx + weights) and eval-plan (needs external catalog).
+cmd_ci_headless() {
+  ensure_path
+  cmd_doctor || return 1
+  cmd_materialize_fixtures || return 1
+  local pkt
+  pkt="$(packet_bin)" || return 1
+  local fixture
+  fixture="$(cmd_fixture text-layer)" || return 1
+  PACKET_VERIFY_CMD_LABEL=ci-inspect cmd_cli -- inspect "$fixture" || return 1
+  local out="$PACKET_VERIFY_ROOT/scratch/ci-parse.json"
+  mkdir -p "$(dirname "$out")"
+  PACKET_VERIFY_CMD_LABEL=ci-parse cmd_cli -- parse "$fixture" -o "$out" || return 1
+  set +e
+  local eval_out
+  eval_out="$("$pkt" eval --dir "$CACHE_DIR" 2>&1)"
+  local eval_ec=$?
+  set -e
+  echo "$eval_out"
+  if [[ "$eval_ec" -ne 0 ]]; then
+    echo "ci-headless: packet eval exited $eval_ec" >&2
+    return "$eval_ec"
+  fi
+  if ! grep -q 'GATE PASS' <<<"$eval_out"; then
+    echo "ci-headless: eval stdout missing GATE PASS" >&2
+    return 1
+  fi
+  echo "ci-headless: ok"
+}
+
 cmd_cleanup() {
   # Always delete canonical paths under the verify root (never honor external CACHE overrides).
   local cache="${PACKET_VERIFY_ROOT}/cache"
@@ -453,7 +496,7 @@ cmd_cleanup() {
 
 usage() {
   cat <<EOF
-usage: control-packet <doctor|launch|env|cli|materialize-fixtures|fixture|make-scan|cleanup> [args]
+usage: control-packet <doctor|launch|env|cli|materialize-fixtures|fixture|make-scan|ci-headless|cleanup> [args]
 
 Environment:
   PACKET_VERIFY_RUN_ID   unique run id (set before launch, or read from ownership marker)
@@ -477,6 +520,7 @@ main() {
     materialize-fixtures) shift; cmd_materialize_fixtures "$@" ;;
     fixture) shift; cmd_fixture "$@" ;;
     make-scan) shift; cmd_make_scan "$@" ;;
+    ci-headless) shift; cmd_ci_headless "$@" ;;
     cleanup) shift; cmd_cleanup "$@" ;;
     env) shift; cmd_env "$@" ;;
     -h|--help|"") usage ;;

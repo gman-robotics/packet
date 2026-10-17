@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Ruff
+        run: python -m ruff check src tests
+
+      - name: Pytest (unit, no models/GPU/network/OCR extras)
+        run: |
+          python -m pytest -q -m "not needs_network and not needs_gpu and not needs_models and not needs_ocr_extras" --tb=short
+
+      - name: Builtin eval GATE
+        run: |
+          export PATH="${HOME}/.local/bin:${PATH}"
+          CACHE="${RUNNER_TEMP}/packet-eval"
+          mkdir -p "$CACHE"
+          packet eval --dir "$CACHE" | tee "${RUNNER_TEMP}/eval-builtin.txt"
+          grep -q 'GATE PASS' "${RUNNER_TEMP}/eval-builtin.txt"
+
+      - name: verify-packet headless smoke
+        env:
+          PACKET_VERIFY_RUN_ID: "ci-${{ github.run_id }}-${{ github.run_attempt }}"
+        run: |
+          export PATH="${HOME}/.local/bin:${PATH}"
+          .cursor/skills/verify-packet/control-packet launch
+          eval "$(.cursor/skills/verify-packet/control-packet env)"
+          .cursor/skills/verify-packet/control-packet ci-headless

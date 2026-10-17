@@ -106,5 +106,6 @@ test -f "$PACKET_VERIFY_ARTIFACTS/proof.txt" && ls -la "$PACKET_VERIFY_ARTIFACTS
 | `.cursor/skills/verify-packet/control-packet make-scan [name]` | Write an image-only copy of a builtin, so only OCR can read it |
 | `.cursor/skills/verify-packet/control-packet cli -- <args>` | Run `packet` with captured stdout/stderr/exit; exit code matches `packet` |
 | `.cursor/skills/verify-packet/control-packet cleanup` | Drop cache/scratch; keep artifacts |
+| `.cursor/skills/verify-packet/control-packet ci-headless` | CI smoke: doctor, fixtures, inspect, parse, builtin eval `GATE PASS` (no OCR / eval-plan) |
 
 Maintenance: when CLI flags or fixtures change, update this skill and the `features/` recipes to match (optional: pstack `/create-verification-skill` flow if you use it elsewhere).

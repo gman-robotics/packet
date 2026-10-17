@@ -8,7 +8,11 @@ import sys
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip("PIL")
 from PIL import Image
+
+pytestmark = pytest.mark.needs_ocr_extras
 
 from packet.backends import (
     EscalatingExtractor,
@@ -771,6 +775,7 @@ def test_cli_force_inspect_flag(monkeypatch, tmp_path):
 SCANNED = os.environ.get("PACKET_REAL_SCAN_PDF")
 
 
+@pytest.mark.needs_models
 @pytest.mark.skipif(not SCANNED, reason="set PACKET_REAL_SCAN_PDF to run the real LightOnOCR-3 proof")
 def test_real_scanned_page_is_not_empty():
     packet = Pipeline(extractors=default_extractors()).parse(SCANNED)

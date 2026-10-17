@@ -38,3 +38,9 @@ target-version = "py311"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "needs_network: test needs live network or external downloads",
+  "needs_gpu: test needs GPU hardware",
+  "needs_models: test needs real model weights (e.g. PACKET_REAL_SCAN_PDF)",
+  "needs_ocr_extras: test needs optional OCR extras (Pillow / ocr-mlx / ocr-paddle)",
+]
