@@ -1,30 +1,28 @@
 # Decision-model backend (v1)
 
-Plan only. No code until Tom approves. Written against `main` `da7f030`. Refs GMA-257.
+Plan only. No code until Tom approves. Written against `main` `da7f030`. Refs GMA-257. Challenge r1 folded in.
 
-Packet grows one decision interface. A config file picks the backend. One OpenAI-compatible HTTP adapter posts to `POST /chat/completions`, which covers a local MLX, llama.cpp, or vLLM server and a hosted router. The in-process backend that exists today, `LogisticBoundaryScorer`, stays. Core code stays on the stdlib HTTP client. The base URL comes from config. This code does not probe for a GPU.
+Packet grows one decision interface. A config file picks the backend. One OpenAI-compatible HTTP adapter covers a local MLX, llama.cpp, or vLLM server and a hosted router. The in-process backend that exists today, `LogisticBoundaryScorer`, stays. Core code stays on the stdlib HTTP client. The base URL comes from config. This code does not probe for a GPU.
 
-Perplexity Decider v1.2 is an example of a model that returns a typed answer and probabilities. The interface names no vendor and ships no default URL.
+Perplexity Decider v1.2 is an example of a typed answer with probabilities. The interface names no vendor and ships no default URL.
 
 ## Where packet decides
 
-**Boundary score. Uses the interface.** `BoundaryDetector.observe` (`src/packet/boundary.py`) sums heuristic weights: page-number reset 0.45, sequence completed 0.2, header change 0.25, media-box jump 0.2, title at top 0.45, lower title 0.25, topic shift 0.2, language change 0.25. Two independent signals lift the score to at least 0.6 (`COMBINED`). A language change and a topic shift count as one vote. A score under 0.4 (`PROPOSE`) is dropped. When `PipelineConfig.scorer` is set (`src/packet/pipeline.py`), `combined_confidence` (`src/packet/boundary_model.py`) folds in `BoundaryScorer.probability`. The model term is ignored under 0.4, capped at 0.74, and never lowers the heuristic. With no `page_number_reset` in the reason list, `observe` caps again at 0.74, under the splitter commit of 0.75. `packet parse --boundary-weights` loads the JSON logistic file and exits 2 on `BoundaryWeightsError` (`src/packet/cli.py`). The new interface replaces that scorer slot. The heuristic weights stay, because the cap and the numbering veto read the reason list, and those weights are the schema-1 features.
+**Boundary score. Uses the interface.** `BoundaryDetector.observe` (`src/packet/boundary.py`) sums heuristic weights: page-number reset 0.45, sequence completed 0.2, header change 0.25, media-box jump 0.2, title at top 0.45, lower title 0.25, topic shift 0.2, language change 0.25. `sequence_completed` and `title_block` are excluded from the independent-signal vote. Two independent signals lift the score to at least 0.6 (`COMBINED`). When topic shift and language change are both present, the topic-shift vote is dropped and `W_TOPIC_SHIFT` (0.2) is subtracted. A heuristic under 0.4 (`PROPOSE`) is no signal unless the model lifts it. Page index 0 returns before the scorer. When `PipelineConfig.scorer` is set (`src/packet/pipeline.py`), `observe` calls `featurize_from_facts` and `combined_confidence` (`src/packet/boundary_model.py`). The model term is ignored under 0.4, capped at 0.74, and does not lower the heuristic. With no `page_number_reset`, `observe` caps again at 0.74, under the splitter commit of 0.75, then applies `min(conf, 0.95)`. The model path cannot reach 0.95. `packet parse --boundary-weights` loads the JSON logistic file and exits 2 on `BoundaryWeightsError` (`src/packet/cli.py`). The new interface replaces that scorer slot. The heuristic weights stay, because the cap and the numbering veto read the reason list. The schema-1 vector is the 16 names in `FEATURE_NAMES`.
 
-**Gap rule. Stays rule-based.** `LookaheadSplitter._continues` (`src/packet/lookahead.py`) rejects a number whose page index is farther than `window + 1` from the anchor (`window` default 2). `_drain` commits a numbered page under 0.4 as `no_signal` on that page. `_decide_mid` emits `continues_sequence`, `lookahead_numbering`, `old_sequence_continues`, or `fallback_eager` (split at confidence >= 0.55). The gap bound is what opens a cleared silent page with no model score. The splitter keeps owning those reasons and keeps taking one confidence float.
+**Gap rule. Stays rule-based.** `LookaheadSplitter._continues` (`src/packet/lookahead.py`) rejects a number whose page index is farther than `window + 1` from the anchor (`window` default 2). That rejection is what lets `_drain` open a cleared silent page by `implied_page_one` with no model score. `_drain` commits a numbered page under 0.4 as `no_signal` on that page. `_decide_mid` emits `continues_sequence`, `implied_page_one`, `lookahead_numbering`, `old_sequence_continues`, `fallback_eager`, or `fallback_below`. `fallback_eager` splits at confidence >= 0.55. The splitter keeps owning those reasons and keeps taking one confidence float.
 
-**T9 scorer. This is the in-process backend.** `LogisticBoundaryScorer.probability` (`src/packet/boundary_model.py`) is pure-Python logistic regression on the 16 schema-1 features from `featurize_from_facts`. Config id: `logistic`. `run_fixture` calls `Pipeline()` (`src/packet/eval/run.py`), so `packet eval` leaves the scorer unset. A missing or mismatched weights file raises (decision 9). This backend reports `structured_output: false`, `logprobs: false`, `images: false`, and returns one probability. The transformers file that exists, `bench/ocr_compare/run_tf.py`, is the OCR bench loader. It stays that bench. It is not a decision backend. Config id `transformers` is reserved and exits 2 until a later ticket.
+**T9 scorer. This is the in-process backend.** `LogisticBoundaryScorer.probability` (`src/packet/boundary_model.py`) is pure-Python logistic regression on those 16 features and the loaded coefficients. Config id: `logistic`. `run_fixture` calls `Pipeline()` (`src/packet/eval/run.py`), so `packet eval` leaves the scorer unset. A missing or mismatched weights file raises `BoundaryWeightsError` (decision 9). This backend reports `structured_output: false`, `logprobs: false`, `images: false`, and returns one probability. `bench/ocr_compare/run_tf.py` is the OCR bench. It imports torch and is not a decision backend. Config id `transformers` is reserved and exits 2 at load time. Question 6 asks Tom whether a later ticket should add that loader.
 
-**OCR fallback. Stays rule-based.** `EscalatingExtractor._wants_ocr` (`src/packet/backends.py`) sends SCAN, MIXED, and SUSPECT_ENCODING to OCR and leaves TEXT and UNKNOWN on the native layer. `FallbackExtractor.extract` tries the next engine only after a raise; an empty result is final. `build_ocr_extractor` selects `PACKET_OCR`: `auto` uses LightOn-then-Paddle when `mlx_vlm` imports, otherwise Paddle. Engine choice is installation plus page class. `false_ocr_hard_fail` (`src/packet/eval/metrics.py`) hard-fails a VLM block on a long text page. `PACKET_OCR=auto` gains no CUDA, vLLM, or transformers branch.
-
-**Page class. Stays rule-based.** `HeuristicClassifier.classify` (`src/packet/classify.py`) uses a 40-character count: TEXT at 0.7, MIXED at 0.45, SCAN at 0.6. `InspectorClassifier.classify` calls that heuristic. This is the OCR gate and the corpus plan's scan census.
+**OCR choice. Stays rule-based.** `EscalatingExtractor._wants_ocr` (`src/packet/backends.py`) sends `SCAN`, `MIXED`, and `SUSPECT_ENCODING` to OCR. `HeuristicClassifier.classify` (`src/packet/classify.py`) never emits `SUSPECT_ENCODING`: at least 40 characters is TEXT at 0.7, a shorter non-empty sample is MIXED at 0.45, and an empty sample is SCAN at 0.6. `InspectorClassifier.classify` calls that heuristic. Page class chooses escalate-versus-native. It does not choose the engine. `LightOnExtractor.supports` and `PaddleExtractor.supports` accept the same class set. `build_ocr_extractor` picks the engine from `PACKET_OCR` plus `find_spec("mlx_vlm")` and `find_spec("paddleocr")`. `auto` with `PACKET_OCR_MODEL` returns LightOn only. `auto` without that variable uses LightOn-then-Paddle when `mlx_vlm` is present, otherwise Paddle. Unset `PACKET_OCR` is the legacy LightOn-then-Paddle chain, not `auto`. `--force-inspect` OCRs every class, including TEXT. On MIXED, an empty OCR result falls through to the native layer in `EscalatingExtractor.extract`. An empty result is final only inside `FallbackExtractor`, which tries the next engine only after a raise. `false_ocr_hard_fail` (`src/packet/eval/metrics.py`) flags `SourceKind.OCR` and `SourceKind.VLM` on a page whose native sample is at least 40 characters. The engines in tree tag `VLM`. `PACKET_OCR=auto` gains no CUDA, vLLM, or transformers branch.
 
 **Furniture. Stays rule-based.** `FurnitureTagger.tag_page` and `finalize` (`src/packet/furniture.py`) tag HEADER, FOOTER, and PAGE_NUMBER from repeats. Page-number extraction reads those tags, and `finalize` rewrites earlier pages after `block_emitted`.
 
-**Block kind and domain. Stay rule-based.** `layout_blocks` (`src/packet/layout.py`) and `_guess_kind` (`src/packet/extract.py`) label TITLE, HEADING, and PARAGRAPH from font size or a regex. `apply_domains` (`src/packet/domain.py`) runs `NoOpDomain`. Heading-path accuracy is outside the gate. A later task can call this interface. v1 has one call site.
+**Block kind and domain. Stay rule-based.** `layout_blocks` (`src/packet/layout.py`) and `_guess_kind` (`src/packet/extract.py`) label TITLE, HEADING, and PARAGRAPH from font size or a regex. `apply_domains` (`src/packet/domain.py`) runs the adapters it is given. The stock adapter is `NoOpDomain`. Heading-path accuracy is outside the gate. v1 has one call site, `task=boundary`. The protocol fields (`task`, `labels`, `text`, image, schema) are what a later call site would use.
 
 ## Interface
 
-`--decision-config` points at a JSON file. The factory switches on the string `backend`. Ids are `logistic`, `http`, and `transformers`. Any other id exits 2. No config leaves `PipelineConfig.scorer` as `None`. `--boundary-weights` alone still builds `logistic`, which is today's parse flag.
+`--decision-config` is parse-only. `packet inspect` keeps building `Pipeline()` with no scorer (`src/packet/cli.py`). No config leaves `PipelineConfig.scorer` as `None`. `--boundary-weights` alone still builds `logistic`. Passing `--decision-config` and `--boundary-weights` together exits 2. A `logistic` config carries a `weights` path. `backend: transformers` and any other id exit 2 at load time, before a parse loop.
 
 ```json
 {
@@ -41,101 +39,104 @@ Perplexity Decider v1.2 is an example of a model that returns a typed answer and
 }
 ```
 
-`auth: env` reads `PACKET_DECISION_API_KEY` at request time. `auth: none` sends no Authorization header, for a local server. A field named `api_key`, `authorization`, or `token` fails the load. Errors name the env var. The value stays out of the config file, the timings line, and the traceback.
+`max_calls: 0` is the fail-closed default. Copying the example raises on the first `http` call.
 
-Request fields: `task` (`boundary` in v1), `labels` (`boundary`, `continue`), `text`, optional image bytes, optional JSON schema. Response fields: `probability` is P(`boundary`), optional `scores` (label, probability, logprob), `raw_text`, and `degraded` flags.
+**Wire.** `base_url` already includes `/v1`. The adapter appends `/chat/completions` and does not follow redirects. A 3xx raises `DecisionBackendError`. `auth: env` sends `Authorization: Bearer` plus `PACKET_DECISION_API_KEY`, read at request time. `auth: none` sends no Authorization header. No other vendor header. Body fields are `model`, `temperature: 0`, and one user message. `input: features` is one line per `FEATURE_NAMES` entry, `name=value`, in that order. `input: page_text` is the page text truncated at `max_chars` (default 4000). `response_format` json_schema is sent only when `capabilities.structured_output` is true. The API `logprobs` flag is sent only when `capabilities.logprobs` is true. The adapter reads `choices[0].message.content`. Recorded fixtures are those content strings. The fake server wraps each one in the chat envelope. Label `scores` are parsed from the model JSON. Token logprobs are not turned into label probabilities.
 
-The HTTP adapter uses `urllib`. It sends `temperature: 0`. It sends `response_format` json_schema only when `capabilities.structured_output` is true, and `logprobs` only when `capabilities.logprobs` is true. Capabilities live in the config file, so CI does not discover them from a server. A live body that lacks a declared field sets the matching degraded flag. Vendor headers are omitted.
+**Images.** When `send_images` and `capabilities.images` are both true, `pipeline.stream` passes the existing render thunk (`_lazy_render`) into `decide`, and the user message gains one PNG `image_url` data URL. When `send_images` is false the thunk is not called. Default is false. Page text and images stay opt-in.
 
-Default `input: features` sends the 16 schema-1 values, one fixed line per `FEATURE_NAMES` entry. `input: page_text` and `send_images: true` are opt-in. Images also require `capabilities.images`. `page_text` is truncated at `max_chars` (default 4000).
+**Secrets.** The only secret read is `PACKET_DECISION_API_KEY`. The loader rejects `api_key`, `authorization`, and `token` case-insensitively at any depth. It rejects a `base_url` with userinfo, and a query parameter `api_key`, `token`, or `authorization`. Error text names the env var. It omits the key, the Authorization value, URL userinfo, page text, the image, and the response body.
 
-**Degradation, by decision point.**
+**Capability flags vs strikes.** `no_structured_output`, `no_logprobs`, and `no_images` are run-level facts. They are set when the config capability is false, and when a 200 omits a declared field. They do not append to `decision_degraded_pages` and do not withhold boundary F1. A content body `0.62` is a usable P(`boundary`): probability 0.62, `scores` null, flags set, no strike.
 
-- Boundary, structured output missing. Parse one JSON object that has `probability`, or else the whole trimmed reply as a single float in [0, 1]. Label `continue` with no scores becomes `1 - probability`. When scores exist, P(`boundary`) comes from the `boundary` score. Unparseable text leaves the heuristic, omits `+model` from the reason, and appends the page index to `decision_degraded_pages`.
-- Boundary, logprobs missing. The scalar still goes through `combined_confidence` (floor 0.4, cap 0.74, heuristic kept when it is higher). `scores` is null. Boundary F1 keeps its definition. The run record says `logprobs: false`. That run is a calibration comparison only when the flag is true.
-- A probability under 0.4 is the existing floor. That page is not degraded.
-- Gap rule, OCR fallback, page class, furniture, and block kind do not call the backend. A missing capability leaves them unchanged.
-- Timeout default 30s. Retries: `max_retries` default 2, backoff 0.5s then 1s, and only for HTTP 429, 502, 503, and connection errors. A 401, 403, 400, or 404 raises on that response, with no score emitted. A 200 that does not parse degrades the page and is not retried.
-- Three degraded pages in one run raise. The CLI exits 2. A run with any degraded page is a heuristic-mixed result, and its F1 is not reported as the model.
-- `max_calls` counts `decide` calls. The next call at the cap raises. Default 0 on `http` means the first call raises. `logistic` ignores `max_calls`.
-- Logistic load errors still raise. That backend has no timeout and no retry.
+A strike is a page with no usable P(`boundary`): unparseable content, or a call whose retries are exhausted. That page keeps the heuristic, omits `+model`, and appends the 0-based page index. A probability under 0.4 is the existing floor, not a strike. F1 is withheld, and a comparison would say heuristic-mixed, only when `decision_degraded_pages` is non-empty. Two strikes complete. The third raises `DecisionBackendError`.
 
-**Gate and the default-on checklist.** `evaluate_gate` stays tolerance-0 boundary F1, the macro floor, and the false-OCR hard fail. `SET_FLOORS` stays builtin per-fixture 1.0, and `dlnet-whole` per-fixture 0.0 with macro 0.6. `run_fixture` keeps calling `Pipeline()`. Eval does not read `PACKET_DECISION_API_KEY` and does not open a decision socket. When parse was given a config, `--timings` adds `decision_backend` and `decision_degraded_pages`.
+**Attempts and abort.** One `decide` call gets `1 + max_retries` attempts (`max_retries` default 2). Retry `TimeoutError`, other connection failures, and HTTP 429, 502, and 503. Backoff is 0.5s then 1s on a fake clock. The test does not sleep. Do not retry 200, 400, 401, 403, or 404. Exhaustion is one strike on that page, the same as unparseable content, not a second abort. A 400, 401, 403, or 404 raises `DecisionBackendError` on that response. A 400 is not the graceful path: a server that rejects `response_format` or `logprobs` with 400 exits 2, and that page does not become a heuristic score. Graceful degrade is a 200 whose content omits the field, or a 200 that is unparseable (a strike). The error text and the timings `error` field name the status or `timeout` and the page index, and nothing else from the lists above.
 
-The corpus plan's default-on list stays the bar for a default logistic scorer: disjoint train and holdout, holdout macro and micro both strictly above the heuristic with no packet F1 down, builtin F1 1.0 with the weights loaded, `dlnet-whole` absent from training and its macro at least that plan's logged heuristic 0.98462, empty false-OCR pages, 0.99 still capped at 0.74 without a page-number reset, a probability under 0.4 still adding nothing, and a license that allows shipping the weights. Item 8: the backend id is `logistic`. `http` and `transformers` stay opt-in. A comparison printout shows backend id, capabilities, degraded count, and macro and micro beside the heuristic. It does not write `SET_FLOORS`.
+`_cmd_parse` catches `DecisionBackendError` the way it catches `BoundaryWeightsError`: one `packet:` line and exit 2. That holds for a single file and for a batch. The batch loop does not continue. Strikes and the `max_calls` count reset at the start of each `parse`. `Pipeline` is built once for the argv list, so the reset is per file, not per process. `max_calls` 0 on `http` raises on the first call. `logistic` ignores `max_calls`. Logistic load errors still raise. That backend has no timeout and no retry.
+
+**Gate.** `evaluate_gate` stays tolerance-0 boundary F1, the macro floor, and the false-OCR hard fail. `SET_FLOORS` stays builtin `(1.0, None)` and `dlnet-whole` `(0.0, 0.6)`. A `None` macro argument uses the per-fixture floor, so builtin macro is 1.0 as well. `run_fixture` keeps calling `Pipeline()`. Eval does not read `PACKET_DECISION_API_KEY` and does not open a decision socket. When parse was given a config, `--timings` adds `decision_backend` and `decision_degraded_pages` (strike indexes only).
+
+The corpus plan's default-on list stays the bar for a default logistic scorer: disjoint train and holdout, holdout macro and micro both strictly above the heuristic with no packet F1 down, builtin F1 1.0 with the weights loaded, `dlnet-whole` absent from training and its macro at least that plan's logged heuristic 0.98462, empty false-OCR pages, 0.99 still capped at 0.74 without a page-number reset, a probability under 0.4 still adding nothing, and a license that allows shipping the weights. Item 8: the backend id is `logistic`. `http` and `transformers` stay opt-in. The behavioral lock is that an `http` config does not set the default `PipelineConfig.scorer`, and eval does not read the key. A comparison printout of backend id, capabilities, strike count, and macro and micro beside the heuristic is not in this set. It would not write `SET_FLOORS`.
 
 ## PoliTax, T4, leakage, comparability, cost
 
-The corpus plan trains `train_logistic` on PoliTax-Split, Trump PDFs only, and holds out Obama, Harris, and Biden as whole files. Schema stays 1. This backend does not replace that trainer and does not fetch the corpus.
+The corpus plan trains `train_logistic` on PoliTax-Split, Trump PDFs only, and holds out Obama, Harris, and Biden as whole files. Schema stays 1. This backend does not replace that trainer, does not fetch the corpus, and does not edit `SET_FLOORS`.
 
-Leakage: the HTTP adapter sends `text` to `base_url`. Default `features` sends 16 numbers. Gate runs leave `page_text` and `send_images` off. Logs store status, latency, model id, and degraded flags. They omit the key, the Authorization header, and the page body. PoliTax pages are tax forms, so full text stays off until Tom confirms the files have no taxpayer identifiers.
+Leakage: default `features` sends 16 numbers. Gate runs leave `page_text` and `send_images` off. Logs store status, latency, model id, and the capability flags. They omit the key, the Authorization value, URL userinfo, and the page body. PoliTax pages are tax forms, so full text stays off until Tom confirms the files have no taxpayer identifiers.
 
-Comparability needs the same gold, the same `LookaheadSplitter`, the same 0.4 floor and 0.74 cap, the same input mode, and an empty `decision_degraded_pages`. Boundary F1 can then sit beside the heuristic. A `page_text` run is a different input and is printed apart from a `features` run. Holdout files stay out of prompt-tuning.
+Comparability needs the same gold, the same `LookaheadSplitter`, the same 0.4 floor and 0.74 cap, the same input mode, and an empty strike list. Boundary F1 can then sit beside the heuristic. A `page_text` run is a different input and is printed apart from a `features` run. `temperature: 0` does not make a hosted router bit-stable: the router can change provider between calls, and this plan refuses a vendor provider pin. An `http` F1 is one recorded run, not a second gate, and not a clean PoliTax generalization test. The PDFs are public, so a hosted model may have seen the holdout. Holdout files stay out of prompt-tuning.
 
-Cost: the corpus plan counts 3,311 PoliTax pages, so one call per page is 3,311 calls. `max_calls` is the ceiling and defaults to 0 for `http`. This plan states no vendor price. T4 (Refs GMA-250) is the LightOn OCR measurement on a host Tom names, under its $5 cap. This plan does not start that host and does not add a decision-model download to it. A local decision server is the operator's process. Packet holds the URL.
+Cost: page 0 does not call `decide`, so the corpus plan's 3,311 PoliTax pages are 3,310 calls. `max_calls` is the ceiling and defaults to 0 for `http`. This plan states no vendor price. T4 (Refs GMA-250) is the LightOn OCR measurement on a host Tom names, under its $5 cap. This plan does not start that host and does not add a decision-model download to it. A local decision server is the operator's process. Packet holds the URL.
 
 ## Risks
 
-- Applying the HTTP probability as a commit score, past `combined_confidence`, would let 0.99 immediate-commit with no page-number reset. DB-3's cap fixture locks 0.74.
-- A degraded run can look like a model win. The three-strike raise and the timings fields are the guard.
-- A key field in JSON can land in git. The loader rejects those names.
+- Applying the HTTP probability as a commit score, past `combined_confidence`, would let 0.99 immediate-commit with no page-number reset. DB-3's cap fixture locks `<= 0.74`.
+- Counting a capability flag as a strike would abort a healthy plain-text server on page 3. Strikes are only pages with no usable probability.
+- A key hidden under another spelling, in userinfo, or in a query string can land in git. The loader rejects those forms.
 - Full tax-form text sent to a third-party URL leaks identifiers. Default input is the feature lines.
-- An unbounded `http` run over 3,311 pages is the spend risk. Default `max_calls` 0 fails closed.
-- A test that imports torch or dials a public host breaks the portable core. Tests use recorded bodies and accept only host 127.0.0.1.
+- An unbounded `http` run is the spend risk. Default `max_calls` 0 fails closed. The per-parse reset keeps one file from consuming the next file's budget.
+- A test that imports torch, sleeps the backoff, or dials a public host breaks the portable core. Tests use a fake clock, recorded `message.content` values, and accept only host `127.0.0.1`.
 
 ## Out of scope
 
 - Replacing the gap rule, OCR choice, page class, furniture, layout, or domain adapters.
 - Editing `SET_FLOORS`, fetching PoliTax, or training weights.
 - A CUDA path, a GPU probe, starting vLLM, or any T4 instance change.
-- Vendor SDKs, a default base URL, and prompt-tuning.
+- Vendor SDKs, a default base URL, a provider pin, and prompt-tuning.
 - ONNX and a `boundary` extra (already dropped, Refs GMA-257).
 - Heading-path accuracy, reading order, and calibration inside the gate.
+- The comparison printout described above.
+- An in-process transformers decision loader, unless Tom answers question 6 with yes. That would be a new ticket. `run_tf.py` stays the OCR bench.
 - Downloading model weights in CI.
 
 ## Questions for Tom
 
 1. Is the boundary scorer the only v1 call site? Default: yes.
-2. Is the default input the 16 schema-1 features, with page text and images off? Default: yes.
-3. May `http` run on the PoliTax gate? Default: no. Loopback only, as a side report after the heuristic floor exists.
-4. Does one bad page degrade, or does the run raise? Default: degrade that page, raise at 3, exit 2.
+2. Is the default input the 16 schema-1 features, with page text and images off until the config opts in? Default: yes.
+3. May `http` run on the PoliTax gate? Default: no. Loopback only, as a side report after the heuristic floor exists. It does not write `SET_FLOORS`.
+4. A strike is a page with no usable P(`boundary`). Is aborting on the third strike the right ceiling? Default: yes, exit 2. A plain `0.62` is not a strike.
 5. Can `http` or `transformers` become the default scorer? Default: no.
-6. Build an in-process transformers decision loader in this set? Default: no. Reserve the id. Leave `bench/ocr_compare/run_tf.py` as the OCR bench. A later loader is explicit and CPU unless config sets `device`.
-7. Timeout 30s and 2 retries on 429, 502, 503, and connection errors? Default: yes.
+6. Build an in-process transformers decision loader in this set? Default: no. Reserve the id. Leave `bench/ocr_compare/run_tf.py` as the OCR bench. A later loader is explicit, imported lazily, and CPU unless config sets `device`. A yes is a new ticket, not a torch import into `src/packet`.
+7. Timeout 30s and 2 retries on 429, 502, 503, timeout, and connection errors, with exhaustion counting as one strike? Default: yes.
 8. Keep schema 1? Default: yes.
 
 ## Tickets
 
 ### DB-1. Protocol and logistic backend
 
-Goal: a `DecisionBackend` protocol, a capability report, and a logistic backend over `LogisticBoundaryScorer`. The factory accepts `logistic`. `transformers` exits 2 as not in this set. The default scorer stays `None`.
+Goal: a `DecisionBackend` protocol, a capability report, and a logistic backend over `LogisticBoundaryScorer`. The factory accepts `logistic` when the config includes `weights`. `transformers` and any other id exit 2 at load. The default scorer stays `None`.
 
 Files: `src/packet/decision.py`, a wrapper beside `load_logistic_scorer`, `tests/test_decision_logistic.py`, `tests/fixtures/decision/`.
 
-Done when: input `tests/fixtures/decision/logistic_facts.json` (two schema-1 page-fact rows) produces `tests/fixtures/decision/logistic_probability.txt` (one float, six decimals) and `tests/fixtures/decision/logistic_capabilities.json` (all three capabilities false). `tests/test_t9_boundary_scorer.py` still passes. `run_fixture` still calls `Pipeline()`.
+Done when: inputs `tests/fixtures/decision/logistic_facts.json` (two schema-1 page-fact rows) and `tests/fixtures/decision/logistic_weights.json` (coefficients) produce `tests/fixtures/decision/logistic_probability.txt` (one float, six decimals) and `tests/fixtures/decision/logistic_capabilities.json` (all three capabilities false). `tests/fixtures/decision/config_transformers.json` and `tests/fixtures/decision/config_unknown_backend.json` each fail at load. `tests/test_t9_boundary_scorer.py` still passes. `run_fixture` still calls `Pipeline()`.
 
 Depends on: none.
 
 ### DB-2. HTTP adapter and fake server
 
-Goal: one stdlib adapter. Config selects it. The key comes from `PACKET_DECISION_API_KEY`. A loopback server replays recorded bodies.
+Goal: one stdlib adapter for the wire format above. Config selects it. The key comes from `PACKET_DECISION_API_KEY` at request time. A `127.0.0.1` server wraps recorded `message.content` values in the chat envelope. No redirects.
 
 Files: `src/packet/decision_http.py`, `tests/test_decision_http.py`, the fixtures below.
 
 Done when:
 
-- Input `tests/fixtures/decision/http_request_features.json` with recorded `tests/fixtures/decision/http_response_structured.json` yields label `boundary`, the fixture probability, and two label scores.
-- Recorded body `tests/fixtures/decision/http_response_plain.txt` (text `0.62`) yields `tests/fixtures/decision/http_plain_expected.json`: probability 0.62, `scores` null, degraded `no_structured_output` and `no_logprobs`.
-- Recorded body `tests/fixtures/decision/http_response_garbage.txt` yields `tests/fixtures/decision/http_garbage_expected.json`: no probability, degraded `unparseable`.
-- The third timeout in one run raises. A 401 raises on the first response. The captured log has no key material.
-- `tests/fixtures/decision/config_with_key.json` fails to load.
-- The test is unmarked `needs_network` and `needs_gpu`. A request host other than 127.0.0.1 fails the test.
+- Captured request `tests/fixtures/decision/http_request_features.json` is `model`, `temperature` 0, and one user message of `name=value` lines. Content `tests/fixtures/decision/http_response_structured.json` yields `tests/fixtures/decision/http_structured_expected.json`: label `boundary`, probability 0.62, two label scores from that JSON. Envelope token logprobs are ignored.
+- Content `tests/fixtures/decision/http_response_plain.txt` (text `0.62`) yields `tests/fixtures/decision/http_plain_expected.json`: probability 0.62, `scores` null, run-level flags `no_structured_output` and `no_logprobs`, and no strike.
+- `tests/fixtures/decision/three_plain_expected.json`: three content bodies `0.62`, zero strikes, those flags set, no raise.
+- Content `tests/fixtures/decision/http_response_garbage.txt` yields `tests/fixtures/decision/http_garbage_expected.json`: no probability, one strike, reason `unparseable`.
+- `tests/fixtures/decision/third_strike_expected.json`: unparseable pages 1 and 2 are recorded, and the call for page 3 raises `DecisionBackendError`.
+- One call with `max_retries` 2 makes three attempts. A timeout fixture uses a fake clock and does not sleep the 0.5s and 1s backoffs. Exhaustion is one strike. A 400 and a 401 each raise on that response and are not retried.
+- `tests/fixtures/decision/max_calls_0_expected.json`: `max_calls` 0 raises on the first call. `tests/fixtures/decision/max_calls_1_expected.json`: `max_calls` 1 accepts one call and the second raises.
+- `tests/fixtures/decision/http_request_page_text.json` is the captured body for `input: page_text` truncated at 4000 characters. `tests/fixtures/decision/http_request_image.json` is the captured body when `send_images` and `capabilities.images` are both true: one PNG `image_url` data URL beside the text.
+- The sentinel value of `PACKET_DECISION_API_KEY` is absent from the exception, stderr, and the timings line. `tests/fixtures/decision/config_with_key.json`, a nested `Token`, a `base_url` with userinfo, and a query `api_key` each fail to load.
+- The test is unmarked `needs_network`, `needs_gpu`, `needs_models`, and `needs_ocr_extras`. A request host other than `127.0.0.1` fails the test.
 
 Depends on: DB-1.
 
 ### DB-3. Boundary call site
 
-Goal: when a backend is configured, `observe` calls `decide` for task `boundary` and feeds P(`boundary`) through `combined_confidence` and the existing cap. The gap rule stays. Eval does not construct the backend.
+Goal: when a backend is configured, `observe` calls `decide` for task `boundary` and feeds P(`boundary`) through `combined_confidence` and the existing caps. The gap rule stays. `pipeline.stream` passes the render thunk only when `send_images` and `capabilities.images` are both true. Eval does not construct the backend.
 
 Files: `src/packet/boundary.py`, `src/packet/pipeline.py`, `tests/test_decision_boundary.py`.
 
@@ -143,17 +144,18 @@ Done when:
 
 - Fake probability 1.0 on a page with no page-number reset yields confidence <= 0.74 and a reason containing `model` (`tests/fixtures/decision/cap_expected.json`).
 - Probability 0.2 with a heuristic under 0.4 adds nothing (`tests/fixtures/decision/floor_expected.json`).
-- Unparseable text keeps the heuristic, omits `+model`, and records page index 1 in `decision_degraded_pages` (`tests/fixtures/decision/degraded_expected.json`).
-- Probability 0.45 on an unnumbered page does not split (`tests/fixtures/decision/silent_045_expected.json`). Fallback stays 0.55.
+- Unparseable text keeps the heuristic, omits `+model`, and records page index 1 in `decision_degraded_pages` (`tests/fixtures/decision/degraded_expected.json`). The capability flags are absent from that list.
+- Unnumbered page, injected 0.45, and a later page-number reset inside the window: no split (`tests/fixtures/decision/silent_045_expected.json`). The same page at 0.55 splits by `fallback_eager` (`tests/fixtures/decision/silent_055_expected.json`).
+- With default `send_images` false, the render thunk passed to `stream` is not called.
 
 Depends on: DB-1. The test uses a fake in-process backend, so DB-3 can land beside DB-2.
 
 ### DB-4. Config, timings, and the checklist guard
 
-Goal: `--decision-config` selects the backend. Parse timings record the id and the degraded pages. Eval and the default constructor stay on the heuristic. A unit test locks checklist item 8.
+Goal: `--decision-config` selects the backend on parse only. `DecisionBackendError` exits 2 for one file and for a batch. Strikes and `max_calls` reset per `parse`. Eval and `inspect` stay on the heuristic.
 
-Files: `src/packet/cli.py`, the loader in `src/packet/decision.py`, `tests/test_decision_config.py`, `tests/fixtures/decision/config_http.json`, `tests/fixtures/decision/default_on.json`.
+Files: `src/packet/cli.py`, the loader in `src/packet/decision.py`, `tests/test_decision_config.py`, `tests/fixtures/decision/config_http.json`, `tests/fixtures/decision/config_logistic.json`.
 
-Done when: `config_http.json` (`backend: http`, loopback `base_url`, `auth: env`, no key field) builds the HTTP adapter and reads the key from the environment. Eval's source still contains `pipeline or Pipeline()`, and the test shows eval does not read `PACKET_DECISION_API_KEY`. `default_on.json` lists the eight items. The test fails if an `http` config sets the default `PipelineConfig.scorer`. A fake parse with `--timings` writes `decision_backend` and `decision_degraded_pages`.
+Done when: `config_http.json` (`backend: http`, loopback `base_url` ending in `/v1`, `auth: env`, no key field) builds the HTTP adapter. `config_logistic.json` requires `weights`. Both flags together exit 2. A single-file parse and a two-file batch each print one `packet:` line and exit 2 on `DecisionBackendError`, and the batch does not parse the second file. The timings `error` for that row is the safe status-and-page text. After a one-strike file, the next file in a successful argv starts at zero strikes and zero calls. Eval's source still contains `pipeline or Pipeline()`, and the test shows eval does not read `PACKET_DECISION_API_KEY`. `inspect` builds `Pipeline()` with no scorer. An `http` config does not set the default `PipelineConfig.scorer`. A fake parse with `--timings` writes `decision_backend` and `decision_degraded_pages`.
 
 Depends on: DB-2 and DB-3.
