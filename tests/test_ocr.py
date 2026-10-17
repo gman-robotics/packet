@@ -73,10 +73,16 @@ def test_parse_lighton_empty_is_empty():
     assert parse_lighton_grounding("  \n", SCAN) == []
 
 
-def test_untagged_inline_page_label_stays_single_body_block():
+def test_untagged_inline_trailing_page_label_splits():
     blocks = parse_lighton_grounding("Northwind Invoice Amount due: 12.00 Page 1 of 2", SCAN)
+    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
+    assert blocks[0].text == "Northwind Invoice Amount due: 12.00"
+    assert blocks[1].text == "Page 1 of 2"
+
+
+def test_mid_sentence_page_keyword_stays_body():
+    blocks = parse_lighton_grounding("see page 1 of 2 for terms", SCAN)
     assert len(blocks) == 1 and blocks[0].kind == BlockKind.PARAGRAPH
-    assert "Page 1 of 2" in blocks[0].text
 
 
 def test_no_footer_leaves_lighton_block_unchanged():
@@ -165,9 +171,11 @@ def test_lighton_does_not_split_bare_digit_lines(text):
     assert all(b.kind != BlockKind.PAGE_NUMBER for b in blocks)
 
 
-def test_untagged_multiline_page_label_stays_body():
+def test_untagged_multiline_page_label_on_own_line_splits_once():
     blocks = parse_lighton_grounding("Invoice\n12\nPage 1 of 2", SCAN)
-    assert len(blocks) == 1 and blocks[0].kind == BlockKind.PARAGRAPH
+    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
+    assert blocks[0].text == "Invoice\n12"
+    assert blocks[1].text == "Page 1 of 2"
 
 
 def test_heading_keeps_kind_and_level_with_tags():
@@ -224,6 +232,14 @@ _TAGGED_LIGHTON_PAGES = [
     _tagged_lighton_page("Signatures follow.", "Page 2 of 2"),
 ]
 
+# Bo smoke raw LightOn grounding (one ![text] per page, footer folded into the line).
+_BO_REAL_LIGHTON_PAGES = [
+    "![text](75,49,246,110) Northwind Invoice Amount due: 12.00 Page 1 of 2",
+    "![text](75,49,337,90) Thank you for your business. Page 2 of 2",
+    "![text](74,49,259,111) Contoso Lease Premises: 1 Main St Page 1 of 2",
+    "![text](75,48,233,90) Signatures follow. Page 2 of 2",
+]
+
 
 class _TaggedLightonPages:
     needs_image = True
@@ -235,7 +251,82 @@ class _TaggedLightonPages:
         return parse_lighton_grounding(_TAGGED_LIGHTON_PAGES[ref.index], ref)
 
 
+class _BoRealLightonPages:
+    needs_image = True
+
+    def supports(self, page_class):
+        return True
+
+    def extract(self, ref, text, image=None):
+        return parse_lighton_grounding(_BO_REAL_LIGHTON_PAGES[ref.index], ref)
+
+
+def test_bo_real_lighton_format_splits_body_and_page_number():
+    from packet.boundary import keyword_page_label_fraction
+
+    blocks = parse_lighton_grounding(_BO_REAL_LIGHTON_PAGES[0], SCAN)
+    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
+    assert blocks[0].text == "Northwind Invoice Amount due: 12.00"
+    assert blocks[1].text == "Page 1 of 2"
+    assert keyword_page_label_fraction(blocks[1].text) == (1, 2)
+
+    blocks2 = parse_lighton_grounding(_BO_REAL_LIGHTON_PAGES[2], SCAN)
+    assert blocks2[0].text == "Contoso Lease Premises: 1 Main St"
+    assert blocks2[1].text == "Page 1 of 2"
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "",
+        "\n",
+        "\nPage 1 of 2",
+    ],
+)
+def test_bo_real_page0_trailing_label_variants(suffix):
+    raw = _BO_REAL_LIGHTON_PAGES[0]
+    if suffix == "\nPage 1 of 2":
+        raw = "![text](75,49,246,110) Northwind Invoice Amount due: 12.00\nPage 1 of 2"
+    elif suffix == "\n":
+        raw = raw + "\n"
+    blocks = parse_lighton_grounding(raw, SCAN)
+    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
+    assert blocks[0].text == "Northwind Invoice Amount due: 12.00"
+    assert blocks[1].text == "Page 1 of 2"
+
+
+def test_bo_real_lighton_pages_split_multi_doc_fixture(tmp_path):
+    from packet.boundary import keyword_page_label_fraction
+    from packet.eval.fixtures import build_builtin
+
+    fx = next(f for f in build_builtin(tmp_path) if f.name == "multi-doc")
+    pipe = Pipeline(
+        extractors=[
+            EscalatingExtractor(
+                native=NativeTextExtractor(),
+                ocr=_BoRealLightonPages(),
+                force_inspect=True,
+            )
+        ]
+    )
+    packet = pipe.parse(fx.pdf)
+    assert packet.document_count() == 2 and packet.origin.page_count == 4
+    spans = [(d.page_start, d.page_end) for d in packet.documents]
+    assert spans == [(0, 1), (2, 3)]
+    pn_blocks = [
+        b for d in packet.documents for b in d.furniture if b.kind == BlockKind.PAGE_NUMBER
+    ]
+    assert len(pn_blocks) == 4
+    assert [keyword_page_label_fraction(b.text) for b in pn_blocks] == [
+        (1, 2),
+        (2, 2),
+        (1, 2),
+        (2, 2),
+    ]
+
+
 def test_tagged_lighton_pages_split_multi_doc_fixture(tmp_path):
+    from packet.eval.fixtures import build_builtin
     from packet.eval.fixtures import build_builtin
 
     fx = next(f for f in build_builtin(tmp_path) if f.name == "multi-doc")
