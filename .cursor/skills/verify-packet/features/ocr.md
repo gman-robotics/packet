@@ -2,6 +2,8 @@
 
 `packet inspect` and `packet parse` send scan and mixed pages to OCR: LightOnOCR-3-1B on MLX first, then PaddleOCR-VL when LightOn cannot run or raises. An empty LightOn result is final and does not load Paddle. `--force-inspect` sends every page to OCR, text pages included. `PACKET_OCR=off` turns OCR off, so scan pages come out with no text. `packet eval` never runs OCR.
 
+Core `pip install packet-dl` does not install OCR engines. Use optional extras `ocr-mlx` and/or `ocr-paddle` (`pip install -e ".[ocr-mlx]"` on Apple silicon with cached LightOn weights). When `PACKET_OCR` is unset (or `on` / `true`), the CLI keeps the historical **LightOn→Paddle** `FallbackExtractor` chain without failing at startup if an engine is missing. Explicit factory modes exit `2` with a one-line hint when the chosen engine cannot load: `auto` (mlx chain when mlx-vlm is present, else Paddle only), `lighton` / `mlx`, `paddle`, plus optional `PACKET_OCR_MODEL` with `lighton` or `auto` on mlx.
+
 ## Sub-features
 
 - `ocr-on-scan`: on an image-only PDF, OCR reads the text and the boundary detector splits the packet from that text.
@@ -31,6 +33,6 @@ Steps:
 ## Gotchas
 
 - Each OCR page takes about 2–10 s on an M-series Mac. LightOn/Paddle loads once per **process** (cached across pages and across several PDFs in one `packet parse --out-dir` batch). The `ocr-on` and `ocr-force-inspect` recipe steps are separate `control-packet` invocations, so each loads the model; `ocr-off` does not load it. Expect roughly 25 s total for the three steps when OCR runs.
-- `inspect` cuts each event payload to about 200 characters, so `"source"` is often cut off. Use the block id suffix (`-oN` for OCR, `-bN` for native) or the parse JSON.
+- `inspect` cuts each event payload to about 180 characters, so `"source"` is often cut off. Use the block id suffix (`-oN` for OCR, `-bN` for native) or the parse JSON.
 - Native `parse` of `multi-doc` can include a few `vlm/lighton` blocks too: short pages classify `mixed` and the escalating extractor OCRs them. That is expected.
 - Stderr carries Hugging Face `Fetching N files` progress lines. They are not errors.

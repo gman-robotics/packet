@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from PIL import Image
 
 from packet.backends import (
     EscalatingExtractor,
@@ -264,6 +263,7 @@ def test_tagged_list_does_not_split_trailing_page_label():
     assert len(blocks) == 1 and blocks[0].kind == BlockKind.LIST_ITEM
 
 
+@pytest.mark.needs_ocr_extras
 def test_cli_model_load_error_is_one_stderr_line(monkeypatch, capsys, tmp_path):
     from packet import cli
     from packet.backends import LightOnExtractor, OcrConfigError
@@ -480,12 +480,16 @@ def test_parse_paddle_blocks_scales_pixels_to_points():
 # ---------- page images ----------
 
 def _image_only_pdf(tmp_path: Path, pages: int = 1) -> Path:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
     img = Image.new("RGB", (850, 1100), "white")
     out = tmp_path / "scan.pdf"
     img.save(out, "PDF", save_all=True, append_images=[img] * (pages - 1), resolution=100)
     return out
 
 
+@pytest.mark.needs_ocr_extras
 def test_source_renders_page_images_for_ocr(tmp_path):
     pdf = _image_only_pdf(tmp_path)
     with PdfPageSource(pdf) as src:
@@ -577,7 +581,11 @@ def test_lighton_extract_with_mocked_model(monkeypatch):
     assert seen == {"prompt": "PROMPT", "image": ["IMG"]} and len(blocks) == 7
 
 
+@pytest.mark.needs_ocr_extras
 def test_paddle_extract_with_mocked_pipeline(monkeypatch):
+    pytest.importorskip("PIL")
+    from PIL import Image
+
     class _Res:
         json = {"res": {"parsing_res_list": [  # noqa: RUF012
             {"block_label": "doc_title", "block_bbox": [0, 0, 100, 20], "block_content": "Lease"}]}}
@@ -672,8 +680,12 @@ def test_default_engines_are_lighton_grounding_mlx_then_paddle():
     assert ocr.primary.model == "lightonai/LightOnOCR-3-1B"
 
 
+@pytest.mark.needs_ocr_extras
 def test_lighton_raises_unavailable_without_mlx(monkeypatch):
+    pytest.importorskip("PIL")
     import builtins
+
+    from PIL import Image
     real = builtins.__import__
 
     def fake(name, *a, **k):
@@ -726,6 +738,7 @@ def test_ocr_unavailable_on_mixed_keeps_native_text():
     assert esc.unavailable  # surfaced, not silent
 
 
+@pytest.mark.needs_ocr_extras
 def test_pipeline_routes_scanned_pdf_through_ocr_with_page_image(tmp_path):
     pdf = _image_only_pdf(tmp_path, pages=2)
     from packet.types import Block
@@ -750,6 +763,7 @@ def test_pipeline_routes_scanned_pdf_through_ocr_with_page_image(tmp_path):
     assert "scanned words" in " ".join(texts)
 
 
+@pytest.mark.needs_ocr_extras
 def test_cli_force_inspect_flag(monkeypatch, tmp_path):
     from packet import cli
     captured = {}
@@ -771,6 +785,7 @@ def test_cli_force_inspect_flag(monkeypatch, tmp_path):
 SCANNED = os.environ.get("PACKET_REAL_SCAN_PDF")
 
 
+@pytest.mark.needs_models
 @pytest.mark.skipif(not SCANNED, reason="set PACKET_REAL_SCAN_PDF to run the real LightOnOCR-3 proof")
 def test_real_scanned_page_is_not_empty():
     packet = Pipeline(extractors=default_extractors()).parse(SCANNED)

@@ -37,6 +37,7 @@ def _make_run(run_id: str) -> Path:
 def _cleanup(run_id: str, **extra: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(SCRIPT), "cleanup"],
+        check=False,
         env=_env(PACKET_VERIFY_RUN_ID=run_id, **extra),
         capture_output=True,
         text=True,
@@ -86,6 +87,7 @@ def test_delete_root_refuses_root_outside_prefix(tmp_path):
     (victim / ".packet-verify-owned").write_text("run_id=x\n")
     r = subprocess.run(
         ["bash", str(SCRIPT), "cleanup"],
+        check=False,
         env=_env(PACKET_VERIFY_ROOT=str(victim), PACKET_VERIFY_DELETE_ROOT="1"),
         capture_output=True, text=True, timeout=60,
     )
@@ -96,6 +98,7 @@ def test_delete_root_refuses_root_outside_prefix(tmp_path):
 def test_bare_prefix_is_never_a_root():
     r = subprocess.run(
         ["bash", str(SCRIPT), "cleanup"],
+        check=False,
         env=_env(PACKET_VERIFY_ROOT="/tmp/packet-verify-", PACKET_VERIFY_DELETE_ROOT="1"),
         capture_output=True, text=True, timeout=60,
     )

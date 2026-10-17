@@ -38,8 +38,14 @@ def _materialize(run_id: str, home: Path) -> subprocess.CompletedProcess[str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("PACKET_VERIFY_")}
     env.update(PACKET_VERIFY_RUN_ID=run_id, HOME=str(home),
                PATH=f"{home}/.local/bin:/usr/bin:/bin")
-    return subprocess.run(["bash", str(SCRIPT), "materialize-fixtures"], env=env,
-                          capture_output=True, text=True, timeout=60)
+    return subprocess.run(
+        ["bash", str(SCRIPT), "materialize-fixtures"],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
 
 
 @pytest.fixture
