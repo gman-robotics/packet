@@ -1,0 +1,4 @@
+{
+  "backend": "logistic",
+  "weights": "logistic_weights.json"
+}
