@@ -3,6 +3,7 @@ page images instead of text, escalate policy and --force-inspect."""
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,10 +13,15 @@ from packet.backends import (
     EscalatingExtractor,
     FallbackExtractor,
     LightOnExtractor,
+    OCRConfig,
+    OcrConfigError,
     OcrUnavailable,
     PaddleExtractor,
+    build_ocr_extractor,
     default_extractors,
+    default_ocr_extractor,
 )
+from packet.eval.run import run_fixture
 from packet.extract import NativeTextExtractor, Router
 from packet.ocr_parse import parse_lighton_grounding, parse_paddle_blocks
 from packet.pipeline import Pipeline
@@ -210,6 +216,57 @@ def test_both_engines_unavailable_raises_ocr_unavailable():
     ext = FallbackExtractor(_SpyOcr(exc=OcrUnavailable("a")), _SpyOcr(exc=OcrUnavailable("b")))
     with pytest.raises(OcrUnavailable):
         ext.extract(SCAN, "", image=lambda: "IMG")
+
+
+def test_pipeline_default_extractor_is_native_text_only():
+    extractors = Pipeline().router.extractors
+    assert len(extractors) == 1 and type(extractors[0]) is NativeTextExtractor
+
+
+def test_run_fixture_still_uses_default_pipeline():
+    import inspect
+
+    assert "pipeline or Pipeline()" in inspect.getsource(run_fixture)
+
+
+def test_auto_resolve_uses_paddle_without_importing_mlx(monkeypatch):
+    import builtins
+    import importlib.util
+
+    real_find = importlib.util.find_spec
+    real_import = builtins.__import__
+
+    def find_spec(name, *args, **kwargs):
+        if name == "mlx_vlm" or name.startswith("mlx"):
+            return None
+        return real_find(name, *args, **kwargs)
+
+    def fake_import(name, *args, **kwargs):
+        if name in {"vllm", "transformers"} or name.startswith(("vllm.", "transformers.")):
+            raise ImportError(name)
+        if name == "mlx_vlm" or name.startswith("mlx"):
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setattr("packet.backends._paddle_available", lambda: True)
+    ext = build_ocr_extractor(OCRConfig(engine="auto"))
+    assert isinstance(ext, PaddleExtractor)
+    assert "mlx_vlm" not in sys.modules
+
+
+def test_explicit_lighton_missing_mlx_raises(monkeypatch):
+    monkeypatch.setattr("packet.backends._mlx_vlm_available", lambda: False)
+    with pytest.raises(OcrConfigError, match="mlx-vlm"):
+        build_ocr_extractor(OCRConfig(engine="lighton"))
+
+
+def test_default_ocr_extractor_without_config_is_unchanged_chain():
+    ext = default_ocr_extractor()
+    assert isinstance(ext, FallbackExtractor)
+    assert isinstance(ext.primary, LightOnExtractor) and isinstance(ext.fallback, PaddleExtractor)
+    assert ext.primary.model == "lightonai/LightOnOCR-3-1B"
 
 
 def test_default_engines_are_lighton_grounding_mlx_then_paddle():
