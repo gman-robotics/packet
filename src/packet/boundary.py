@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from packet.boundary_model import BoundaryScorer, combined_confidence, featurize_page_pair
 from packet.topic import MIN_WORDS, content_words, detect_language, same_language, topic_similarity
 from packet.types import Block, BlockKind, PageRef
 
@@ -114,8 +115,14 @@ class BoundaryDetector:
     _sizes: list[tuple[float | None, float | None, int]] = field(default_factory=list)
     _words: list = field(default_factory=list)
     _langs: list[str | None] = field(default_factory=list)
+    _bodies: list[str] = field(default_factory=list)
 
-    def observe(self, ref: PageRef, blocks: list[Block]) -> BoundarySignal | None:
+    def observe(
+        self,
+        ref: PageRef,
+        blocks: list[Block],
+        scorer: BoundaryScorer | None = None,
+    ) -> BoundarySignal | None:
         page_num, page_total = _extract_page_number(blocks)
         self.last_page_number = page_num
         self.last_page_total = page_total
@@ -131,6 +138,8 @@ class BoundaryDetector:
         self._sizes.append((ref.width, ref.height, ref.rotation))
         words = content_words(blocks)
         self._words.append(words)
+        body = "\n".join(b.text for b in blocks if b.text)
+        self._bodies.append(body)
         self._langs.append(detect_language(" ".join(
             b.text for b in blocks if b.kind not in _FURNITURE and b.text)))
 
@@ -202,14 +211,33 @@ class BoundaryDetector:
             score -= W_TOPIC_SHIFT
         if len(independent) >= 2:
             score = max(score, COMBINED)
-        if "page_number_reset" not in reasons:
-            score = min(score, CAP_WITHOUT_RESET)
-        if score < PROPOSE:
+        heur_conf = score if score >= PROPOSE else None
+        conf = heur_conf
+        if scorer is not None:
+            prev_num = self._page_nums[-2][1]
+            features = featurize_page_pair(
+                ref,
+                blocks,
+                page_number=page_num,
+                page_total=page_total,
+                prev_page_number=prev_num,
+                prev_body=self._bodies[-2],
+                prev_words=self._words[-2],
+                prev_lang=self._langs[-2],
+                prev_size=self._sizes[-2],
+            )
+            conf = combined_confidence(heur_conf, scorer.probability(features))
+        if conf is None:
             return None
+        if "page_number_reset" not in reasons:
+            conf = min(conf, CAP_WITHOUT_RESET)
+        reason = "+".join(reasons)
+        if scorer is not None and (heur_conf is None or conf != heur_conf):
+            reason = f"{reason}+model" if reason else "model"
         return BoundarySignal(
             after_page=ref.index - 1,
-            confidence=min(score, 0.95),
-            reason="+".join(reasons),
+            confidence=min(conf, 0.95),
+            reason=reason or "boundary",
         )
 
 
