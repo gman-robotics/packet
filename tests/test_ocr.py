@@ -2,6 +2,7 @@
 page images instead of text, escalate policy and --force-inspect."""
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -232,13 +233,28 @@ _TAGGED_LIGHTON_PAGES = [
     _tagged_lighton_page("Signatures follow.", "Page 2 of 2"),
 ]
 
-# Bo smoke raw LightOn grounding (one ![text] per page, footer folded into the line).
-_BO_REAL_LIGHTON_PAGES = [
-    "![text](75,49,246,110) Northwind Invoice Amount due: 12.00 Page 1 of 2",
-    "![text](75,49,337,90) Thank you for your business. Page 2 of 2",
-    "![text](74,49,259,111) Contoso Lease Premises: 1 Main St Page 1 of 2",
-    "![text](75,48,233,90) Signatures follow. Page 2 of 2",
+_LIGHTON_REAL_DIR = Path(__file__).resolve().parent / "fixtures" / "lighton_real"
+# SHA-256 of on-disk raw-pageN.txt (see tests/fixtures/lighton_real/SOURCE.txt).
+_LIGHTON_REAL_SHA256 = [
+    "662de4bef67cba1bc0e03890c6d9a003a08fb15e0420741279bdcaed2067b246",
+    "109e3457dd2769de1fa4493813f71b5c2acaaf57c4cea9f2cfc22b68bb059143",
+    "8e0109237b9b4285526136c85f1693c28e779f2a98ec4663677a75c3f379cab5",
+    "a85e7b88a18b5de7a06700983ce15e38fd61b37ddd3de839bb6ac4e690bbeaa4",
 ]
+
+
+def _load_lighton_real_fixture_bytes(page: int) -> bytes:
+    data = (_LIGHTON_REAL_DIR / f"raw-page{page}.txt").read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    assert digest == _LIGHTON_REAL_SHA256[page]
+    return data
+
+
+def _lighton_real_page_text(page: int, *, keep_eof_lf: bool = True) -> str:
+    data = _load_lighton_real_fixture_bytes(page)
+    if not keep_eof_lf and data.endswith(b"\n"):
+        data = data[:-1]
+    return data.decode("ascii")
 
 
 class _TaggedLightonPages:
@@ -258,37 +274,49 @@ class _BoRealLightonPages:
         return True
 
     def extract(self, ref, text, image=None):
-        return parse_lighton_grounding(_BO_REAL_LIGHTON_PAGES[ref.index], ref)
+        return parse_lighton_grounding(_lighton_real_page_text(ref.index), ref)
+
+
+def test_lighton_real_fixture_files_match_expected_sha256():
+    for page in range(4):
+        _load_lighton_real_fixture_bytes(page)
 
 
 def test_bo_real_lighton_format_splits_body_and_page_number():
     from packet.boundary import keyword_page_label_fraction
 
-    blocks = parse_lighton_grounding(_BO_REAL_LIGHTON_PAGES[0], SCAN)
+    blocks = parse_lighton_grounding(_lighton_real_page_text(0), SCAN)
     assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
     assert blocks[0].text == "Northwind Invoice Amount due: 12.00"
     assert blocks[1].text == "Page 1 of 2"
     assert keyword_page_label_fraction(blocks[1].text) == (1, 2)
 
-    blocks2 = parse_lighton_grounding(_BO_REAL_LIGHTON_PAGES[2], SCAN)
+    blocks2 = parse_lighton_grounding(_lighton_real_page_text(2), SCAN)
     assert blocks2[0].text == "Contoso Lease Premises: 1 Main St"
     assert blocks2[1].text == "Page 1 of 2"
 
 
-@pytest.mark.parametrize(
-    "suffix",
-    [
-        "",
-        "\n",
-        "\nPage 1 of 2",
-    ],
-)
-def test_bo_real_page0_trailing_label_variants(suffix):
-    raw = _BO_REAL_LIGHTON_PAGES[0]
-    if suffix == "\nPage 1 of 2":
-        raw = "![text](75,49,246,110) Northwind Invoice Amount due: 12.00\nPage 1 of 2"
-    elif suffix == "\n":
-        raw = raw + "\n"
+@pytest.mark.parametrize("keep_eof_lf", [True, False])
+def test_bo_real_page0_parse_with_and_without_trailing_lf(keep_eof_lf):
+    blocks = parse_lighton_grounding(_lighton_real_page_text(0, keep_eof_lf=keep_eof_lf), SCAN)
+    assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
+    assert blocks[0].text == "Northwind Invoice Amount due: 12.00"
+    assert blocks[1].text == "Page 1 of 2"
+
+
+@pytest.mark.parametrize("keep_eof_lf", [True, False])
+def test_bo_real_all_pages_parse_with_and_without_trailing_lf(keep_eof_lf):
+    from packet.boundary import keyword_page_label_fraction
+
+    expected_fracs = [(1, 2), (2, 2), (1, 2), (2, 2)]
+    for page, frac in enumerate(expected_fracs):
+        blocks = parse_lighton_grounding(_lighton_real_page_text(page, keep_eof_lf=keep_eof_lf), SCAN)
+        assert blocks[-1].kind == BlockKind.PAGE_NUMBER
+        assert keyword_page_label_fraction(blocks[-1].text) == frac
+
+
+def test_bo_real_page0_label_on_own_line_after_body():
+    raw = "![text](75,49,246,110) Northwind Invoice Amount due: 12.00\nPage 1 of 2"
     blocks = parse_lighton_grounding(raw, SCAN)
     assert [b.kind for b in blocks] == [BlockKind.PARAGRAPH, BlockKind.PAGE_NUMBER]
     assert blocks[0].text == "Northwind Invoice Amount due: 12.00"
@@ -326,7 +354,6 @@ def test_bo_real_lighton_pages_split_multi_doc_fixture(tmp_path):
 
 
 def test_tagged_lighton_pages_split_multi_doc_fixture(tmp_path):
-    from packet.eval.fixtures import build_builtin
     from packet.eval.fixtures import build_builtin
 
     fx = next(f for f in build_builtin(tmp_path) if f.name == "multi-doc")
