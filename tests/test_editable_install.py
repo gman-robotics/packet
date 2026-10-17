@@ -40,7 +40,7 @@ def test_editable_install_imports_the_checkout(tmp_path):
     site = subprocess.run([str(py), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
                           check=True, capture_output=True, text=True).stdout.strip()
     assert not (Path(site) / "packet").exists(), f"stale copy of packet in {site}"
-    out = subprocess.run([str(py), "-c", "import packet; print(packet.__file__)"], cwd=tmp_path,
+    out = subprocess.run([str(py), "-c", "import importlib.util as u; print(u.find_spec('packet').origin)"], cwd=tmp_path,
                          check=True, capture_output=True, text=True).stdout.strip()
     assert Path(out).resolve().is_relative_to(SRC_PKG), out
 

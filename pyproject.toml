@@ -26,10 +26,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
+# ``packages`` alone maps src/packet to packet/ in the wheel, and ``pip install -e``
+# points at src/ through hatch's editable install. Do not add ``force-include`` for
+# src/packet: hatch applies it to editable builds too, copying a stale packet/ into
+# site-packages that shadows the checkout (GMA-219), and it duplicates packet/ in
+# normal wheels.
 packages = ["src/packet"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/packet" = "packet"
 
 [tool.ruff]
 line-length = 100

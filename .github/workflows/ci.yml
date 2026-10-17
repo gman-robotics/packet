@@ -25,6 +25,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      - name: Editable install imports the checkout (GMA-219, no PYTHONPATH)
+        run: |
+          cd "$RUNNER_TEMP"
+          python -c "import packet, pathlib, os; p=pathlib.Path(packet.__file__).resolve(); r=(pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'src'/'packet').resolve(); assert p.is_relative_to(r), p; print(p)"
+
       - name: Ruff
         run: python -m ruff check src tests
 
