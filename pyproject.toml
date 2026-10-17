@@ -14,6 +14,8 @@ dependencies = [
 [project.optional-dependencies]
 inspector = ["pdf-inspector"]
 docling = ["docling"]
+ocr-mlx = ["mlx", "mlx-vlm", "huggingface_hub", "Pillow"]
+ocr-paddle = ["paddleocr", "paddlepaddle", "Pillow"]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
