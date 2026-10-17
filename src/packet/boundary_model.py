@@ -278,3 +278,10 @@ def load_logistic_scorer(path: Path) -> LogisticBoundaryScorer:
         weights=weights,
         bias=bias,
     )
+
+
+def load_logistic_decision_backend(path: Path):
+    """Wrap ``load_logistic_scorer`` as a ``DecisionBackend`` (see ``packet.decision``)."""
+    from packet.decision import LogisticDecisionBackend
+
+    return LogisticDecisionBackend(load_logistic_scorer(path))

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "feature_names": [
+    "has_num",
+    "num_is_one",
+    "has_total",
+    "prev_has_num",
+    "arxiv_stamp",
+    "title_top",
+    "title_lower",
+    "log_words",
+    "prev_log_words",
+    "head_abstract",
+    "head_intro",
+    "head_affil",
+    "prev_refs",
+    "media_jump",
+    "lang_change",
+    "topic_sim"
+  ],
+  "mean": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "std": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+  "weights": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "bias": 0
+}
