@@ -111,13 +111,12 @@ def ship_decision(heur: dict[str, float], model: dict[str, float], *, saturated:
 # ---- data: per-page facts from the real pipeline pieces ----
 
 def page_facts(pdf: Path) -> list[dict]:
-    from packet.boundary import BoundaryDetector, _size_jump, _title_position
+    from packet.boundary import BoundaryDetector
     from packet.classify import HeuristicClassifier
     from packet.extract import NativeTextExtractor, Router
     from packet.furniture import FurnitureTagger
     from packet.pipeline import _lazy_lines, _lazy_render
     from packet.source import PdfPageSource
-    from packet.topic import content_words, detect_language
 
     det, cl, router, tg = BoundaryDetector(), HeuristicClassifier(), Router([NativeTextExtractor()]), FurnitureTagger()
     out: list[dict] = []
@@ -128,13 +127,11 @@ def page_facts(pdf: Path) -> list[dict]:
             blocks = tg.tag_page(c, router.extract(c, text, image=_lazy_render(src, c.index),
                                                    layout=_lazy_lines(src, c.index)))
             sig = det.observe(c, blocks)
-            body = "\n".join(b.text for b in blocks if b.text)
             out.append({
-                "page": ref.index, "blocks": len(blocks), "signal": sig,
-                "page_number": det.last_page_number, "page_total": det.last_page_total,
-                "title": _title_position(blocks), "text": body, "words": content_words(blocks),
-                "size": (ref.width, ref.height, ref.rotation), "lang": detect_language(body),
-                "_size_jump": _size_jump,
+                **det._page_facts[-1],
+                "page": ref.index,
+                "blocks": len(blocks),
+                "signal": sig,
             })
     return out
 

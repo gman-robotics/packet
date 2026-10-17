@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from packet.boundary_layout import size_jump, title_position
 from packet.topic import content_words, detect_language, same_language, topic_similarity
 from packet.types import Block, PageRef
 
@@ -99,6 +100,12 @@ def combined_confidence(heur: float | None, p: float) -> float | None:
     return max(vals) if vals else None
 
 
+def model_raised_confidence(heur: float | None, model_p: float) -> bool:
+    """True when the model strictly increases the combined score before the observe cap."""
+    lifted = combined_confidence(heur, model_p)
+    return lifted is not None and (heur is None or lifted > heur)
+
+
 def _sigmoid(x: float) -> float:
     if x >= 0:
         return 1 / (1 + math.exp(-x))
@@ -106,104 +113,51 @@ def _sigmoid(x: float) -> float:
     return ex / (1 + ex)
 
 
-@dataclass(frozen=True)
-class _PageSlice:
-    page_number: int | None
-    page_total: int | None
-    title: str | None
-    body: str
-    words: Any
-    lang: str | None
-    size: tuple[float | None, float | None, int]
-
-
-def featurize_from_facts(facts: list[dict], i: int) -> list[float]:
-    """Feature vector for page index ``i`` (bench / training parity)."""
-    f, prev = facts[i], facts[i - 1] if i > 0 else None
-    cur = _PageSlice(
-        f["page_number"],
-        f["page_total"],
-        f["title"],
-        f["text"],
-        f["words"],
-        f["lang"],
-        f["size"],
-    )
-    prev_slice = None
-    if prev is not None:
-        prev_slice = _PageSlice(
-            prev["page_number"],
-            prev["page_total"],
-            prev["title"],
-            prev["text"],
-            prev["words"],
-            prev["lang"],
-            prev["size"],
-        )
-    return _featurize_pair(cur, prev_slice)
-
-
-def featurize_page_pair(
+def page_fact_row(
     ref: PageRef,
     blocks: list[Block],
     *,
     page_number: int | None,
     page_total: int | None,
-    prev_page_number: int | None,
-    prev_body: str,
-    prev_words: Any,
-    prev_lang: str | None,
-    prev_size: tuple[float | None, float | None, int],
-) -> list[float]:
-    from packet.boundary import _title_position
-
+) -> dict[str, Any]:
+    """One page row for training or serving (matches ``bench/t8_holdout.page_facts``)."""
     body = "\n".join(b.text for b in blocks if b.text)
-    words = content_words(blocks)
-    lang = detect_language(body)
-    cur = _PageSlice(
-        page_number,
-        page_total,
-        _title_position(blocks),
-        body,
-        words,
-        lang,
-        (ref.width, ref.height, ref.rotation),
-    )
-    prev_slice = _PageSlice(
-        prev_page_number,
-        None,
-        None,
-        prev_body,
-        prev_words,
-        prev_lang,
-        prev_size,
-    )
-    return _featurize_pair(cur, prev_slice)
+    return {
+        "page_number": page_number,
+        "page_total": page_total,
+        "title": title_position(blocks),
+        "text": body,
+        "words": content_words(blocks),
+        "lang": detect_language(body),
+        "size": (ref.width, ref.height, ref.rotation),
+    }
 
 
-def _featurize_pair(cur: _PageSlice, prev: _PageSlice | None) -> list[float]:
-    from packet.boundary import _size_jump
-
-    head = cur.body[:600].lower()
-    nwords = sum(cur.words.values())
-    pw = sum(prev.words.values()) if prev else 0
+def featurize_from_facts(facts: list[dict], i: int) -> list[float]:
+    """16-feature vector for page index ``i`` (trainer and runtime share this)."""
+    if i <= 0 or i >= len(facts):
+        raise IndexError(f"page index {i} out of range for {len(facts)} fact rows")
+    f, prev = facts[i], facts[i - 1]
+    head = f["text"][:600].lower()
+    nwords = sum(f["words"].values())
+    pw = sum(prev["words"].values())
     return [
-        float(cur.page_number is not None),
-        float(cur.page_number == 1),
-        float(cur.page_total is not None),
-        float(prev is not None and prev.page_number is not None),
-        float(bool(ARXIV.search(cur.body))),
-        float(cur.title == "top"),
-        float(cur.title == "lower"),
+        float(f["page_number"] is not None),
+        float(f["page_number"] == 1),
+        float(f["page_total"] is not None),
+        float(prev["page_number"] is not None),
+        float(bool(ARXIV.search(f["text"]))),
+        float(f["title"] == "top"),
+        float(f["title"] == "lower"),
         math.log1p(nwords),
         math.log1p(pw),
         float("abstract" in head),
         float("introduction" in head),
         float(bool(AFFIL.search(head))),
-        float(bool(prev and REFS.search(prev.body))),
-        float(bool(prev and _size_jump(prev.size, cur.size))),
-        float(bool(prev and not same_language(prev.lang, cur.lang))),
-        topic_similarity(prev.words, cur.words) if prev and nwords and pw else 1.0,
+        float(bool(REFS.search(prev["text"]))),
+        float(bool(size_jump(prev["size"], f["size"]))),
+        float(not same_language(prev["lang"], f["lang"])),
+        topic_similarity(prev["words"], f["words"]) if nwords and pw else 1.0,
     ]
 
 
@@ -260,6 +214,15 @@ def export_weights_json(
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
+def _finite_coefficient(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise BoundaryWeightsError(f"malformed boundary weights: invalid {label}")
+    out = float(value)
+    if not math.isfinite(out):
+        raise BoundaryWeightsError(f"malformed boundary weights: non-finite {label}")
+    return out
+
+
 def load_logistic_scorer(path: Path) -> LogisticBoundaryScorer:
     if not path.exists():
         raise BoundaryWeightsError(f"boundary weights not found: {path}")
@@ -268,9 +231,14 @@ def load_logistic_scorer(path: Path) -> LogisticBoundaryScorer:
     except OSError as exc:
         raise BoundaryWeightsError(f"cannot read boundary weights {path}: {exc}") from exc
     try:
-        data: dict[str, Any] = json.loads(raw)
+        parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise BoundaryWeightsError(f"malformed boundary weights JSON in {path}: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise BoundaryWeightsError(
+            f"malformed boundary weights: expected JSON object, got {type(parsed).__name__}"
+        )
+    data: dict[str, Any] = parsed
     if data.get("schema_version") != SCHEMA_VERSION:
         raise BoundaryWeightsError(
             f"unsupported boundary weights schema_version {data.get('schema_version')!r} "
@@ -289,15 +257,14 @@ def load_logistic_scorer(path: Path) -> LogisticBoundaryScorer:
                 f"malformed boundary weights: {key} length {len(data[key])} "
                 f"!= {len(FEATURE_NAMES)} features"
             )
-    if "bias" not in data or not isinstance(data["bias"], (int, float)):
+        for item in data[key]:
+            _finite_coefficient(item, key)
+    if "bias" not in data:
         raise BoundaryWeightsError("malformed boundary weights: missing or invalid bias")
-    try:
-        mean = [float(x) for x in data["mean"]]
-        std = [float(x) for x in data["std"]]
-        weights = [float(x) for x in data["weights"]]
-        bias = float(data["bias"])
-    except (TypeError, ValueError) as exc:
-        raise BoundaryWeightsError("malformed boundary weights: non-numeric coefficients") from exc
+    bias = _finite_coefficient(data["bias"], "bias")
+    mean = [_finite_coefficient(x, "mean") for x in data["mean"]]
+    std = [_finite_coefficient(x, "std") for x in data["std"]]
+    weights = [_finite_coefficient(x, "weights") for x in data["weights"]]
     return LogisticBoundaryScorer(
         feature_names=list(FEATURE_NAMES),
         mean=mean,
