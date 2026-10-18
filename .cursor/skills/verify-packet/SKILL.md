@@ -22,7 +22,7 @@ eval "$(.cursor/skills/verify-packet/control-packet env)"
 
 **Ready** when `.cursor/skills/verify-packet/control-packet doctor` prints `ok: true` with a resolved `packet` path and `package_version` matching `pyproject.toml`. Doctor also prints `ocr_lighton` (`ready`, `missing-mlx` or `missing-weights`), `ocr_paddle` and `machine`; the OCR recipes need `ocr_lighton: ready`.
 
-Doctor also checks that `import packet` resolves to this checkout: either `src/packet` on `PYTHONPATH`, or a `site-packages/packet` copy whose every `.py` file matches `src/packet` byte-for-byte. `pip install -e` can leave that copied tree (pyproject `force-include`) while `direct_url.json` still points here; if any file diverges, doctor fails and you should reinstall with `pip install -e ".[dev]"` from the repo root.
+Doctor also checks that `import packet` resolves to this checkout. After editable-install fixes (Refs GMA-219), `pip install -e ".[dev]"` should load `src/packet` directly. If an older environment still shadows the checkout with a `site-packages/packet` copy, doctor requires every `.py` file there to match `src/packet` byte-for-byte; any divergence fails doctor — reinstall with `pip install -e ".[dev]"` from the repo root.
 
 **Teardown:** run `.cursor/skills/verify-packet/control-packet cleanup` after each verification session (see Cleanup). There is no daemon to keep alive between drives.
 
@@ -106,6 +106,6 @@ test -f "$PACKET_VERIFY_ARTIFACTS/proof.txt" && ls -la "$PACKET_VERIFY_ARTIFACTS
 | `.cursor/skills/verify-packet/control-packet make-scan [name]` | Write an image-only copy of a builtin, so only OCR can read it |
 | `.cursor/skills/verify-packet/control-packet cli -- <args>` | Run `packet` with captured stdout/stderr/exit; exit code matches `packet` |
 | `.cursor/skills/verify-packet/control-packet cleanup` | Drop cache/scratch; keep artifacts |
-| `.cursor/skills/verify-packet/control-packet ci-headless` | CI smoke: doctor, fixtures, inspect, parse, builtin eval `GATE PASS` (no OCR / eval-plan) |
+| `.cursor/skills/verify-packet/control-packet ci-headless` | CI smoke: doctor, fixtures, inspect, parse (incl. `--boundary-weights` fixture), builtin eval `GATE PASS` (no OCR / eval-plan) |
 
 Maintenance: when CLI flags or fixtures change, update this skill and the `features/` recipes to match (optional: pstack `/create-verification-skill` flow if you use it elsewhere).

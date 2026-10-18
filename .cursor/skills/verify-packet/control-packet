@@ -216,17 +216,15 @@ print(pathlib.Path(urllib.request.url2pathname(url.removeprefix('file://'))).res
   local repo_real
   repo_real="$(realpath_safe "$REPO_ROOT")"
   [[ "$editable_root" == "$repo_real" ]] || return 1
-  # The editable metadata can point here while a copied site-packages/packet shadows it
-  # (pyproject force-include copies src/packet into site-packages on `pip install -e`).
-  # Check where `import packet` really loads from.
+  # Editable metadata should load src/packet directly (GMA-219). Legacy installs may still
+  # shadow the checkout with site-packages/packet; check where `import packet` loads from.
   local imported
   imported="$(cd / && python3 -c "import packet, pathlib; print(pathlib.Path(packet.__file__).resolve().parent)" 2>/dev/null)" || return 1
   local expected="$repo_real/src/packet"
   if [[ "$imported" == "$expected" ]]; then
     return 0
   fi
-  # Hatch `force-include` copies src/packet into site-packages on `pip install -e`; that is
-  # normal. Reject only when the imported tree no longer matches this checkout.
+  # A site-packages shadow copy is legacy but tolerated when it matches this checkout.
   if [[ "$imported" == *"/site-packages/packet" ]]; then
     if python3 - "$expected" "$imported" <<'PY'
 import hashlib
@@ -451,6 +449,12 @@ cmd_ci_headless() {
   local out="$PACKET_VERIFY_ROOT/scratch/ci-parse.json"
   mkdir -p "$(dirname "$out")"
   PACKET_VERIFY_CMD_LABEL=ci-parse cmd_cli -- parse "$fixture" -o "$out" || return 1
+  local weights="$REPO_ROOT/tests/fixtures/decision/logistic_weights.json"
+  if [[ ! -f "$weights" ]]; then
+    echo "ci-headless: missing fixture weights at $weights" >&2
+    return 1
+  fi
+  PACKET_VERIFY_CMD_LABEL=ci-parse-boundary-weights cmd_cli -- parse "$fixture" -o "$PACKET_VERIFY_ROOT/scratch/ci-parse-bw.json" --boundary-weights "$weights" || return 1
   set +e
   local eval_out
   eval_out="$("$pkt" eval --dir "$CACHE_DIR" 2>&1)"

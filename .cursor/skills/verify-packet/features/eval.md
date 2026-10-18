@@ -26,13 +26,13 @@ Preconditions:
 
 - **Builtin gates.** Run `PACKET_VERIFY_CMD_LABEL=eval-builtin .cursor/skills/verify-packet/control-packet cli -- eval --dir "$PACKET_VERIFY_CACHE"`. Exit code `0`. Stdout lists fixtures `text-layer`, `multi-doc`, `shared-header`, `scan` each with gate `PASS`, and the last line is `GATE PASS`.
 - **JSON.** Run `PACKET_VERIFY_CMD_LABEL=eval-json .cursor/skills/verify-packet/control-packet cli -- eval --dir "$PACKET_VERIFY_CACHE" --json`. Exit code `0`. Stdout is a JSON object: `.gate.passed` is `true`, `.gate.failures` is empty, and `.fixtures` has all four builtin fixtures, each with `gate_pass: true`.
-- **dlnet-whole.** Run `PACKET_VERIFY_CMD_LABEL=eval-dlnet .cursor/skills/verify-packet/control-packet cli -- eval --set dlnet-whole --dir "$PACKET_VERIFY_CACHE/dlnet" --json`. Exit `0`. `.set` is `"dlnet-whole"`, `.gate.passed` is `true`, `.gate.min_macro_f1` is `0.6`, `.gate.macro_f1` is at least 0.6 (0.908 on main eb26009), and `.fixtures` has 13 rows.
+- **dlnet-whole.** Run `PACKET_VERIFY_CMD_LABEL=eval-dlnet .cursor/skills/verify-packet/control-packet cli -- eval --set dlnet-whole --dir "$PACKET_VERIFY_CACHE/dlnet" --json`. Exit `0`. `.set` is `"dlnet-whole"`, `.gate.passed` is `true`, `.gate.min_macro_f1` is `0.6`, `.gate.macro_f1` is at least `0.6`, and `.fixtures` has 13 rows.
 - **Proof.** Append `feature=eval run_id=$PACKET_VERIFY_RUN_ID cache=$PACKET_VERIFY_CACHE` to `$PACKET_VERIFY_ARTIFACTS/proof.txt`. Retain `eval-builtin.stdout` and `eval-builtin.exitcode`.
 
 ## Gotchas
 
 - The first `--set dlnet-whole` run downloads the PDFs (a pause between each to be polite to arXiv), so it needs network and takes minutes; later runs reuse `--data-dir` and take about 5 s. A sha256 mismatch stops the run. Without network and an empty cache, report `eval-dlnet` as blocked.
-- `dlw-00` scores F1 0.0 on main eb26009 (no boundary found). The per-fixture floor for this set is 0.0, so only the macro floor gates.
+- `dlw-00` may score F1 `0.0` (no boundary found). The per-fixture floor for this set is `0.0`, so only the macro floor gates.
 
 - Without `--dir`, eval writes under `.packet-eval` in the cwd; prefer `$PACKET_VERIFY_CACHE` for agent runs.
 - A single FAIL row yields exit code `1` even if other fixtures pass. A row fails on any false-OCR page or a boundary F1 below `--min-f1`; the run also fails if macro F1 is below `--min-macro-f1`.
