@@ -9,7 +9,7 @@ from packet.assemble import Assembler
 from packet.boundary import BoundaryDetector
 from packet.boundary_model import BoundaryScorer
 from packet.classify import Classifier, HeuristicClassifier
-from packet.decision import DecisionBackend
+from packet.decision import DecisionBackend, decision_backend_passes_images
 from packet.domain import DomainAdapter, apply_domains
 from packet.events import Event
 from packet.extract import Extractor, NativeTextExtractor, Router
@@ -85,10 +85,12 @@ class Pipeline:
                 for block in blocks:
                     yield Event.block_emitted(block)
 
-                decide_render = None
                 backend = self.config.decision_backend
-                if backend is not None and getattr(backend, "send_images", False) and backend.capabilities.images:
-                    decide_render = lazy_render
+                decide_render = (
+                    lazy_render
+                    if backend is not None and decision_backend_passes_images(backend)
+                    else None
+                )
                 signal = detector.observe(
                     classified,
                     blocks,

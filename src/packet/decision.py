@@ -66,6 +66,18 @@ class DecisionBackend(Protocol):
     ) -> DecisionResult: ...
 
 
+def decision_backend_passes_images(backend: DecisionBackend) -> bool:
+    """True when ``decide`` should receive the page render thunk."""
+    return bool(getattr(backend, "send_images", False)) and backend.capabilities.images
+
+
+def resolve_decision_input_mode(backend_mode: str, request_mode: str) -> str:
+    """Observe leaves ``default`` on the request; the backend config picks the wire mode."""
+    if request_mode != "default":
+        return request_mode
+    return backend_mode
+
+
 def _reject_secret_fields(obj: Any, path: str = "") -> None:
     if isinstance(obj, dict):
         for key, value in obj.items():

@@ -144,14 +144,16 @@ def test_silent_045_expected_fixture():
     decisions = _run_silent_sequence(backend, "1")
     got = [{"page": d.page, "split": d.split, "reason": d.reason} for d in decisions]
     assert got == expected["decisions"]
+    assert backend.decide_calls == [(1, False), (2, False)]
 
 
 def test_silent_055_expected_fixture():
     expected = json.loads((FIXTURES / "silent_055_expected.json").read_text())
-    backend = FakeDecisionBackend({1: 0.45, 2: 0.10})
+    backend = FakeDecisionBackend({1: 0.55, 2: 0.10})
     decisions = _run_silent_sequence(backend, "1")
     got = [{"page": d.page, "split": d.split, "reason": d.reason} for d in decisions]
     assert got == expected["decisions"]
+    assert backend.decide_calls == [(1, False), (2, False)]
 
 
 def test_default_send_images_false_withholds_render_thunk_from_decide(tmp_path):
@@ -204,4 +206,40 @@ def test_send_images_true_images_capability_false_matches_images_off_fixture():
             render=lambda: (FIXTURES / "one_pixel.png").read_bytes(),
         )
     assert backend.decide_calls == [(1, False)]
+    assert backend.captured_bodies[-1] == expected
+
+
+def test_send_images_true_images_capability_true_passes_render_thunk():
+    backend = FakeDecisionBackend(
+        {1: 0.5},
+        send_images=True,
+        capabilities=DecisionCapabilities(images=True),
+    )
+    det = BoundaryDetector()
+    det.observe(_ref(0), [_block(0, "warmup")])
+    det.observe(
+        _ref(1),
+        [_block(1, "body")],
+        decision_backend=backend,
+        render=lambda: b"png-bytes",
+    )
+    assert backend.decide_calls == [(1, True)]
+
+
+def test_backend_input_mode_features_when_request_default():
+    expected = json.loads((FIXTURES / "http_request_features.json").read_text())
+    backend = FakeDecisionBackend({1: 0.5}, input_mode="features")
+    ref1 = PageRef(packet_id="p", index=1, page_class=PageClass.MIXED, class_confidence=0.45)
+    title = Block(
+        id="b0",
+        page=1,
+        kind=BlockKind.TITLE,
+        text="alpha",
+        source=SourceKind.NATIVE,
+        confidence=0.8,
+    )
+    det = BoundaryDetector()
+    det.observe(_ref(0), [_block(0, "")])
+    with patch("packet.boundary._extract_page_number", return_value=(1, None)):
+        det.observe(ref1, [title], decision_backend=backend)
     assert backend.captured_bodies[-1] == expected

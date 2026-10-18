@@ -229,11 +229,9 @@ class BoundaryDetector:
         model_used = False
         if decision_backend is not None:
             from packet.boundary_model import combined_confidence, model_raised_confidence
-            from packet.decision import DecisionRequest
+            from packet.decision import DecisionRequest, decision_backend_passes_images
 
-            decide_render = None
-            if getattr(decision_backend, "send_images", False) and decision_backend.capabilities.images:
-                decide_render = render
+            decide_render = render if decision_backend_passes_images(decision_backend) else None
             result = decision_backend.decide(
                 DecisionRequest(
                     task="boundary",
