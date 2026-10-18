@@ -1,0 +1,6 @@
+{
+  "strikes": [{"page": 1, "reason": "unparseable"}, {"page": 2, "reason": "unparseable"}],
+  "degraded_pages": [1, 2],
+  "raises_on_page": 3,
+  "error_contains": ["unparseable", "3"]
+}
