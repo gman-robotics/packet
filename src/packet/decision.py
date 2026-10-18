@@ -71,6 +71,17 @@ def decision_backend_passes_images(backend: DecisionBackend) -> bool:
     return bool(getattr(backend, "send_images", False)) and backend.capabilities.images
 
 
+def decision_backend_label(backend: DecisionBackend) -> str:
+    """Short backend id for timings rows."""
+    from packet.decision_http import HttpDecisionBackend
+
+    if isinstance(backend, LogisticDecisionBackend):
+        return "logistic"
+    if isinstance(backend, HttpDecisionBackend):
+        return "http"
+    return type(backend).__name__
+
+
 def resolve_decision_input_mode(backend_mode: str, request_mode: str) -> str:
     """Observe leaves ``default`` on the request; the backend config picks the wire mode."""
     if request_mode != "default":
