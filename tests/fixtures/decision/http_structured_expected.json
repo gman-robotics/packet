@@ -1,0 +1,17 @@
+{
+  "label": "boundary",
+  "probability": 0.62,
+  "scores": [
+    {
+      "label": "boundary",
+      "probability": 0.62
+    },
+    {
+      "label": "continue",
+      "probability": 0.38
+    }
+  ],
+  "degraded_pages": [],
+  "no_structured_output": false,
+  "no_logprobs": false
+}
