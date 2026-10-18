@@ -257,6 +257,11 @@ def load_decision_config(path: Path) -> DecisionBackend:
         if not isinstance(weights, str) or not weights.strip():
             raise DecisionBackendError("logistic backend requires weights path")
         return load_logistic_decision_backend(path.parent / weights)
+    if backend == "transformers":
+        # Lazy: this module imports no torch/transformers; the model loads on first decide.
+        from packet.decision_transformers import build_transformers_backend
+
+        return build_transformers_backend(data)
     if backend == "http":
         from packet.decision_http import load_http_decision_backend
 

@@ -1,0 +1,6 @@
+{
+  "backend": "transformers",
+  "model": "packet-ci-fake",
+  "revision": "ci-revision",
+  "device": "cpu"
+}
