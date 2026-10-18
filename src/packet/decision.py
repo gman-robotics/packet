@@ -58,6 +58,11 @@ class DecisionBackend(Protocol):
     capabilities: DecisionCapabilities
     degraded_pages: list[int]
 
+    @property
+    def backend_label(self) -> str: ...
+
+    def reset_parse_budget(self) -> None: ...
+
     def decide(
         self,
         request: DecisionRequest,
@@ -201,6 +206,13 @@ class LogisticDecisionBackend:
     scorer: LogisticBoundaryScorer
     capabilities: DecisionCapabilities = field(default_factory=DecisionCapabilities)
     degraded_pages: list[int] = field(default_factory=list)
+
+    @property
+    def backend_label(self) -> str:
+        return "logistic"
+
+    def reset_parse_budget(self) -> None:
+        """Logistic backend has no per-parse HTTP budget; no-op."""
 
     def decide(
         self,

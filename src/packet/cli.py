@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from packet.backends import OcrConfigError, default_extractors
-from packet.pipeline import Pipeline
+from packet.pipeline import Pipeline, PipelineConfig
 
 _DISTRIBUTION = "packet-dl"
 
@@ -69,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="JSON logistic boundary weights (optional; load errors exit 2)",
     )
+    parse.add_argument(
+        "--decision-config",
+        default=None,
+        help="JSON decision backend config for parse (optional; load errors exit 2)",
+    )
 
     ev = sub.add_parser("eval", help="run built-in packet fixtures")
     ev.add_argument("--json", action="store_true")
@@ -115,6 +120,43 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _parse_pipeline_config(args) -> PipelineConfig | None:
+    from packet.boundary_model import BoundaryWeightsError, load_logistic_scorer
+    from packet.decision import DecisionBackendError, load_decision_config
+    from packet.pipeline import PipelineConfig
+
+    if args.boundary_weights and args.decision_config:
+        print(
+            "packet: --decision-config cannot be used with --boundary-weights",
+            file=sys.stderr,
+        )
+        return None
+    config = PipelineConfig()
+    if args.boundary_weights:
+        try:
+            config.scorer = load_logistic_scorer(Path(args.boundary_weights))
+        except BoundaryWeightsError as exc:
+            print(f"packet: {exc}", file=sys.stderr)
+            return None
+    if args.decision_config:
+        try:
+            config.decision_backend = load_decision_config(Path(args.decision_config))
+        except (DecisionBackendError, BoundaryWeightsError) as exc:
+            print(f"packet: {exc}", file=sys.stderr)
+            return None
+    return config
+
+
+def _timing_decision_fields(config: PipelineConfig) -> dict:
+    backend = config.decision_backend
+    if backend is None:
+        return {}
+    return {
+        "decision_backend": backend.backend_label,
+        "decision_degraded_pages": list(backend.degraded_pages),
+    }
+
+
 def _cmd_parse(args) -> int:
     paths = [Path(p) for p in args.path]
     if len(paths) > 1 and not args.out_dir:
@@ -137,16 +179,11 @@ def _cmd_parse(args) -> int:
     # One pipeline and one set of extractors for the whole run; OCR engines also sit in
     # the process-level cache, so the model loads once however many files there are.
     extractors = _extractors_or_exit(force_inspect=args.force_inspect)
-    from packet.boundary_model import BoundaryWeightsError, load_logistic_scorer
-    from packet.pipeline import PipelineConfig
+    from packet.decision import DecisionBackendError
 
-    config = PipelineConfig()
-    if args.boundary_weights:
-        try:
-            config.scorer = load_logistic_scorer(Path(args.boundary_weights))
-        except BoundaryWeightsError as exc:
-            print(f"packet: {exc}", file=sys.stderr)
-            return 2
+    config = _parse_pipeline_config(args)
+    if config is None:
+        return 2
     pipe = Pipeline(extractors=extractors, config=config)
     if args.no_split:
         pipe.config.split_on_boundary = False
@@ -156,6 +193,9 @@ def _cmd_parse(args) -> int:
 
     failed = 0
     for path in paths:
+        backend = config.decision_backend
+        if backend is not None:
+            backend.reset_parse_budget()
         for ext in extractors:
             if hasattr(ext, "ocr_timings"):
                 ext.ocr_timings.clear()
@@ -179,8 +219,14 @@ def _cmd_parse(args) -> int:
                 print(f"wrote {out} ({packet.document_count()} document(s), "
                       f"{packet.origin.page_count} pages)")
             row.update(ok=True, pages=packet.origin.page_count, documents=packet.document_count())
+            row.update(_timing_decision_fields(config))
         except OcrConfigError as exc:
             _fail_ocr_config(exc)
+        except DecisionBackendError as exc:
+            print(f"packet: {exc}", file=sys.stderr)
+            row.update(ok=False, error=str(exc))
+            _write_timing(args.timings, row, start, extractors)
+            return 2
         except Exception as exc:  # one bad file must not stop a batch
             failed += 1
             row.update(ok=False, error=f"{type(exc).__name__}: {exc}")

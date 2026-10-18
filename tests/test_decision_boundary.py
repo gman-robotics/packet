@@ -47,6 +47,13 @@ class FakeDecisionBackend:
     input_mode: str = "default"
     model: str = "local-model"
 
+    @property
+    def backend_label(self) -> str:
+        return "fake"
+
+    def reset_parse_budget(self) -> None:
+        self.degraded_pages.clear()
+
     def decide(
         self,
         request: DecisionRequest,
