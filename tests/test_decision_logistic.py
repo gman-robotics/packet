@@ -170,3 +170,41 @@ def test_heuristic_classifier_on_alpha_fixture_text():
     out = HeuristicClassifier().classify(ref, "alpha")
     assert out.page_class == PageClass.MIXED
     assert out.class_confidence == 0.45
+
+
+def test_format_rotation_empty_when_missing_or_invalid():
+    from packet.decision import _format_rotation
+
+    assert _format_rotation(None) == ""
+    assert _format_rotation([]) == ""
+    assert _format_rotation([612, 792]) == ""
+    assert _format_rotation([612, 792, None]) == ""
+    assert _format_rotation([612, 792, 45]) == ""
+    assert _format_rotation([612, 792, 90.5]) == ""
+    assert _format_rotation([612, 792, "90"]) == ""
+    assert _format_rotation([612, 792, False]) == ""
+    assert _format_rotation([612, 792, 0]) == "0"
+    assert _format_rotation([612, 792, 90]) == "90"
+
+
+def test_format_default_message_rotation_line_empty_when_size_short():
+    facts = _load_facts()
+    facts_short = dict(facts[1])
+    facts_short["size"] = [612, 792]
+    ref = PageRef(packet_id="p", index=1, page_class=PageClass.MIXED, class_confidence=0.45)
+    block = Block(
+        id="b0",
+        page=1,
+        kind=BlockKind.TITLE,
+        text="alpha",
+        source=SourceKind.NATIVE,
+        confidence=0.8,
+    )
+    features = featurize_from_facts(facts, 1)
+    message = format_default_message(
+        features=features,
+        fact=facts_short,
+        blocks=[block],
+        ref=ref,
+    )
+    assert message == DEFAULT_INPUT_PAGE1.replace("rotation=0\n", "rotation=\n")

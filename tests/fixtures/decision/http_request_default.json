@@ -1,0 +1,10 @@
+{
+  "model": "local-model",
+  "temperature": 0,
+  "messages": [
+    {
+      "role": "user",
+      "content": "has_num=1.000000\nnum_is_one=1.000000\nhas_total=0.000000\nprev_has_num=0.000000\narxiv_stamp=0.000000\ntitle_top=1.000000\ntitle_lower=0.000000\nlog_words=0.693147\nprev_log_words=0.000000\nhead_abstract=0.000000\nhead_intro=0.000000\nhead_affil=0.000000\nprev_refs=0.000000\nmedia_jump=0.000000\nlang_change=0.000000\ntopic_sim=1.000000\ntext_excerpt=alpha\npage_number=1\npage_total=\ntitle_pos=top\nrotation=0\nhas_header=0\nhas_footer=0\nhas_page_number_tag=0\nlang=\npage_class=mixed\nclass_confidence=0.450000\nsource_kinds=native\nmin_block_confidence=0.800000\n"
+    }
+  ]
+}
