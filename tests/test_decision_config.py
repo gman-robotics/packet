@@ -6,7 +6,6 @@ import argparse
 import inspect
 import json
 import threading
-from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import ClassVar
@@ -14,14 +13,15 @@ from typing import ClassVar
 import pytest
 
 from packet import cli
+from packet.boundary_model import load_logistic_scorer
 from packet.decision import (
     DecisionBackendError,
-    DecisionCapabilities,
-    DecisionRequest,
     DecisionResult,
+    LogisticDecisionBackend,
     load_decision_config,
 )
 from packet.decision_http import HttpDecisionBackend
+from packet.decision_transformers import TransformersDecisionBackend
 from packet.eval.pdfutil import write_text_pdf
 from packet.eval.run import run_fixture
 from packet.extract import NativeTextExtractor
@@ -30,6 +30,12 @@ from packet.pipeline import PipelineConfig
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "decision"
 SENTINEL_KEY = "packet-ci-sentinel-key-do-not-print"
 HTTP_500_MSG = "decision http 500 page 1"
+
+_DECISION_BACKEND_IMPLEMENTERS: tuple[tuple[str, type], ...] = (
+    ("http", HttpDecisionBackend),
+    ("logistic", LogisticDecisionBackend),
+    ("transformers", TransformersDecisionBackend),
+)
 
 
 def _minimal_pdf(tmp_path: Path, pages: int = 2) -> Path:
@@ -47,6 +53,41 @@ def _sentinel_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _packet_stderr_lines(err: str) -> list[str]:
     return [line for line in err.splitlines() if line.startswith("packet:")]
+
+
+def _minimal_backend_instance(kind: str) -> object:
+    if kind == "http":
+        return HttpDecisionBackend(
+            base_url="http://127.0.0.1:1/v1",
+            model="m",
+            max_calls=1,
+            auth="none",
+        )
+    if kind == "logistic":
+        return LogisticDecisionBackend(load_logistic_scorer(FIXTURES / "logistic_weights.json"))
+    if kind == "transformers":
+        return TransformersDecisionBackend(model="m", revision="r")
+    raise AssertionError(kind)
+
+
+def test_every_decision_backend_implementer_has_protocol_members():
+    import test_decision_boundary
+
+    implementers = list(_DECISION_BACKEND_IMPLEMENTERS) + [
+        ("fake", test_decision_boundary.FakeDecisionBackend),
+    ]
+    for name, cls in implementers:
+        if name == "fake":
+            backend = cls({1: 0.5})
+        else:
+            backend = _minimal_backend_instance(name)
+        assert hasattr(backend, "backend_label"), name
+        assert hasattr(backend, "reset_parse_budget"), name
+        assert hasattr(backend, "decide"), name
+        assert hasattr(backend, "capabilities"), name
+        assert hasattr(backend, "degraded_pages"), name
+        assert isinstance(backend.backend_label, str)
+        backend.reset_parse_budget()
 
 
 def _capture_pipeline_config(monkeypatch: pytest.MonkeyPatch) -> list[PipelineConfig]:
@@ -365,32 +406,7 @@ def test_parse_http_decision_config_leaves_scorer_none(tmp_path, monkeypatch):
     assert seen[0].decision_backend is not None
 
 
-@dataclass
-class _TransformersStubBackend:
-    capabilities: DecisionCapabilities = field(default_factory=DecisionCapabilities)
-    degraded_pages: list[int] = field(default_factory=list)
-
-    @property
-    def backend_label(self) -> str:
-        return "transformers"
-
-    def reset_parse_budget(self) -> None:
-        return None
-
-    def decide(
-        self,
-        request: DecisionRequest,
-        *,
-        render=None,  # type: ignore[no-untyped-def]
-    ) -> DecisionResult:
-        return DecisionResult(probability=0.5)
-
-
-def test_transformers_config_does_not_set_scorer(monkeypatch):
-    monkeypatch.setattr(
-        "packet.decision.load_decision_config",
-        lambda _p: _TransformersStubBackend(),
-    )
+def test_transformers_config_does_not_set_scorer():
     args = argparse.Namespace(
         boundary_weights=None,
         decision_config=str(FIXTURES / "config_transformers.json"),
@@ -398,7 +414,41 @@ def test_transformers_config_does_not_set_scorer(monkeypatch):
     config = cli._parse_pipeline_config(args)
     assert config is not None
     assert config.scorer is None
-    assert config.decision_backend is not None
+    assert isinstance(config.decision_backend, TransformersDecisionBackend)
+
+
+def test_parse_transformers_config_through_cli_loop(tmp_path, monkeypatch):
+    _native_extractors_only(monkeypatch)
+
+    class _StubRunner:
+        def generate(self, prompt: str) -> str:
+            return "0.62"
+
+    def _stub_load_transformers_runner(
+        model: str, revision: str, device: str, *, max_output: int = 16
+    ) -> _StubRunner:
+        return _StubRunner()
+
+    monkeypatch.setattr(
+        "packet.decision_transformers.load_transformers_runner",
+        _stub_load_transformers_runner,
+    )
+    pdf = _minimal_pdf(tmp_path)
+    out = tmp_path / "out.json"
+    rc = cli.main(
+        [
+            "parse",
+            str(pdf),
+            "-o",
+            str(out),
+            "--decision-config",
+            str(FIXTURES / "config_transformers.json"),
+        ]
+    )
+    assert rc == 0
+    assert out.is_file()
+    backend = load_decision_config(FIXTURES / "config_transformers.json")
+    assert backend.backend_label == "transformers"
 
 
 def test_timings_success_includes_decision_fields(tmp_path, monkeypatch):

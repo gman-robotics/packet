@@ -166,9 +166,16 @@ class TransformersDecisionBackend:
             self.flags.add("no_images")
 
     def reset(self) -> None:
-        """Extra to the protocol: the per-parse caller (DB-4) clears strikes here."""
+        """Clear per-parse strikes and degraded page indexes (DB-4/DB-5)."""
         self.strikes.clear()
         self.degraded_pages.clear()
+
+    @property
+    def backend_label(self) -> str:
+        return "transformers"
+
+    def reset_parse_budget(self) -> None:
+        self.reset()
 
     def _get_runner(self) -> TransformersRunner:
         if self._runner is None:
