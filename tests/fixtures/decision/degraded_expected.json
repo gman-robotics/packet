@@ -1,0 +1,5 @@
+{
+  "confidence": 0.45,
+  "reason": "page_number_reset",
+  "decision_degraded_pages": [1]
+}
