@@ -118,6 +118,10 @@ class HttpDecisionBackend:
         self.no_logprobs = not self.capabilities.logprobs
         self.no_images = not self.capabilities.images
 
+    @property
+    def backend_label(self) -> str:
+        return "http"
+
     def reset_parse_budget(self) -> None:
         """Reset per-parse strike and call counters (DB-5 wiring)."""
         self.degraded_pages.clear()

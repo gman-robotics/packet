@@ -151,10 +151,8 @@ def _timing_decision_fields(config: PipelineConfig) -> dict:
     backend = config.decision_backend
     if backend is None:
         return {}
-    from packet.decision import decision_backend_label
-
     return {
-        "decision_backend": decision_backend_label(backend),
+        "decision_backend": backend.backend_label,
         "decision_degraded_pages": list(backend.degraded_pages),
     }
 
@@ -196,7 +194,7 @@ def _cmd_parse(args) -> int:
     failed = 0
     for path in paths:
         backend = config.decision_backend
-        if backend is not None and hasattr(backend, "reset_parse_budget"):
+        if backend is not None:
             backend.reset_parse_budget()
         for ext in extractors:
             if hasattr(ext, "ocr_timings"):

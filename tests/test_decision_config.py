@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import inspect
 import json
 import threading
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import ClassVar
@@ -12,7 +14,13 @@ from typing import ClassVar
 import pytest
 
 from packet import cli
-from packet.decision import DecisionBackendError, DecisionResult, load_decision_config
+from packet.decision import (
+    DecisionBackendError,
+    DecisionCapabilities,
+    DecisionRequest,
+    DecisionResult,
+    load_decision_config,
+)
 from packet.decision_http import HttpDecisionBackend
 from packet.eval.pdfutil import write_text_pdf
 from packet.eval.run import run_fixture
@@ -21,6 +29,7 @@ from packet.pipeline import PipelineConfig
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "decision"
 SENTINEL_KEY = "packet-ci-sentinel-key-do-not-print"
+HTTP_500_MSG = "decision http 500 page 1"
 
 
 def _minimal_pdf(tmp_path: Path, pages: int = 2) -> Path:
@@ -32,8 +41,26 @@ def _native_extractors_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "_extractors_or_exit", lambda **_kw: [NativeTextExtractor()])
 
 
+def _sentinel_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PACKET_DECISION_API_KEY", SENTINEL_KEY)
+
+
 def _packet_stderr_lines(err: str) -> list[str]:
     return [line for line in err.splitlines() if line.startswith("packet:")]
+
+
+def _capture_pipeline_config(monkeypatch: pytest.MonkeyPatch) -> list[PipelineConfig]:
+    seen: list[PipelineConfig] = []
+    real = cli.Pipeline
+
+    def _wrap(*args, **kwargs):  # type: ignore[no-untyped-def]
+        cfg = kwargs.get("config")
+        if cfg is not None:
+            seen.append(cfg)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "Pipeline", _wrap)
+    return seen
 
 
 def test_config_http_builds_http_adapter():
@@ -41,13 +68,21 @@ def test_config_http_builds_http_adapter():
     assert isinstance(backend, HttpDecisionBackend)
     assert backend.base_url == "http://127.0.0.1:8080/v1"
     assert backend.auth == "env"
+    assert backend.backend_label == "http"
 
 
 def test_config_logistic_json_loads():
+    from packet.boundary_model import load_logistic_scorer
+
+    cfg = json.loads((FIXTURES / "config_logistic.json").read_text())
+    assert cfg["weights"] == "logistic_weights.json"
+    weights_path = FIXTURES / cfg["weights"]
     backend = load_decision_config(FIXTURES / "config_logistic.json")
     from packet.decision import LogisticDecisionBackend
 
     assert isinstance(backend, LogisticDecisionBackend)
+    reference = load_logistic_scorer(weights_path)
+    assert backend.scorer.as_weights() == reference.as_weights()
 
 
 def test_config_logistic_missing_exits_before_parse(tmp_path, capsys):
@@ -113,7 +148,7 @@ def _loopback_config(tmp_path: Path, port: int) -> Path:
                 "backend": "http",
                 "base_url": f"http://127.0.0.1:{port}/v1",
                 "model": "local-model",
-                "auth": "none",
+                "auth": "env",
                 "max_calls": 100,
             }
         )
@@ -125,7 +160,7 @@ def test_single_file_decision_backend_error_one_packet_line(
     tmp_path, capsys, monkeypatch
 ):
     _native_extractors_only(monkeypatch)
-    monkeypatch.delenv("PACKET_DECISION_API_KEY", raising=False)
+    _sentinel_env(monkeypatch)
     pdf = _minimal_pdf(tmp_path)
     rc = cli.main(
         [
@@ -148,7 +183,7 @@ def test_single_file_decision_backend_error_one_packet_line(
 
 def test_batch_decision_backend_error_skips_second_file(tmp_path, capsys, monkeypatch):
     _native_extractors_only(monkeypatch)
-    monkeypatch.delenv("PACKET_DECISION_API_KEY", raising=False)
+    _sentinel_env(monkeypatch)
     pdf1 = write_text_pdf(tmp_path / "a.pdf", [["one"], ["two"]])
     pdf2 = write_text_pdf(tmp_path / "b.pdf", [["three"], ["four"]])
     out_dir = tmp_path / "out"
@@ -166,12 +201,13 @@ def test_batch_decision_backend_error_skips_second_file(tmp_path, capsys, monkey
     err = capsys.readouterr().err
     assert rc == 2
     assert len(_packet_stderr_lines(err)) == 1
+    assert SENTINEL_KEY not in err
     assert list(out_dir.glob("*.json")) == []
 
 
 def test_timings_error_safe_500_text(tmp_path, capsys, monkeypatch):
     _native_extractors_only(monkeypatch)
-    monkeypatch.delenv("PACKET_DECISION_API_KEY", raising=False)
+    _sentinel_env(monkeypatch)
     _FakeChatHandler.script = [(500, b"err")]
     httpd = HTTPServer(("127.0.0.1", 0), _FakeChatHandler)
     port = httpd.server_address[1]
@@ -195,11 +231,13 @@ def test_timings_error_safe_500_text(tmp_path, capsys, monkeypatch):
         )
         err = capsys.readouterr().err
         assert rc == 2
+        lines = _packet_stderr_lines(err)
+        assert len(lines) == 1
+        assert lines[0] == f"packet: {HTTP_500_MSG}"
         assert SENTINEL_KEY not in err
         row = json.loads(timings.read_text().strip())
         assert row["ok"] is False
-        assert "500" in row["error"]
-        assert "1" in row["error"]
+        assert row["error"] == HTTP_500_MSG
         assert SENTINEL_KEY not in json.dumps(row)
     finally:
         httpd.shutdown()
@@ -266,42 +304,115 @@ def test_eval_does_not_read_packet_decision_api_key():
     assert "PACKET_DECISION_API_KEY" not in text
 
 
-def test_inspect_builds_pipeline_without_scorer():
-    source = Path("src/packet/cli.py").read_text()
-    start = source.index("path = Path(args.path)")
-    end = source.index("def _parse_pipeline_config")
-    inspect_block = source[start:end]
-    assert "Pipeline(extractors=_extractors_or_exit" in inspect_block
-    assert "decision_config" not in inspect_block
-    assert "config.scorer" not in inspect_block
+def test_inspect_builds_pipeline_without_scorer(tmp_path, monkeypatch):
+    pdf = _minimal_pdf(tmp_path)
+    configs: list[PipelineConfig] = []
+
+    class _SpyPipeline:
+        def __init__(self, classifier=None, extractors=None, config=None):  # type: ignore[no-untyped-def]
+            self.config = config or PipelineConfig()
+            configs.append(self.config)
+
+        def stream(self, path):  # type: ignore[no-untyped-def]
+            return iter([])
+
+    monkeypatch.setattr(cli, "Pipeline", _SpyPipeline)
+    _native_extractors_only(monkeypatch)
+    rc = cli.main(["inspect", str(pdf)])
+    assert rc == 0
+    assert len(configs) == 1
+    assert configs[0].scorer is None
 
 
-def test_http_config_does_not_set_default_scorer():
-    backend = load_decision_config(FIXTURES / "config_http.json")
-    config = PipelineConfig(decision_backend=backend)
+def test_parse_logistic_decision_config_leaves_scorer_none(tmp_path, monkeypatch):
+    _native_extractors_only(monkeypatch)
+    seen = _capture_pipeline_config(monkeypatch)
+    pdf = _minimal_pdf(tmp_path)
+    rc = cli.main(
+        [
+            "parse",
+            str(pdf),
+            "-o",
+            str(tmp_path / "out.json"),
+            "--decision-config",
+            str(FIXTURES / "config_logistic.json"),
+        ]
+    )
+    assert rc == 0
+    assert len(seen) == 1
+    assert seen[0].scorer is None
+    assert seen[0].decision_backend is not None
+
+
+def test_parse_http_decision_config_leaves_scorer_none(tmp_path, monkeypatch):
+    _native_extractors_only(monkeypatch)
+    _sentinel_env(monkeypatch)
+    seen = _capture_pipeline_config(monkeypatch)
+    pdf = _minimal_pdf(tmp_path)
+    rc = cli.main(
+        [
+            "parse",
+            str(pdf),
+            "-o",
+            str(tmp_path / "out.json"),
+            "--decision-config",
+            str(FIXTURES / "config_http_max_calls_0.json"),
+        ]
+    )
+    assert rc == 2
+    assert len(seen) == 1
+    assert seen[0].scorer is None
+    assert seen[0].decision_backend is not None
+
+
+@dataclass
+class _TransformersStubBackend:
+    capabilities: DecisionCapabilities = field(default_factory=DecisionCapabilities)
+    degraded_pages: list[int] = field(default_factory=list)
+
+    @property
+    def backend_label(self) -> str:
+        return "transformers"
+
+    def reset_parse_budget(self) -> None:
+        return None
+
+    def decide(
+        self,
+        request: DecisionRequest,
+        *,
+        render=None,  # type: ignore[no-untyped-def]
+    ) -> DecisionResult:
+        return DecisionResult(probability=0.5)
+
+
+def test_transformers_config_does_not_set_scorer(monkeypatch):
+    monkeypatch.setattr(
+        "packet.decision.load_decision_config",
+        lambda _p: _TransformersStubBackend(),
+    )
+    args = argparse.Namespace(
+        boundary_weights=None,
+        decision_config=str(FIXTURES / "config_transformers.json"),
+    )
+    config = cli._parse_pipeline_config(args)
+    assert config is not None
     assert config.scorer is None
-
-
-def test_transformers_config_does_not_set_scorer():
-    with pytest.raises(DecisionBackendError, match="unknown decision backend"):
-        load_decision_config(FIXTURES / "config_transformers.json")
-    config = PipelineConfig()
-    assert config.scorer is None
+    assert config.decision_backend is not None
 
 
 def test_timings_success_includes_decision_fields(tmp_path, monkeypatch):
-    backend = HttpDecisionBackend(
+    class _DegradeOnDecide(HttpDecisionBackend):
+        def decide(self, request, *, render=None):  # type: ignore[no-untyped-def]
+            self.degraded_pages.append(request.page_index)
+            return DecisionResult(probability=0.5)
+
+    backend = _DegradeOnDecide(
         base_url="http://127.0.0.1:1/v1",
         model="m",
         max_calls=100,
         auth="none",
     )
-    backend.degraded_pages.append(2)
-
-    def _fake_decide(request, *, render=None):  # type: ignore[no-untyped-def]
-        return DecisionResult(probability=0.5)
-
-    backend.decide = _fake_decide  # type: ignore[method-assign]
     _native_extractors_only(monkeypatch)
     monkeypatch.setattr("packet.decision.load_decision_config", lambda _p: backend)
     pdf = _minimal_pdf(tmp_path)
@@ -321,4 +432,4 @@ def test_timings_success_includes_decision_fields(tmp_path, monkeypatch):
     assert rc == 0
     row = json.loads(timings.read_text().strip())
     assert row["decision_backend"] == "http"
-    assert row["decision_degraded_pages"] == []
+    assert row["decision_degraded_pages"] == [1]
