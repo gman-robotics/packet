@@ -23,6 +23,7 @@ from packet.decision import (
     DecisionResult,
     format_default_message,
     format_features_message,
+    resolve_decision_input_mode,
 )
 
 _ENV_API_KEY = "PACKET_DECISION_API_KEY"
@@ -181,7 +182,7 @@ class HttpDecisionBackend:
         *,
         render: Callable[[], Any] | None,
     ) -> dict[str, Any]:
-        mode = request.input_mode or self.input_mode
+        mode = resolve_decision_input_mode(self.input_mode, request.input_mode)
         fact = request.facts[request.page_index]
         features = featurize_from_facts(request.facts, request.page_index)
 

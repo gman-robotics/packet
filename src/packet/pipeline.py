@@ -9,6 +9,7 @@ from packet.assemble import Assembler
 from packet.boundary import BoundaryDetector
 from packet.boundary_model import BoundaryScorer
 from packet.classify import Classifier, HeuristicClassifier
+from packet.decision import DecisionBackend, decision_backend_passes_images
 from packet.domain import DomainAdapter, apply_domains
 from packet.events import Event
 from packet.extract import Extractor, NativeTextExtractor, Router
@@ -28,6 +29,7 @@ class PipelineConfig:
     lookahead_window: int = 2
     domain_adapters: list[DomainAdapter] = field(default_factory=list)
     scorer: BoundaryScorer | None = None
+    decision_backend: DecisionBackend | None = None
 
 
 class Pipeline:
@@ -70,15 +72,32 @@ class Pipeline:
                 classified = self.classifier.classify(ref, text)
                 yield Event.page_classified(classified)
 
+                lazy_render = _lazy_render(source, classified.index)
                 blocks = tagger.tag_page(
                     classified,
-                    self.router.extract(classified, text, image=_lazy_render(source, classified.index),
-                                       layout=_lazy_lines(source, classified.index)),
+                    self.router.extract(
+                        classified,
+                        text,
+                        image=lazy_render,
+                        layout=_lazy_lines(source, classified.index),
+                    ),
                 )
                 for block in blocks:
                     yield Event.block_emitted(block)
 
-                signal = detector.observe(classified, blocks, scorer=self.config.scorer)
+                backend = self.config.decision_backend
+                decide_render = (
+                    lazy_render
+                    if backend is not None and decision_backend_passes_images(backend)
+                    else None
+                )
+                signal = detector.observe(
+                    classified,
+                    blocks,
+                    scorer=self.config.scorer,
+                    decision_backend=backend,
+                    render=decide_render,
+                )
                 if signal is not None:
                     yield Event.boundary_proposed(
                         signal.after_page, signal.confidence, signal.reason

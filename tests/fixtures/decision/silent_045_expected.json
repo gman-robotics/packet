@@ -1,0 +1,7 @@
+{
+  "decisions": [
+    {"page": 0, "split": false, "reason": "no_signal"},
+    {"page": 1, "split": false, "reason": "fallback_below"},
+    {"page": 2, "split": false, "reason": "no_signal"}
+  ]
+}

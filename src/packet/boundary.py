@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from packet.boundary_layout import size_jump, title_position
 from packet.topic import MIN_WORDS, content_words, detect_language, same_language, topic_similarity
@@ -10,6 +11,7 @@ from packet.types import Block, BlockKind, PageRef
 
 if TYPE_CHECKING:
     from packet.boundary_model import BoundaryScorer
+    from packet.decision import DecisionBackend
 
 # Body and furniture lines count only when the entire line is a page label (not e.g. 1/2 in
 # spectroscopic notation embedded in prose).
@@ -128,6 +130,8 @@ class BoundaryDetector:
         ref: PageRef,
         blocks: list[Block],
         scorer: BoundaryScorer | None = None,
+        decision_backend: DecisionBackend | None = None,
+        render: Callable[[], Any] | None = None,
     ) -> BoundarySignal | None:
         page_num, page_total = _extract_page_number(blocks)
         self.last_page_number = page_num
@@ -223,7 +227,26 @@ class BoundaryDetector:
         heur_conf = score if score >= PROPOSE else None
         conf = heur_conf
         model_used = False
-        if scorer is not None:
+        if decision_backend is not None:
+            from packet.boundary_model import combined_confidence, model_raised_confidence
+            from packet.decision import DecisionRequest, decision_backend_passes_images
+
+            decide_render = render if decision_backend_passes_images(decision_backend) else None
+            result = decision_backend.decide(
+                DecisionRequest(
+                    task="boundary",
+                    page_index=ref.index,
+                    facts=list(self._page_facts),
+                    blocks=blocks,
+                    ref=ref,
+                ),
+                render=decide_render,
+            )
+            if result.probability is not None:
+                model_p = result.probability
+                model_used = model_raised_confidence(heur_conf, model_p)
+                conf = combined_confidence(heur_conf, model_p)
+        elif scorer is not None:
             from packet.boundary_model import (
                 combined_confidence,
                 featurize_from_facts,
