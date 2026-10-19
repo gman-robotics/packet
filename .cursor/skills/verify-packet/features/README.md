@@ -25,7 +25,7 @@ This directory is the maintained source for verifying user-facing **Packet CLI**
 - CLI proof includes stdout, stderr, exit code, and any `-o` output file named in the recipe.
 - Include `feature_id` and input path in `$PACKET_VERIFY_ARTIFACTS/proof.txt`.
 - If a feature needs data that is not in-repo (DocLayNet catalog for `eval-plan`; network on the first `eval --set dlnet-whole`; LightOn weights for OCR), report the missing precondition in Gotchas — do not mark the feature verified.
-- Decision-model backends (`DecisionBackend`, HTTP adapter) are library-only until a `packet parse --decision-config` flag ships; they are out of scope for this CLI map.
+- `packet parse --decision-config` is parse-only (Refs GMA-264); `inspect` and `eval` stay on the default heuristic. HTTP and transformers backends need network or GPU weights and are optional recipes in [parse.md](./parse.md), not part of headless CI.
 
 ## Feature entry contract
 
