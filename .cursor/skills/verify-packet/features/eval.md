@@ -32,7 +32,7 @@ Preconditions:
 ## Gotchas
 
 - The first `--set dlnet-whole` run downloads the PDFs (a pause between each to be polite to arXiv), so it needs network and takes minutes; later runs reuse `--data-dir` and take about 5 s. A sha256 mismatch stops the run. Without network and an empty cache, report `eval-dlnet` as blocked.
-- `dlw-00` may score F1 `0.0` (no boundary found). The per-fixture floor for this set is `0.0`, so only the macro floor gates.
+- `dlw-00` scores boundary F1 `1.0` on the current heuristic head (saturated with `dlw-01`); the residual macro drag is mainly `dlw-12`. Per-fixture floor for this set remains `0.0`, so a single low-F1 packet does not fail the gate unless macro F1 drops below `0.6`.
 
 - Without `--dir`, eval writes under `.packet-eval` in the cwd; prefer `$PACKET_VERIFY_CACHE` for agent runs.
 - A single FAIL row yields exit code `1` even if other fixtures pass. A row fails on any false-OCR page or a boundary F1 below `--min-f1`; the run also fails if macro F1 is below `--min-macro-f1`.
