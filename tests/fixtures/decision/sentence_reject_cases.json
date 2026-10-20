@@ -3,7 +3,7 @@
   "multiple_numbers": ["The probability is 0.62 or 0.7.", "Page 3 has probability 0.4.", "0.5-0.7"],
   "not_a_single_number": ["The probability is 1e-1.", "The probability is 1.2.3."],
   "percent": ["The probability is 62%.", "About 0.5 percent."],
-  "negative": ["The probability is -0.2.", "The probability is \u22120.2."],
+  "negative": ["The probability is -0.2.", "The probability is \u22120.2.", "The probability is - 0.2.", "The probability is \u2212 0.2."],
   "bare_integer_without_cue": ["Page 1 is a boundary."],
   "json_dict_or_list": ["{\"probability\": 2}", "{\"note\": \"probability 0.5\"}", "[0.5]"]
 }

@@ -856,7 +856,17 @@ def test_sentence_response_matches_expected(claimed):
         server.close()
 
 
-@pytest.mark.parametrize("content", SENTENCE_REJECTS + ["[0.5]", "1.5"])
+@pytest.mark.parametrize(
+    "content",
+    SENTENCE_REJECTS
+    + [
+        "[0.5]",
+        "1.5",
+        # GMA-363: JSON with a cue word inside stays strict, never a sentence hit.
+        '{"note": "probability 0.5"}',
+        '["probability 0.5"]',
+    ],
+)
 def test_sentence_rejects_are_one_strike(content):
     server = _FakeServer()
     try:

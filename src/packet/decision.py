@@ -277,8 +277,9 @@ def load_decision_config(path: Path) -> DecisionBackend:
 #   1. Find every ASCII digit group matching ``\d+(?:\.\d+)?|\.\d+``. Exactly one must
 #      exist, otherwise the reply is ambiguous (``0.62 or 0.7``, ``1e-1``, ``1.2.3``,
 #      ``page 3 ... 0.4``) and is rejected. A trailing sentence period is allowed.
-#   2. Reject it when it is preceded by ``-`` or U+2212, or followed by optional
-#      whitespace and ``%``, ``percent`` or ``per cent``.
+#   2. Reject it when it is preceded by ``-`` or U+2212 (optional whitespace between,
+#      so ``is - 0.2`` is rejected too), or followed by optional whitespace and ``%``,
+#      ``percent`` or ``per cent``.
 #   3. A bare integer (no decimal point) needs a cue word (probability, chance,
 #      likelihood, score, or ``p``), so ``Page 1 is a boundary.`` is rejected.
 #   4. The value must be finite and within 0..1 inclusive.
@@ -295,7 +296,7 @@ def extract_sentence_probability(text: str) -> float | None:
         return None
     match = matches[0]
     start, end = match.span()
-    if start > 0 and text[start - 1] in ("-", "\u2212"):
+    if text[:start].rstrip().endswith(("-", "\u2212")):
         return None
     if _LENIENT_PERCENT.match(text, end):
         return None
