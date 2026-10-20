@@ -24,6 +24,7 @@ from packet.decision import (
     DecisionCapabilities,
     DecisionRequest,
     DecisionResult,
+    extract_sentence_probability,
     format_default_message,
     format_features_message,
 )
@@ -118,6 +119,14 @@ def _valid_scores(value: Any) -> list[dict[str, Any]] | None:
     return out
 
 
+def _lenient(text: str) -> DecisionResult | None:
+    """Sentence-style fallback (GMA-272); see ``extract_sentence_probability``."""
+    p = extract_sentence_probability(text)
+    if p is None:
+        return None
+    return DecisionResult(probability=p, scores=None, label=None)
+
+
 def parse_output(text: str) -> DecisionResult | None:
     """Return a usable P(boundary), or None when the output is unparseable."""
     body = text.strip()
@@ -129,7 +138,9 @@ def parse_output(text: str) -> DecisionResult | None:
     try:
         obj = json.loads(body)
     except (json.JSONDecodeError, ValueError):
-        return None
+        return _lenient(body)
+    if isinstance(obj, str):
+        return _lenient(obj)
     if not isinstance(obj, dict):
         return None
     p = _as_probability(obj.get("probability"))

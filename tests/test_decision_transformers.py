@@ -369,3 +369,63 @@ def test_real_small_model_on_cpu(tmp_path):
         f"probability={result.probability} strikes={backend.strikes}"
     )
     assert result.probability is None or 0.0 <= result.probability <= 1.0
+
+
+# GMA-272: sentence-style replies.
+SENTENCE_REJECTS = [
+    pytest.param(text, id=f"{kind}-{i}")
+    for kind, texts in json.loads(
+        (FIXTURES / "sentence_reject_cases.json").read_text()
+    ).items()
+    for i, text in enumerate(texts)
+]
+
+
+def test_sentence_reply_is_probability_not_strike():
+    sentence = (FIXTURES / "tf_response_sentence.txt").read_text()
+    expected = json.loads((FIXTURES / "tf_sentence_expected.json").read_text())
+    backend, _ = _load_with_fake([sentence])
+    result = backend.decide(_page1_request())
+    assert result.probability == pytest.approx(expected["probability"])
+    assert result.scores is expected["scores"]
+    assert sorted(backend.flags) == expected["flags"]
+    assert backend.strikes == expected["strikes"]
+    assert backend.degraded_pages == expected["degraded_pages"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [
+        ("The probability is 0.62.", 0.62),
+        ("P(boundary)=0.7", 0.7),
+        (".5 chance", 0.5),
+        ("The probability is 1.", 1.0),
+        ('"The probability is 0.62."', 0.62),
+    ],
+)
+def test_sentence_accepts(raw, want):
+    from packet.decision_transformers import parse_output
+
+    result = parse_output(raw)
+    assert result is not None and result.probability == pytest.approx(want)
+    assert result.scores is None and result.label is None
+
+
+@pytest.mark.parametrize("raw", SENTENCE_REJECTS)
+def test_sentence_rejects_are_one_unparseable_strike(raw):
+    backend, _ = _load_with_fake([raw])
+    result = backend.decide(_page1_request())
+    assert result.probability is None
+    assert backend.strikes == [{"page": 1, "reason": "unparseable"}]
+    assert backend.degraded_pages == [1]
+
+
+def test_sentence_third_strike_message_omits_body():
+    raw = "The probability is 0.62 or 0.7."
+    backend, _ = _load_with_fake([raw] * 3)
+    backend.decide(_page1_request(1))
+    backend.decide(_page1_request(2))
+    with pytest.raises(DecisionBackendError) as err:
+        backend.decide(_page1_request(3))
+    msg = str(err.value)
+    assert "unparseable" in msg and "3" in msg and raw not in msg

@@ -21,6 +21,7 @@ from packet.decision import (
     DecisionCapabilities,
     DecisionRequest,
     DecisionResult,
+    extract_sentence_probability,
     format_default_message,
     format_features_message,
     resolve_decision_input_mode,
@@ -319,6 +320,8 @@ class HttpDecisionBackend:
             return DecisionResult(probability=None, scores=None, label=None)
 
         as_plain = self._try_plain_probability(stripped)
+        if as_plain is None:
+            as_plain = self._try_sentence_probability(stripped)
         if as_plain is not None:
             if self.capabilities.structured_output:
                 self.no_structured_output = True
@@ -360,6 +363,17 @@ class HttpDecisionBackend:
 
         label_str = label if isinstance(label, str) else None
         return DecisionResult(probability=p, scores=scores, label=label_str)
+
+    @staticmethod
+    def _try_sentence_probability(text: str) -> float | None:
+        """GMA-272 lenient fallback; JSON that decodes to a non-string stays strict."""
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError:
+            return extract_sentence_probability(text)
+        if isinstance(obj, str):
+            return extract_sentence_probability(obj)
+        return None
 
     @staticmethod
     def _try_plain_probability(text: str) -> float | None:
