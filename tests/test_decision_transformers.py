@@ -325,6 +325,23 @@ def test_reset_clears_strikes():
     assert backend.strikes == [] and backend.degraded_pages == []
 
 
+def test_reset_parse_budget_clears_strikes_and_degraded_pages():
+    """GMA-298: reset_parse_budget must delegate to reset(), not be a no-op."""
+    garbage = (FIXTURES / "tf_response_garbage.txt").read_text()
+    backend, _ = _load_with_fake([garbage] * 3 + ["0.5"])
+    backend.decide(_page1_request(1))
+    backend.decide(_page1_request(2))
+    assert len(backend.strikes) == 2
+    assert backend.degraded_pages
+    backend.reset_parse_budget()
+    assert backend.strikes == []
+    assert backend.degraded_pages == []
+    # The budget is fresh: one more garbage page is a first strike, not the third.
+    backend.decide(_page1_request(1))
+    assert backend.strikes == [{"page": 1, "reason": "unparseable"}]
+    assert backend.decide(_page1_request(1)).probability == pytest.approx(0.5)
+
+
 def test_src_packet_does_not_import_bench_run_tf():
     for path in (SRC / "packet").rglob("*.py"):
         text = path.read_text()
