@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -267,3 +268,41 @@ def load_decision_config(path: Path) -> DecisionBackend:
 
         return load_http_decision_backend(data)
     raise DecisionBackendError(f"unknown decision backend {backend!r}")
+
+
+# GMA-272: lenient extraction for sentence-style replies ("The probability is 0.62.").
+# Used by the transformers and http backends only after their strict plain-number and
+# JSON parses have failed (and never for JSON that decodes to a dict or list).
+# Rule:
+#   1. Find every ASCII digit group matching ``\d+(?:\.\d+)?|\.\d+``. Exactly one must
+#      exist, otherwise the reply is ambiguous (``0.62 or 0.7``, ``1e-1``, ``1.2.3``,
+#      ``page 3 ... 0.4``) and is rejected. A trailing sentence period is allowed.
+#   2. Reject it when it is preceded by ``-`` or U+2212, or followed by optional
+#      whitespace and ``%``, ``percent`` or ``per cent``.
+#   3. A bare integer (no decimal point) needs a cue word (probability, chance,
+#      likelihood, score, or ``p``), so ``Page 1 is a boundary.`` is rejected.
+#   4. The value must be finite and within 0..1 inclusive.
+# Rejected replies return None, which the caller records as an ``unparseable`` strike.
+_LENIENT_NUMBER = re.compile(r"\d+(?:\.\d+)?|\.\d+", re.ASCII)
+_LENIENT_PERCENT = re.compile(r"\s*(?:%|percent\b|per cent\b)", re.IGNORECASE)
+_LENIENT_CUE = re.compile(r"\b(?:probability|chance|likelihood|score|p)\b", re.IGNORECASE)
+
+
+def extract_sentence_probability(text: str) -> float | None:
+    """Return the single probability in a sentence-style reply, or None (GMA-272)."""
+    matches = list(_LENIENT_NUMBER.finditer(text))
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    start, end = match.span()
+    if start > 0 and text[start - 1] in ("-", "\u2212"):
+        return None
+    if _LENIENT_PERCENT.match(text, end):
+        return None
+    token = match.group()
+    if "." not in token and not _LENIENT_CUE.search(text):
+        return None
+    value = float(token)
+    if not math.isfinite(value) or value < 0.0 or value > 1.0:
+        return None
+    return value

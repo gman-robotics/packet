@@ -824,3 +824,46 @@ def test_http_backend_from_loader_factory():
         }
     )
     assert backend.model == "m"
+
+
+# GMA-272: sentence-style replies.
+SENTENCE_REJECTS = [
+    pytest.param(text, id=f"{kind}-{i}")
+    for kind, texts in json.loads(
+        (FIXTURES / "sentence_reject_cases.json").read_text()
+    ).items()
+    for i, text in enumerate(texts)
+    if kind != "json_dict_or_list"  # http accepts unchecked JSON dicts (pre-existing)
+]
+
+
+@pytest.mark.parametrize("claimed", [False, True])
+def test_sentence_response_matches_expected(claimed):
+    content = (FIXTURES / "http_response_sentence.txt").read_text()
+    expected = json.loads((FIXTURES / "http_sentence_expected.json").read_text())
+    server = _FakeServer()
+    try:
+        caps = {"structured_output": claimed, "logprobs": claimed, "images": False}
+        backend = _backend(server, capabilities=caps)
+        server.queue_json(200, _envelope(content))
+        snap = _snapshot_backend(backend, backend.decide(_page1_request()))
+        assert snap["probability"] == expected["probability"]
+        assert snap["scores"] == expected["scores"]
+        assert snap["degraded_pages"] == expected["degraded_pages"]
+        assert snap["no_structured_output"] == expected["no_structured_output"]
+        assert snap["no_logprobs"] == expected["no_logprobs"]
+    finally:
+        server.close()
+
+
+@pytest.mark.parametrize("content", SENTENCE_REJECTS + ["[0.5]", "1.5"])
+def test_sentence_rejects_are_one_strike(content):
+    server = _FakeServer()
+    try:
+        backend = _backend(server)
+        server.queue_json(200, _envelope(content))
+        result = backend.decide(_page1_request())
+        assert result.probability is None
+        assert backend.degraded_pages == [1]
+    finally:
+        server.close()
