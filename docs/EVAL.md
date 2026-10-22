@@ -40,6 +40,14 @@ Treat it as a smoke test for splitting, not as a measure of real mixed
 packets. Report micro recall and precision over its 22 gold boundaries next
 to the macro F1, because one packet with a miss moves the macro number a lot.
 
+**`packet eval --set politax`** (GMA-270) scores boundary F1 on all 30
+PoliTax-Split PDFs (Extend-AI/PoliTax-Split on Hugging Face). Each whole PDF
+is one fixture; gold sub-documents come from the pinned CC0
+``annotations.jsonl``. Downloads land in ``~/.cache/packet/politax`` or
+``--data-dir``; nothing third-party is committed. Floors are report-only
+(0.0 per fixture and macro). The CLI prints macro F1, micro boundary P/R/F1,
+and a text-layer census (pages with at least 40 native characters).
+
 **What the eval pipeline runs.** `packet eval` uses `Pipeline()` with its
 default extractor, `NativeTextExtractor`, so it reads text layers (with the
 layout signals: titles, headings and band lines from font size, weight and

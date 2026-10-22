@@ -6,6 +6,7 @@ Eval runs the native-text pipeline (no OCR) over a fixture set: the synthetic bu
 
 - `eval-table` human-readable table with `ocr` and `gate` columns, a `macro F1` line, and `GATE PASS`/`GATE FAIL`.
 - `eval-dlnet` `--set dlnet-whole`: 13 packets (`dlw-00` to `dlw-12`) built from whole public PDFs that are downloaded to `--data-dir` (default `~/.cache/packet/dlnet-whole`) and checked against pinned sha256 values.
+- `eval-politax` `--set politax`: 30 PoliTax-Split PDFs (one fixture each), report-only floors 0.0, macro + micro boundary metrics, text-layer census. Downloads to `--data-dir` (default `~/.cache/packet/politax`).
 - `eval-json` machine-readable results via `--json`: an object `{"set": "builtin"|"dlnet-whole", "fixtures": [per-fixture rows with gate_pass], "gate": {"passed", "failures", "macro_f1", "min_f1", "min_macro_f1"}}` (not a bare list).
 - `eval-cache` uses `--dir` to isolate generated PDFs per verification run.
 

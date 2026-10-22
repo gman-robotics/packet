@@ -12,8 +12,13 @@ from packet.types import Packet
 
 DEFAULT_MIN_F1 = 1.0
 # (per-fixture, macro) boundary-F1 floors when the CLI flags are not given.
-SET_FLOORS = {"builtin": (DEFAULT_MIN_F1, None), "dlnet-whole": (0.0, 0.6)}
+SET_FLOORS = {
+    "builtin": (DEFAULT_MIN_F1, None),
+    "dlnet-whole": (0.0, 0.6),
+    "politax": (0.0, 0.0),
+}
 DEFAULT_WHOLEDOC_CACHE = Path.home() / ".cache" / "packet" / "dlnet-whole"
+DEFAULT_POLITAX_CACHE = Path.home() / ".cache" / "packet" / "politax"
 
 
 @dataclass
@@ -111,6 +116,22 @@ def run_dlnet_whole(
     wholedoc.fetch(m, cache=data_dir)
     out = (root or Path(".packet-eval")) / "dlnet-whole"
     return [run_fixture(fx, pipeline) for fx in wholedoc.build_fixtures(m, data_dir, out)]
+
+
+def prepare_politax(data_dir: Path):
+    from packet.eval import politax
+
+    m = politax.load_manifest()
+    ann_path = politax.fetch(m, cache=data_dir)
+    annotations = politax.load_annotations(ann_path)
+    fixtures = politax.build_fixtures(m, data_dir, annotations)
+    return m, fixtures
+
+
+def run_politax(data_dir: Path, pipeline: Pipeline | None = None) -> list[EvalResult]:
+    """``packet-politax``: download PoliTax-Split PDFs and score one fixture per packet."""
+    _, fixtures = prepare_politax(data_dir)
+    return [run_fixture(fx, pipeline) for fx in fixtures]
 
 
 def results_as_dict(results: list[EvalResult], min_f1: float = DEFAULT_MIN_F1) -> list[dict]:

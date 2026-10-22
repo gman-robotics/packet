@@ -41,6 +41,19 @@ def _greedy_match(gold: list[int], pred: list[int], tolerance: int) -> int:
     return matched
 
 
+def micro_boundary_prf(results: list) -> tuple[float, float, float]:
+    """Pool boundary matches across fixtures (matched/pred/gold counts)."""
+    matched = sum(r.boundary.matched for r in results)
+    pred = sum(len(r.boundary.predicted) for r in results)
+    gold = sum(len(r.boundary.gold) for r in results)
+    if pred + gold == 0:
+        return 1.0, 1.0, 1.0
+    p = matched / pred if pred else 0.0
+    r = matched / gold if gold else 0.0
+    f1 = 0.0 if p + r == 0 else 2 * p * r / (p + r)
+    return p, r, f1
+
+
 def boundary_score(
     gold: Packet,
     predicted: Packet,
