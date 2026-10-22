@@ -76,6 +76,16 @@ packet eval --set builtin --boundary-weights /tmp/politax-weights.json
 Weights are opt-in (`PipelineConfig.scorer` default stays `None`). Do not commit large
 weight blobs unless shipping passes the default-on bar (C5).
 
+Default-on ship check (GMA-291):
+
+```bash
+packet politax-ship-check --json --train-output /tmp/politax-ship-weights.json
+```
+
+Runs the plan's eight-item gate. Outcome **(a)** would commit weights and set the default
+scorer; outcome **(b)** leaves defaults unchanged and records failed items (expected when
+holdout F1 does not strictly beat the heuristic on image-only PDFs).
+
 Licenses: DocLayNet labels are
 CDLA-Permissive-1.0; each PDF stays under its arXiv license (recorded per doc
 in the manifest; all are arXiv nonexclusive-distrib 1.0), which is why the
