@@ -169,12 +169,18 @@ class LightOnExtractor(_LazyEngine):
             raise OcrUnavailable(f"LightOnOCR failed to load: {exc}") from exc
         return (model, processor, (generate, prompt))
 
-    def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
-        img = _need_image(image)
+    def recognize(self, img) -> tuple[str, int | None]:
+        """Raw grounding text and generated token count for one rendered page image."""
         model, processor, (generate, prompt) = self._load()
         r = generate(model, processor, prompt, image=[img], max_tokens=self.max_tokens,
                      temperature=0.0, verbose=False)
         raw = r.text if hasattr(r, "text") else str(r)
+        tokens = getattr(r, "generation_tokens", None)
+        return raw, tokens if isinstance(tokens, int) else None
+
+    def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
+        img = _need_image(image)
+        raw, _tokens = self.recognize(img)
         return parse_lighton_grounding(raw, ref)
 
 
