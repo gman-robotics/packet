@@ -264,17 +264,20 @@ def _cmd_eval(args) -> int:
     min_f1 = floors[0] if args.min_f1 is None else args.min_f1
     min_macro = floors[1] if args.min_macro_f1 is None else args.min_macro_f1
     politax_census = None
+    politax_holdout_baseline = None
     if args.set == "dlnet-whole":
         data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_WHOLEDOC_CACHE
         results = ev.run_dlnet_whole(data, root)
     elif args.set == "politax":
         from packet.eval import politax
+        from packet.eval.politax_split import compute_holdout_baseline
 
         data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_POLITAX_CACHE
         m, fixtures = ev.prepare_politax(data)
         subjects = {d.file_name: d.subject for d in m.docs}
         politax_census = politax.text_layer_census(fixtures, subjects=subjects)
         results = [ev.run_fixture(fx) for fx in fixtures]
+        politax_holdout_baseline = compute_holdout_baseline(m, fixtures, results)
     else:
         results = ev.run_named_fixtures(root)
     gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=min_macro)
@@ -299,6 +302,10 @@ def _cmd_eval(args) -> int:
             payload["micro_boundary_f1"] = mf
             if politax_census is not None:
                 payload["text_layer_census"] = politax_census
+            if politax_holdout_baseline is not None:
+                from packet.eval.politax_split import holdout_baseline_as_dict
+
+                payload["holdout_baseline"] = holdout_baseline_as_dict(politax_holdout_baseline)
         print(json.dumps(payload, indent=2))
         return 0 if gate.passed else 1
     print(f"{'fixture':16} {'cond':14} pages gold pred   P     R    F1  ocr  gate")
@@ -315,7 +322,11 @@ def _cmd_eval(args) -> int:
 
         print(politax.format_census(politax_census))
         mp, mr, mf = micro_boundary_prf(results)
-        print(f"micro boundary P {mp:.2f} R {mr:.2f} F1 {mf:.2f}")
+        print(f"micro boundary P {mp:.2f} R {mr:.2f} F1 {mf:.2f} (all {len(results)} packets)")
+        if politax_holdout_baseline is not None:
+            from packet.eval.politax_split import format_holdout_baseline
+
+            print(format_holdout_baseline(politax_holdout_baseline))
     print(f"macro F1 {gate.macro_f1:.2f} (min {gate.min_macro_f1:.2f}; per-fixture min {min_f1:.2f})")
     if gate.passed:
         print("GATE PASS")

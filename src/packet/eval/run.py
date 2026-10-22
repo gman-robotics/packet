@@ -15,6 +15,7 @@ DEFAULT_MIN_F1 = 1.0
 SET_FLOORS = {
     "builtin": (DEFAULT_MIN_F1, None),
     "dlnet-whole": (0.0, 0.6),
+    # Report-only until Tom confirms Q7 proposed macro (see politax_split.compute_holdout_baseline).
     "politax": (0.0, 0.0),
 }
 DEFAULT_WHOLEDOC_CACHE = Path.home() / ".cache" / "packet" / "dlnet-whole"

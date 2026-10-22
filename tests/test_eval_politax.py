@@ -20,14 +20,18 @@ def test_manifest_lists_https_urls_and_pins_every_pdf():
     assert len(m.annotations.sha256) == 64 and m.annotations.url.startswith("https://")
 
 
-def _fake_manifest(tmp: Path, n_docs: int = 2) -> politax.Manifest:
+def _fake_manifest(
+    tmp: Path, n_docs: int = 2, *, subjects: list[str] | None = None
+) -> politax.Manifest:
+    if subjects is None:
+        subjects = ["trump"] * n_docs
     docs = []
     for i in range(n_docs):
         pages = 2 + i
         p = write_text_pdf(tmp / f"p{i}.pdf", [[f"p{i} pg{k}"] for k in range(pages)])
         docs.append(
             politax.PoliTaxDoc(
-                "trump",
+                subjects[i],
                 p.name,
                 p.name,
                 f"https://example.invalid/{p.name}",
@@ -135,7 +139,7 @@ def test_build_fixtures_pairs_pdf_with_gold(tmp_path):
 def test_cli_eval_politax_is_report_only(tmp_path, monkeypatch, capsys):
     from packet import cli
 
-    m = _fake_manifest(tmp_path, 2)
+    m = _fake_manifest(tmp_path, 2, subjects=["trump", "obama"])
     ann_path = _write_ann(tmp_path, m)
     cache = tmp_path / "cache"
     cache.mkdir()

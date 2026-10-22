@@ -48,6 +48,13 @@ is one fixture; gold sub-documents come from the pinned CC0
 (0.0 per fixture and macro). The CLI prints macro F1, micro boundary P/R/F1,
 and a text-layer census (pages with at least 40 native characters).
 
+**PoliTax train/holdout** (GMA-274): train = ``trump`` whole PDFs; holdout =
+``obama``, ``harris``, and ``biden`` whole PDFs (frozen in
+``packet.eval.politax_split``). ``packet eval --set politax`` prints the
+holdout heuristic baseline (macro and micro boundary F1) and a **proposed**
+macro floor (heuristic holdout macro truncated to two decimals). Floors stay
+``0.0`` until Tom confirms Q7.
+
 **What the eval pipeline runs.** `packet eval` uses `Pipeline()` with its
 default extractor, `NativeTextExtractor`, so it reads text layers (with the
 layout signals: titles, headings and band lines from font size, weight and
