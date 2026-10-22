@@ -65,6 +65,17 @@ Train/holdout (GMA-274): train = 23 ``trump`` PDFs; holdout = 4 Obama, 2 Harris,
 proposed macro floor (truncated to two decimals); gates stay report-only until Tom
 confirms.
 
+Train trump-only logistic weights (GMA-288):
+
+```bash
+packet politax-train-weights -o /tmp/politax-weights.json --data-dir ~/.cache/packet/politax
+packet eval --set politax --boundary-weights /tmp/politax-weights.json   # holdout heuristic + scorer
+packet eval --set builtin --boundary-weights /tmp/politax-weights.json
+```
+
+Weights are opt-in (`PipelineConfig.scorer` default stays `None`). Do not commit large
+weight blobs unless shipping passes the default-on bar (C5).
+
 Licenses: DocLayNet labels are
 CDLA-Permissive-1.0; each PDF stays under its arXiv license (recorded per doc
 in the manifest; all are arXiv nonexclusive-distrib 1.0), which is why the
