@@ -135,6 +135,27 @@ def main(argv: list[str] | None = None) -> int:
                       help="fetch PDFs, print selected/cached/pending pages; no model load")
     mode.add_argument("--report", action="store_true",
                       help="read-only totals for the PR (pages, engine, wall time)")
+    ps = sub.add_parser(
+        "politax-ship-check",
+        help="run PoliTax default-on ship gate (GMA-291); does not change defaults",
+    )
+    ps.add_argument(
+        "--weights",
+        default=None,
+        help="existing JSON weights; if omitted, trains trump weights to --train-output",
+    )
+    ps.add_argument(
+        "--train-output",
+        default=None,
+        help="path to write freshly trained weights when --weights is omitted",
+    )
+    ps.add_argument("--data-dir", default=None, help="PoliTax cache (default ~/.cache/packet/politax)")
+    ps.add_argument(
+        "--dlnet-cache",
+        default=None,
+        help="dlnet-whole cache for item 4 (default ~/.cache/packet/dlnet-whole)",
+    )
+    ps.add_argument("--json", action="store_true")
 
     plan = sub.add_parser("eval-plan", help="plan DocLayNet synthetic packets from a catalog")
     plan.add_argument("--catalog", required=True)
@@ -151,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_politax_train_weights(args)
     if args.cmd == "politax-ocr":
         return _cmd_politax_ocr(args)
+    if args.cmd == "politax-ship-check":
+        return _cmd_politax_ship_check(args)
     if args.cmd == "eval-plan":
         return _cmd_eval_plan(args)
 
@@ -310,6 +333,28 @@ def _pipeline_for_boundary_weights(path: str | None) -> Pipeline | None:
         print(f"packet: {exc}", file=sys.stderr)
         return None
     return Pipeline(config=PipelineConfig(scorer=scorer))
+
+
+def _cmd_politax_ship_check(args) -> int:
+    from packet.eval.politax_ship import evaluate_politax_ship, train_and_evaluate_ship
+    from packet.eval.run import DEFAULT_POLITAX_CACHE, DEFAULT_WHOLEDOC_CACHE
+
+    politax = Path(args.data_dir) if args.data_dir else DEFAULT_POLITAX_CACHE
+    dlnet = Path(args.dlnet_cache) if args.dlnet_cache else DEFAULT_WHOLEDOC_CACHE
+    if args.weights:
+        report = evaluate_politax_ship(Path(args.weights), politax, dlnet)
+    else:
+        out = Path(args.train_output or "/tmp/packet-politax-ship-weights.json")
+        report = train_and_evaluate_ship(politax, out, dlnet)
+    if args.json:
+        print(json.dumps(report.as_dict(), indent=2))
+    else:
+        print(f"ship={'pass' if report.ship else 'FAIL'} outcome ({report.outcome})")
+        for item in report.items:
+            mark = "PASS" if item.passed else "FAIL"
+            print(f"  {item.number}. [{mark}] {item.title}: {item.detail}")
+        print(f"max holdout model p={report.max_holdout_model_p:.4f}")
+    return 0
 
 
 def _cmd_politax_train_weights(args) -> int:
