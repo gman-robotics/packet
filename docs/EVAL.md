@@ -237,3 +237,21 @@ output, not a fixture source, and is gitignored.
 Next: add `dirty-scan` and `handwriting` variants of `scan` that run with
 OCR enabled. The OCR backends exist now, so these fixtures would have
 output to score.
+
+## PoliTax OCR cache (optional, outside the gate; GMA-275)
+
+`packet politax-ocr` writes raw LightOnOCR-3-1B grounding text (MLX, Apple silicon,
+`pip install -e '.[ocr-mlx]'`) for every PoliTax page whose stripped native text is
+under 40 characters (the section 5 / census threshold). Layout, beside the PDFs:
+
+    <data-dir>/ocr/<pdf_sha256>/p00000.json   # 0-based page; sha256 from the manifest pin
+    <data-dir>/ocr/_runs/<utc>-<pid>.json     # one log per invocation
+
+- Resumable and idempotent per page: atomic temp+fsync+rename writes; a rerun skips any
+  record whose engine id (model, revision, mode, max_tokens, render_px) matches. A change
+  to any of those redoes the page. Truncated generations are recorded, not redone.
+- `--dry-run` fetches (sha256-checked) and prints selected/cached/pending counts without
+  loading a model. `--report` prints page count, engine and summed wall time for the PR.
+- `--data-dir` inside the repo exits 2. Nothing is committed.
+- `packet eval` (every set) and CI never read this cache or import OCR extras;
+  `tests/test_politax_ocr_guard.py` enforces that in a no-extras subprocess.

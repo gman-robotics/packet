@@ -118,6 +118,24 @@ def main(argv: list[str] | None = None) -> int:
         help="write exported JSON weights (not committed by default)",
     )
 
+    po = sub.add_parser(
+        "politax-ocr",
+        help="optional OCR text cache for PoliTax scan pages (LightOn MLX; outside eval/CI)",
+    )
+    po.add_argument("--data-dir", default=None,
+                    help="PoliTax download cache (default ~/.cache/packet/politax)")
+    po.add_argument("--subject", default=None, help="only this manifest subject")
+    po.add_argument("--file", default=None, help="only this PDF (manifest file or file_name)")
+    po.add_argument("--limit-pages", type=int, default=None,
+                    help="stop after this many engine calls (cached pages do not count)")
+    po.add_argument("--max-tokens", type=int, default=4096)
+    po.add_argument("--render-px", type=int, default=1540)
+    mode = po.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true",
+                      help="fetch PDFs, print selected/cached/pending pages; no model load")
+    mode.add_argument("--report", action="store_true",
+                      help="read-only totals for the PR (pages, engine, wall time)")
+
     plan = sub.add_parser("eval-plan", help="plan DocLayNet synthetic packets from a catalog")
     plan.add_argument("--catalog", required=True)
     plan.add_argument("--slice", default="poly-seq")
@@ -131,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_eval(args)
     if args.cmd == "politax-train-weights":
         return _cmd_politax_train_weights(args)
+    if args.cmd == "politax-ocr":
+        return _cmd_politax_ocr(args)
     if args.cmd == "eval-plan":
         return _cmd_eval_plan(args)
 
@@ -304,6 +324,78 @@ def _cmd_politax_train_weights(args) -> int:
         f"{len(rows.X)} training pages, {sum(rows.y)} gold cuts)"
     )
     return 0
+
+
+def _cmd_politax_ocr(args) -> int:
+    import importlib.metadata
+    import importlib.util
+
+    from packet.backends import LightOnExtractor
+    from packet.eval import politax
+    from packet.eval import politax_ocr as po
+    from packet.eval.run import DEFAULT_POLITAX_CACHE
+
+    data = (Path(args.data_dir) if args.data_dir else DEFAULT_POLITAX_CACHE).expanduser()
+    repo = Path(__file__).resolve().parents[2]
+    if data.resolve().is_relative_to(repo):
+        print(f"packet: --data-dir {data} is inside the repo checkout; use a path outside git",
+              file=sys.stderr)
+        return 2
+    if args.limit_pages is not None and args.limit_pages < 0:
+        print("packet: --limit-pages must be >= 0", file=sys.stderr)
+        return 2
+    engine = po.EngineId("lighton-mlx", LightOnExtractor.model, LightOnExtractor.revision,
+                         LightOnExtractor.mode, args.max_tokens, args.render_px)
+    if args.report:
+        rep = po.report(data, engine)
+        print(json.dumps(rep, indent=2))
+        print(po.format_report(rep))
+        return 0
+    m = politax.load_manifest()
+    politax.fetch(m, cache=data)
+    plans, native = po.plan_pages(m.docs, data, subject=args.subject, file=args.file)
+    states = po.classify(plans, data, engine)
+    print(f"selected {len(plans)} pages (<{po.OCR_MIN_NATIVE_CHARS} native chars), "
+          f"native-text skipped {native}; cached {states['cached']} stale {states['stale']} "
+          f"corrupt {states['corrupt']} pending {states['pending']}")
+    if args.dry_run:
+        return 0
+    if importlib.util.find_spec("mlx_vlm") is None:
+        _fail_ocr_config(OcrConfigError("politax-ocr needs mlx-vlm", pip_extra="ocr-mlx"))
+    from packet.source import PdfPageSource
+
+    ext = LightOnExtractor(max_tokens=args.max_tokens)
+    sources: dict[str, PdfPageSource] = {}
+
+    def recognize(plan):
+        src = sources.get(plan.file)
+        if src is None:
+            for old in sources.values():
+                old.close()
+            sources.clear()
+            src = sources[plan.file] = PdfPageSource(data / plan.file)
+        return ext.recognize(src.render(plan.index, longest_px=engine.render_px))
+
+    versions = {"packet": _version_or_dash(importlib.metadata, _DISTRIBUTION),
+                "mlx_vlm": _version_or_dash(importlib.metadata, "mlx-vlm")}
+    try:
+        s = po.run(plans, recognize, data, engine, limit=args.limit_pages, versions=versions)
+    except Exception as exc:  # noqa: BLE001 - any engine failure exits 1; log is kept
+        print(f"packet: politax-ocr engine error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        for src in sources.values():
+            src.close()
+    print(f"ocr_done {s.ocr_done} redone {s.redone} skipped_cached {s.skipped_cached} "
+          f"truncated {s.truncated} wall_s {s.wall_s} gen_s {s.gen_s}")
+    return 0
+
+
+def _version_or_dash(md, dist: str) -> str:
+    try:
+        return md.version(dist)
+    except md.PackageNotFoundError:
+        return "-"
 
 
 def _cmd_eval(args) -> int:
