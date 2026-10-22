@@ -60,6 +60,11 @@ by HTTPS URL and sha256. The first run downloads them (~711 MB) to
 ``~/.cache/packet/politax``. Labels are CC0 1.0; PDFs are described as U.S.
 government public-domain works in the dataset README.
 
+Train/holdout (GMA-274): train = 23 ``trump`` PDFs; holdout = 4 Obama, 2 Harris,
+1 Biden (whole files only). The CLI prints holdout heuristic macro/micro F1 and a
+proposed macro floor (truncated to two decimals); gates stay report-only until Tom
+confirms.
+
 Licenses: DocLayNet labels are
 CDLA-Permissive-1.0; each PDF stays under its arXiv license (recorded per doc
 in the manifest; all are arXiv nonexclusive-distrib 1.0), which is why the
