@@ -78,11 +78,18 @@ def main(argv: list[str] | None = None) -> int:
     ev = sub.add_parser("eval", help="run built-in packet fixtures")
     ev.add_argument("--json", action="store_true")
     ev.add_argument("--dir", default=None, help="cache dir for generated PDFs")
-    ev.add_argument("--set", default="builtin", choices=["builtin", "dlnet-whole"],
-                    help="builtin fixtures (default) or packet-dlnet-whole: whole public PDFs "
-                         "named by DocLayNet, downloaded to --data-dir and joined into packets")
-    ev.add_argument("--data-dir", default=None,
-                    help="download cache for --set dlnet-whole (default ~/.cache/packet/dlnet-whole)")
+    ev.add_argument(
+        "--set",
+        default="builtin",
+        choices=["builtin", "dlnet-whole", "politax"],
+        help="builtin fixtures (default), packet-dlnet-whole, or packet-politax (PoliTax-Split)",
+    )
+    ev.add_argument(
+        "--data-dir",
+        default=None,
+        help="download cache for --set dlnet-whole (default ~/.cache/packet/dlnet-whole) "
+        "or politax (default ~/.cache/packet/politax)",
+    )
     ev.add_argument("--min-f1", type=_unit_interval, default=None,
                     help="per-fixture boundary F1 floor in [0,1] (tolerance 0); default 1.0, "
                          "which suits the deterministic built-in fixtures; lower it for "
@@ -256,19 +263,43 @@ def _cmd_eval(args) -> int:
     floors = ev.SET_FLOORS[args.set]
     min_f1 = floors[0] if args.min_f1 is None else args.min_f1
     min_macro = floors[1] if args.min_macro_f1 is None else args.min_macro_f1
+    politax_census = None
     if args.set == "dlnet-whole":
         data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_WHOLEDOC_CACHE
         results = ev.run_dlnet_whole(data, root)
+    elif args.set == "politax":
+        from packet.eval import politax
+
+        data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_POLITAX_CACHE
+        m, fixtures = ev.prepare_politax(data)
+        subjects = {d.file_name: d.subject for d in m.docs}
+        politax_census = politax.text_layer_census(fixtures, subjects=subjects)
+        results = [ev.run_fixture(fx) for fx in fixtures]
     else:
         results = ev.run_named_fixtures(root)
     gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=min_macro)
     if args.json:
-        print(json.dumps({
+        payload = {
             "set": args.set,
             "fixtures": ev.results_as_dict(results, min_f1),
-            "gate": {"passed": gate.passed, "failures": gate.failures, "macro_f1": gate.macro_f1,
-                     "min_f1": gate.min_f1, "min_macro_f1": gate.min_macro_f1},
-        }, indent=2))
+            "gate": {
+                "passed": gate.passed,
+                "failures": gate.failures,
+                "macro_f1": gate.macro_f1,
+                "min_f1": gate.min_f1,
+                "min_macro_f1": gate.min_macro_f1,
+            },
+        }
+        if args.set == "politax":
+            from packet.eval.metrics import micro_boundary_prf
+
+            mp, mr, mf = micro_boundary_prf(results)
+            payload["micro_boundary_p"] = mp
+            payload["micro_boundary_r"] = mr
+            payload["micro_boundary_f1"] = mf
+            if politax_census is not None:
+                payload["text_layer_census"] = politax_census
+        print(json.dumps(payload, indent=2))
         return 0 if gate.passed else 1
     print(f"{'fixture':16} {'cond':14} pages gold pred   P     R    F1  ocr  gate")
     for r in results:
@@ -278,6 +309,13 @@ def _cmd_eval(args) -> int:
             f"{r.boundary.precision:5.2f} {r.boundary.recall:5.2f} {r.boundary.f1:5.2f} "
             f"{len(r.false_ocr_pages):4}  {mark}"
         )
+    if politax_census is not None:
+        from packet.eval import politax
+        from packet.eval.metrics import micro_boundary_prf
+
+        print(politax.format_census(politax_census))
+        mp, mr, mf = micro_boundary_prf(results)
+        print(f"micro boundary P {mp:.2f} R {mr:.2f} F1 {mf:.2f}")
     print(f"macro F1 {gate.macro_f1:.2f} (min {gate.min_macro_f1:.2f}; per-fixture min {min_f1:.2f})")
     if gate.passed:
         print("GATE PASS")

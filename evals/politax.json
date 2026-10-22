@@ -1,0 +1,314 @@
+{
+ "name": "packet-politax",
+ "version": 1,
+ "source": "Extend-AI/PoliTax-Split on Hugging Face",
+ "license_note": "Annotations CC0 1.0. PDFs described as U.S. government public-domain works. Downloaded at eval time; never committed.",
+ "annotations": {
+  "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/annotations.jsonl",
+  "file": "annotations.jsonl",
+  "sha256": "4d937ed6de18f17bc18295ed2e2fe152d82fab85b724d03c47db2425eea1ae73",
+  "license": "CC0-1.0"
+ },
+ "docs": [
+  {
+   "subject": "biden",
+   "file_name": "biden_2018_federal_returns_tn.pdf",
+   "file": "biden_2018_federal_returns_tn.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/biden/biden_2018_federal_returns_tn.pdf",
+   "pages": 75,
+   "gold_cuts": 36,
+   "sha256": "0d1aa71b5bddd5db2bf7b7a1ffdabd963ff2c1bd9fc652517315eda58ccf6bc8",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "harris",
+   "file_name": "harris_2020_federal_state_returns.pdf",
+   "file": "harris_2020_federal_state_returns.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/harris/harris_2020_federal_state_returns.pdf",
+   "pages": 100,
+   "gold_cuts": 59,
+   "sha256": "61c85e38db39a8792559b2a7abdd30ad47aa0eca98c1ac62e0caf4c3a4a60f27",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "harris",
+   "file_name": "harris_2023_federal_state_returns.pdf",
+   "file": "harris_2023_federal_state_returns.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/harris/harris_2023_federal_state_returns.pdf",
+   "pages": 40,
+   "gold_cuts": 19,
+   "sha256": "5e0a3bd60f2272116d83b9c43718bf7578f5f8f7b76b977f9f5f6710690a7aed",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "obama",
+   "file_name": "obama_2009_complete_return.pdf",
+   "file": "obama_2009_complete_return.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/obama/obama_2009_complete_return.pdf",
+   "pages": 59,
+   "gold_cuts": 22,
+   "sha256": "800232a6007ad3c93f5ff1662f73d9f5f61f39f794ad4c7c86abcf7bc014d477",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "obama",
+   "file_name": "obama_2010_complete_return.pdf",
+   "file": "obama_2010_complete_return.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/obama/obama_2010_complete_return.pdf",
+   "pages": 65,
+   "gold_cuts": 33,
+   "sha256": "6cdc87f32fbf178824ad9085f70a1c3ab18339e3276a0d936ac4a05101fe2b10",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "obama",
+   "file_name": "obama_2011_complete_return.pdf",
+   "file": "obama_2011_complete_return.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/obama/obama_2011_complete_return.pdf",
+   "pages": 48,
+   "gold_cuts": 20,
+   "sha256": "2d424d8e53630fd3930e868ab68cd3685a12f80e6b8164a79a7bbfc3639903cb",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "obama",
+   "file_name": "obama_2013_complete_return.pdf",
+   "file": "obama_2013_complete_return.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/obama/obama_2013_complete_return.pdf",
+   "pages": 42,
+   "gold_cuts": 20,
+   "sha256": "a08dd8ae8c101ab9f1425e4d2fd467c3018fee1611cae10e5833d0c830ea728f",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2015_DJT Holdings 2015.pdf",
+   "file": "trump_business_2015_DJT Holdings 2015.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2015_DJT%20Holdings%202015.pdf",
+   "pages": 88,
+   "gold_cuts": 48,
+   "sha256": "ade25fbc1e46a1b113e0595aa075135de1e307fa2c86feacb31a0ba3af8caf1a",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2015_DJT Holdings Managing Member LLC 2015.pdf",
+   "file": "trump_business_2015_DJT Holdings Managing Member LLC 2015.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2015_DJT%20Holdings%20Managing%20Member%20LLC%202015.pdf",
+   "pages": 62,
+   "gold_cuts": 29,
+   "sha256": "8c5fc16ea887b08b1574bf00abbd77b71aa01a563288a8d7a1735384890e02b5",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2015_LFB Acquisition LLC 2015.pdf",
+   "file": "trump_business_2015_LFB Acquisition LLC 2015.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2015_LFB%20Acquisition%20LLC%202015.pdf",
+   "pages": 42,
+   "gold_cuts": 22,
+   "sha256": "ffcfd2d8704a3d11cea0db7e2672eccef1a5e88a97cd39f1fcce562567d5ee12",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2016_DJT Holdings 2016.pdf",
+   "file": "trump_business_2016_DJT Holdings 2016.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2016_DJT%20Holdings%202016.pdf",
+   "pages": 84,
+   "gold_cuts": 47,
+   "sha256": "c0aff6d644de6ac85279fc820840d461d3bb249a2063145b6d45d1051e15a807",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2016_DJT Holdings Managing Member LLC 2016.pdf",
+   "file": "trump_business_2016_DJT Holdings Managing Member LLC 2016.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2016_DJT%20Holdings%20Managing%20Member%20LLC%202016.pdf",
+   "pages": 48,
+   "gold_cuts": 13,
+   "sha256": "e5825292408ab57b35de61ef055653c544e4d3deb1d6eec025ccb0db6f0e60d7",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2016_LFB Acquisition LLC 2016.pdf",
+   "file": "trump_business_2016_LFB Acquisition LLC 2016.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2016_LFB%20Acquisition%20LLC%202016.pdf",
+   "pages": 48,
+   "gold_cuts": 31,
+   "sha256": "31163a0d87a220ffd327add40a979489987a8bf6cf78ac07d4584a797e083757",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2017_DJT Holdings 2017.pdf",
+   "file": "trump_business_2017_DJT Holdings 2017.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2017_DJT%20Holdings%202017.pdf",
+   "pages": 162,
+   "gold_cuts": 64,
+   "sha256": "bb4d74e4ad2eb75f9ae0c15902dd7582be9873e9ddcd63afb946432fe1e897ec",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2017_LFB Acquisition LLC 2017.pdf",
+   "file": "trump_business_2017_LFB Acquisition LLC 2017.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2017_LFB%20Acquisition%20LLC%202017.pdf",
+   "pages": 46,
+   "gold_cuts": 27,
+   "sha256": "2886e93cee90394ca52d21cdc7b92f5ba7fefd5c98854818655f092c67cbc006",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2018_DTTM Operations 2018.pdf",
+   "file": "trump_business_2018_DTTM Operations 2018.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2018_DTTM%20Operations%202018.pdf",
+   "pages": 130,
+   "gold_cuts": 21,
+   "sha256": "189fa0725ccb9d0f1c155169cd76847e78f664080e8faa48bae335e6f0e84f46",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2018_LFB Acquisition LLC 2018.pdf",
+   "file": "trump_business_2018_LFB Acquisition LLC 2018.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2018_LFB%20Acquisition%20LLC%202018.pdf",
+   "pages": 56,
+   "gold_cuts": 27,
+   "sha256": "f37838df4ac8e67767fc9df4a5fe16b187b03577dd0735934aa73b0db37c1d1f",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2019_DJT Holdings Managing Member LLC 2019 - 2.pdf",
+   "file": "trump_business_2019_DJT Holdings Managing Member LLC 2019 - 2.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2019_DJT%20Holdings%20Managing%20Member%20LLC%202019%20-%202.pdf",
+   "pages": 192,
+   "gold_cuts": 96,
+   "sha256": "f750cd6a4da263f1a045f994e897640f60bc9431d1b8cbf7c8f4d5a2a5b5cda6",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2019_DTTM Operations 2019.pdf",
+   "file": "trump_business_2019_DTTM Operations 2019.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2019_DTTM%20Operations%202019.pdf",
+   "pages": 166,
+   "gold_cuts": 33,
+   "sha256": "bac1682cb83c1b0fea60c14e781b1a379ea462cf126004b7fcbf0e413d53c7c2",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2020_DJT Holdings 2020.pdf",
+   "file": "trump_business_2020_DJT Holdings 2020.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2020_DJT%20Holdings%202020.pdf",
+   "pages": 236,
+   "gold_cuts": 71,
+   "sha256": "df16eddfc3038ddaeb89ec8d799666cd2954a668ef6fafc91255291db82106c2",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2020_DJT Holdings Managing Member LLC 2020 - 1.pdf",
+   "file": "trump_business_2020_DJT Holdings Managing Member LLC 2020 - 1.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2020_DJT%20Holdings%20Managing%20Member%20LLC%202020%20-%201.pdf",
+   "pages": 240,
+   "gold_cuts": 57,
+   "sha256": "fdcaf97cd46af803da3197f6682291c7c75976513b91e2d1c3fbe6d063509fdf",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2020_DTTM Operations 2020.pdf",
+   "file": "trump_business_2020_DTTM Operations 2020.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2020_DTTM%20Operations%202020.pdf",
+   "pages": 160,
+   "gold_cuts": 33,
+   "sha256": "fcb882cba68974baec5b47373f766cb867e533bb0ddbaa87832806f817586403",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_business_2020_LFB Acquisition LLC 2020.pdf",
+   "file": "trump_business_2020_LFB Acquisition LLC 2020.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_business_2020_LFB%20Acquisition%20LLC%202020.pdf",
+   "pages": 60,
+   "gold_cuts": 30,
+   "sha256": "10ad03a8651324fa423837edea007fb6e2ea7b0d9009bfb1d022215859ca1829",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_individual_2015_Form 1040 2015-1.pdf",
+   "file": "trump_individual_2015_Form 1040 2015-1.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_individual_2015_Form%201040%202015-1.pdf",
+   "pages": 128,
+   "gold_cuts": 95,
+   "sha256": "67c56a787e405f9e4396562c10e4f0d2d722333dc419b6bb6554c9de762fb850",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_individual_2015_amt_Form 1040 2015-3.pdf",
+   "file": "trump_individual_2015_amt_Form 1040 2015-3.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_individual_2015_amt_Form%201040%202015-3.pdf",
+   "pages": 204,
+   "gold_cuts": 17,
+   "sha256": "5ec75c97a6e89872abed35e2786678013c3a3e63832b8a14c7f501b8695116f4",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_individual_2016_Form 1040 2016-2.pdf",
+   "file": "trump_individual_2016_Form 1040 2016-2.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_individual_2016_Form%201040%202016-2.pdf",
+   "pages": 139,
+   "gold_cuts": 4,
+   "sha256": "73d4530a5e3127df75f0ae52302956976a425a001ee9820eef037ed47a85d0d7",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_individual_2017_Form 1040 2017-1.pdf",
+   "file": "trump_individual_2017_Form 1040 2017-1.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_individual_2017_Form%201040%202017-1.pdf",
+   "pages": 284,
+   "gold_cuts": 96,
+   "sha256": "4335ab01a46b566c018521f1c392e9ff6ba13947cb1cb1209107afacdb1738e5",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_individual_2018_Form 1040 2018-2.pdf",
+   "file": "trump_individual_2018_Form 1040 2018-2.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_individual_2018_Form%201040%202018-2.pdf",
+   "pages": 133,
+   "gold_cuts": 38,
+   "sha256": "4bc95799ee20376a07d2a75f0cd05e3a7f9a385bce9d0cdd32f845b3c90ddc1c",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_individual_2019_Form 1040 2019-3.pdf",
+   "file": "trump_individual_2019_Form 1040 2019-3.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_individual_2019_Form%201040%202019-3.pdf",
+   "pages": 70,
+   "gold_cuts": 13,
+   "sha256": "02fc4386bdff03569a13893c35c3f4b01a1a87ab7520206c158e2cc97ad83f59",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  },
+  {
+   "subject": "trump",
+   "file_name": "trump_individual_2020_Form 1040 2020-2.pdf",
+   "file": "trump_individual_2020_Form 1040 2020-2.pdf",
+   "url": "https://huggingface.co/datasets/Extend-AI/PoliTax-Split/resolve/main/pdfs/trump/trump_individual_2020_Form%201040%202020-2.pdf",
+   "pages": 104,
+   "gold_cuts": 31,
+   "sha256": "1f9a0004ca3fdecdd543c6f05f04737bd2574fa7e8d991428727586c8e4b17a1",
+   "license": "U.S. government public-domain work (per PoliTax-Split README)"
+  }
+ ]
+}

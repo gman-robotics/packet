@@ -11,6 +11,7 @@ and can plan DocLayNet concatenations from a local catalog.
 | develop | DocLayNet train/val pages | layout F1 (internal) | yes (train only) |
 | synth packets | concatenate DocLayNet **documents** from val | `packet-dlnet-synth` | no |
 | whole-doc packets | whole public PDFs named by DocLayNet, joined | `packet-dlnet-whole` | no |
+| PoliTax-Split | Extend-AI/PoliTax-Split whole PDFs + CC0 labels | `packet-politax` | no (report-only) |
 | frozen | OmniDocBench, olmOCR-bench | public parse scores | **never** |
 
 ## Commands
@@ -45,7 +46,21 @@ document names (from the DocLayNet-small sample) to the whole arXiv PDF whose
 page count equals DocLayNet's `num_pages`, pinned by URL and sha256. The first
 run downloads them (35 PDFs, ~20 MB) to `~/.cache/packet/dlnet-whole`; the
 packets are then joined with a seeded plan (13 packets, 2-4 docs each).
-Nothing third-party is committed. Licenses: DocLayNet labels are
+Nothing third-party is committed.
+
+PoliTax-Split (`packet-politax`, GMA-270):
+
+```bash
+packet eval --set politax                     # report-only: floors 0.0; macro + micro P/R/F1
+packet eval --set politax --data-dir ~/.cache/packet/politax --json
+```
+
+``evals/politax.json`` pins 30 public-domain tax PDFs and ``annotations.jsonl``
+by HTTPS URL and sha256. The first run downloads them (~711 MB) to
+``~/.cache/packet/politax``. Labels are CC0 1.0; PDFs are described as U.S.
+government public-domain works in the dataset README.
+
+Licenses: DocLayNet labels are
 CDLA-Permissive-1.0; each PDF stays under its arXiv license (recorded per doc
 in the manifest; all are arXiv nonexclusive-distrib 1.0), which is why the
 files are fetched, never vendored. Limitation: one category (scientific
