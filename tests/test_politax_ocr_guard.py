@@ -26,15 +26,19 @@ sys.path.insert(0, {src!r})
 BLOCKED = {blocked!r}
 attempts, opens = [], []
 import os
-OCR_ROOTS = (os.path.join({data!r}, "ocr"), os.path.join(os.path.realpath({data!r}), "ocr"))
+OCR_ROOTS = tuple({{os.path.join(os.path.realpath({data!r}), "ocr"),
+                    os.path.join(os.path.abspath({data!r}), "ocr")}})
+
+def is_blocked(name):
+    return name.startswith("paddle") or any(name == b or name.startswith(b + ".") for b in BLOCKED)
 
 def under_ocr(p):
-    p = os.path.abspath(p)
+    p = os.path.realpath(p)
     return any(p == r or p.startswith(r + os.sep) for r in OCR_ROOTS)
 
 class Recorder:
     def find_spec(self, name, path=None, target=None):
-        if any(name == b or name.startswith(b + ".") for b in BLOCKED):
+        if is_blocked(name):
             attempts.append(name)
             raise ImportError("blocked by guard: " + name)
         return None
@@ -42,16 +46,31 @@ class Recorder:
 sys.meta_path.insert(0, Recorder())
 
 def hook(event, args):
-    if event == "open" and args and isinstance(args[0], (str, bytes)):
-        p = args[0].decode() if isinstance(args[0], bytes) else args[0]
-        if under_ocr(p):
-            opens.append(p)
-    if event in ("os.listdir", "os.scandir") and args and args[0]:
-        p = os.fsdecode(args[0]) if not isinstance(args[0], int) else ""
-        if p and under_ocr(p):
-            opens.append(p)
+    if event not in ("open", "os.listdir", "os.scandir") or not args:
+        return
+    arg = args[0]
+    if arg is None or isinstance(arg, int):
+        return
+    try:
+        p = os.fsdecode(os.fspath(arg))
+    except TypeError:
+        return
+    if under_ocr(p):
+        opens.append(p)
 
 sys.addaudithook(hook)
+from pathlib import Path as _P
+try:
+    open(_P({data!r}) / "ocr" / "probe.json")
+except OSError:
+    pass
+try:
+    import mlx_vlm  # noqa: F401
+except ImportError:
+    pass
+self_check = {{"probe_open": any(p.endswith("probe.json") for p in opens),
+              "probe_import": "mlx_vlm" in attempts}}
+del opens[:], attempts[:]
 from pathlib import Path
 from packet.eval import politax
 politax.MANIFEST = Path({manifest!r})
@@ -60,8 +79,8 @@ import io, contextlib
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     rc = cli.main(["eval", "--set", "politax", "--data-dir", {data!r}, "--json"])
-loaded = [m for m in sys.modules if any(m == b or m.startswith(b + ".") for b in BLOCKED)]
-print(json.dumps({{"rc": rc, "attempts": attempts, "opens": opens, "loaded": loaded,
+loaded = [m for m in sys.modules if is_blocked(m)]
+print(json.dumps({{"self_check": self_check, "rc": rc, "attempts": attempts, "opens": opens, "loaded": loaded,
                   "out": buf.getvalue()}}))
 """
 
@@ -122,6 +141,7 @@ def test_eval_politax_never_reads_cache_or_tries_ocr_imports(tmp_path):
     finally:
         (data / "ocr" / "locked").chmod(0o700)
     for res in (clean, poisoned):
+        assert res["self_check"] == {"probe_open": True, "probe_import": True}
         assert res["rc"] == 0
         assert res["attempts"] == [], res["attempts"]
         assert res["loaded"] == []

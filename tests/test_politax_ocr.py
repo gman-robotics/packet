@@ -88,8 +88,11 @@ def test_run_writes_one_record_per_page_and_rerun_is_a_noop(corpus):
     assert rec["raw"].startswith("<raw") and rec["truncated"] is False
     mtimes = {f: f.stat().st_mtime_ns for f in files}
 
+    runs_dir = data / "ocr" / "_runs"
+    n_logs = len(list(runs_dir.glob("*.json")))
     fake2 = FakeRecognizer()
     s2 = po.run(plans, fake2, data, ENGINE)
+    assert len(list(runs_dir.glob("*.json"))) == n_logs + 1
     assert fake2.calls == [] and s2.ocr_done == 0 and s2.skipped_cached == 5
     assert {f: f.stat().st_mtime_ns for f in _page_files(data)} == mtimes
 
@@ -104,7 +107,7 @@ def test_record_path_is_sha_and_zero_based_page(corpus):
 
 @pytest.mark.parametrize(
     "field,value", [("revision", "rev2"), ("max_tokens", 2048), ("render_px", 1024),
-                    ("model", "m/y"), ("mode", "plain")],
+                    ("model", "m/y"), ("mode", "plain"), ("name", "other")],
 )
 def test_strict_stale_rule_redoes_pages(corpus, field, value):
     import dataclasses
@@ -237,3 +240,17 @@ def test_lighton_recognize_returns_raw_and_tokens_and_extract_is_unchanged():
                   has_text_ops=False)
     assert ext.extract(ref, "", image=lambda: object()) == parse_lighton_grounding(raw, ref)
     assert calls == [123, 123]
+
+
+def test_failed_first_engine_call_still_counts_in_wall_time(corpus):
+    import itertools
+
+    data, docs = corpus
+    plans, _ = po.plan_pages(docs, data)
+    ticks = itertools.count()
+    with pytest.raises(RuntimeError):
+        po.run(plans, FakeRecognizer(fail_at=0), data, ENGINE, clock=lambda: float(next(ticks)))
+    log = json.loads(next((data / "ocr" / "_runs").glob("*.json")).read_text())
+    assert log["engine_calls"] == 1 and log["ocr_done"] == 0
+    rep = po.report(data, ENGINE)
+    assert rep["runs"] == 1 and rep["wall_s_total"] > 0

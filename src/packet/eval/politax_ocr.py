@@ -58,6 +58,7 @@ class RunSummary:
     wall_s: float = 0.0
     gen_s: float = 0.0
     planned: int = 0
+    engine_calls: int = 0
     ocr_done: int = 0
     redone: int = 0
     skipped_cached: int = 0
@@ -181,9 +182,10 @@ def run(plans: list[PagePlan], recognize: Recognize, data_dir: Path, engine: Eng
             if state == "cached":
                 summary.skipped_cached += 1
                 continue
-            if limit is not None and summary.ocr_done + summary.redone >= limit:
+            if limit is not None and summary.engine_calls >= limit:
                 break
             t0 = clock()
+            summary.engine_calls += 1
             raw, tokens = recognize(plan)
             secs = clock() - t0
             truncated = tokens is not None and tokens >= engine.max_tokens
@@ -247,7 +249,7 @@ def report(data_dir: Path, engine: EngineId) -> dict:
                 log = json.loads(path.read_text())
             except (OSError, ValueError):
                 continue
-            if log.get("ocr_done", 0) + log.get("redone", 0) == 0:
+            if log.get("engine_calls", log.get("ocr_done", 0) + log.get("redone", 0)) <= 0:
                 continue
             runs += 1
             wall += log.get("wall_s", 0.0)
