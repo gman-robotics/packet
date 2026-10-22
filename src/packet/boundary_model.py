@@ -65,6 +65,9 @@ def train_logistic(
 ) -> Weights:
     """Deterministic batch gradient descent on standardized features, class-balanced
     (positives are rare), L2 on the coefficients."""
+    if not X:
+        k = len(FEATURE_NAMES)
+        return ([0.0] * k, [1.0] * k, [0.0] * k, 0.0)
     n, k = len(X), len(X[0])
     mean = [sum(r[j] for r in X) / n for j in range(k)]
     sd = [math.sqrt(sum((r[j] - mean[j]) ** 2 for r in X) / n) or 1.0 for j in range(k)]

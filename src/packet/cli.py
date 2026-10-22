@@ -96,6 +96,27 @@ def main(argv: list[str] | None = None) -> int:
                          "real-model or DocLayNet runs")
     ev.add_argument("--min-macro-f1", type=_unit_interval, default=None,
                     help="macro-average boundary F1 floor in [0,1]; default = --min-f1")
+    ev.add_argument(
+        "--boundary-weights",
+        default=None,
+        help="JSON logistic boundary weights for eval (optional; load errors exit 2)",
+    )
+
+    pt = sub.add_parser(
+        "politax-train-weights",
+        help="train schema-1 logistic weights on PoliTax trump PDFs only",
+    )
+    pt.add_argument(
+        "--data-dir",
+        default=None,
+        help="PoliTax download cache (default ~/.cache/packet/politax)",
+    )
+    pt.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        help="write exported JSON weights (not committed by default)",
+    )
 
     plan = sub.add_parser("eval-plan", help="plan DocLayNet synthetic packets from a catalog")
     plan.add_argument("--catalog", required=True)
@@ -108,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "eval":
         return _cmd_eval(args)
+    if args.cmd == "politax-train-weights":
+        return _cmd_politax_train_weights(args)
     if args.cmd == "eval-plan":
         return _cmd_eval_plan(args)
 
@@ -256,6 +279,33 @@ def _write_timing(path: str | None, row: dict, start: float, extractors) -> None
         fh.write(json.dumps(row) + "\n")
 
 
+def _pipeline_for_boundary_weights(path: str | None) -> Pipeline | None:
+    if not path:
+        return Pipeline()
+    from packet.boundary_model import BoundaryWeightsError, load_logistic_scorer
+
+    try:
+        scorer = load_logistic_scorer(Path(path))
+    except BoundaryWeightsError as exc:
+        print(f"packet: {exc}", file=sys.stderr)
+        return None
+    return Pipeline(config=PipelineConfig(scorer=scorer))
+
+
+def _cmd_politax_train_weights(args) -> int:
+    from packet.eval.politax_train import train_trump_logistic
+    from packet.eval.run import DEFAULT_POLITAX_CACHE
+
+    data = Path(args.data_dir) if args.data_dir else DEFAULT_POLITAX_CACHE
+    out = Path(args.output)
+    _, rows = train_trump_logistic(data, out)
+    print(
+        f"wrote {out} ({len(rows.training_packets)} trump PDFs, "
+        f"{len(rows.X)} training pages, {sum(rows.y)} gold cuts)"
+    )
+    return 0
+
+
 def _cmd_eval(args) -> int:
     from packet.eval import run as ev
 
@@ -265,21 +315,32 @@ def _cmd_eval(args) -> int:
     min_macro = floors[1] if args.min_macro_f1 is None else args.min_macro_f1
     politax_census = None
     politax_holdout_baseline = None
+    politax_holdout_scorer = None
+    pipe = _pipeline_for_boundary_weights(args.boundary_weights)
+    if pipe is None:
+        return 2
     if args.set == "dlnet-whole":
         data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_WHOLEDOC_CACHE
-        results = ev.run_dlnet_whole(data, root)
+        results = ev.run_dlnet_whole(data, root, pipeline=pipe)
     elif args.set == "politax":
         from packet.eval import politax
         from packet.eval.politax_split import compute_holdout_baseline
+        from packet.eval.politax_train import holdout_scorecard
 
         data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_POLITAX_CACHE
         m, fixtures = ev.prepare_politax(data)
         subjects = {d.file_name: d.subject for d in m.docs}
         politax_census = politax.text_layer_census(fixtures, subjects=subjects)
-        results = [ev.run_fixture(fx) for fx in fixtures]
-        politax_holdout_baseline = compute_holdout_baseline(m, fixtures, results)
+        heur_pipe = Pipeline() if args.boundary_weights else pipe
+        results_heur = [ev.run_fixture(fx, heur_pipe) for fx in fixtures]
+        politax_holdout_baseline = compute_holdout_baseline(m, fixtures, results_heur)
+        if args.boundary_weights:
+            results = [ev.run_fixture(fx, pipe) for fx in fixtures]
+            politax_holdout_scorer = holdout_scorecard(m, fixtures, results)
+        else:
+            results = results_heur
     else:
-        results = ev.run_named_fixtures(root)
+        results = ev.run_named_fixtures(root, pipeline=pipe)
     gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=min_macro)
     if args.json:
         payload = {
@@ -305,7 +366,15 @@ def _cmd_eval(args) -> int:
             if politax_holdout_baseline is not None:
                 from packet.eval.politax_split import holdout_baseline_as_dict
 
-                payload["holdout_baseline"] = holdout_baseline_as_dict(politax_holdout_baseline)
+                payload["holdout_heuristic"] = holdout_baseline_as_dict(politax_holdout_baseline)
+            if politax_holdout_scorer is not None:
+                payload["holdout_scorer"] = {
+                    "macro_f1": politax_holdout_scorer.macro_f1,
+                    "micro_boundary_p": politax_holdout_scorer.micro_p,
+                    "micro_boundary_r": politax_holdout_scorer.micro_r,
+                    "micro_boundary_f1": politax_holdout_scorer.micro_f1,
+                    "per_packet_f1": politax_holdout_scorer.per_packet_f1,
+                }
         print(json.dumps(payload, indent=2))
         return 0 if gate.passed else 1
     print(f"{'fixture':16} {'cond':14} pages gold pred   P     R    F1  ocr  gate")
@@ -327,6 +396,16 @@ def _cmd_eval(args) -> int:
             from packet.eval.politax_split import format_holdout_baseline
 
             print(format_holdout_baseline(politax_holdout_baseline))
+        if politax_holdout_scorer is not None:
+            print("holdout with boundary weights:")
+            print(
+                f"  macro F1 {politax_holdout_scorer.macro_f1:.4f}  "
+                f"micro P {politax_holdout_scorer.micro_p:.4f} "
+                f"R {politax_holdout_scorer.micro_r:.4f} "
+                f"F1 {politax_holdout_scorer.micro_f1:.4f}"
+            )
+            for name, f1 in politax_holdout_scorer.per_packet_f1.items():
+                print(f"    {name}: F1 {f1:.4f}")
     print(f"macro F1 {gate.macro_f1:.2f} (min {gate.min_macro_f1:.2f}; per-fixture min {min_f1:.2f})")
     if gate.passed:
         print("GATE PASS")

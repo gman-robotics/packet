@@ -111,29 +111,9 @@ def ship_decision(heur: dict[str, float], model: dict[str, float], *, saturated:
 # ---- data: per-page facts from the real pipeline pieces ----
 
 def page_facts(pdf: Path) -> list[dict]:
-    from packet.boundary import BoundaryDetector
-    from packet.classify import HeuristicClassifier
-    from packet.extract import NativeTextExtractor, Router
-    from packet.furniture import FurnitureTagger
-    from packet.pipeline import _lazy_lines, _lazy_render
-    from packet.source import PdfPageSource
+    from packet.eval.page_facts import page_facts as _page_facts
 
-    det, cl, router, tg = BoundaryDetector(), HeuristicClassifier(), Router([NativeTextExtractor()]), FurnitureTagger()
-    out: list[dict] = []
-    with PdfPageSource(pdf) as src:
-        for ref in src.pages():
-            text = src.text_for(ref.index)
-            c = cl.classify(ref, text)
-            blocks = tg.tag_page(c, router.extract(c, text, image=_lazy_render(src, c.index),
-                                                   layout=_lazy_lines(src, c.index)))
-            sig = det.observe(c, blocks)
-            out.append({
-                **det._page_facts[-1],
-                "page": ref.index,
-                "blocks": len(blocks),
-                "signal": sig,
-            })
-    return out
+    return _page_facts(pdf)
 
 
 featurize = featurize_from_facts
