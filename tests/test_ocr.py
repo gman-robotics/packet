@@ -605,14 +605,18 @@ def test_failed_load_is_cached_not_retried_per_page(monkeypatch):
 
 
 def test_lighton_extract_with_mocked_model(monkeypatch):
+    from types import SimpleNamespace
+
     ext = LightOnExtractor()
     seen = {}
 
-    def gen(model, proc, prompt, image, **kw):
+    def stream_generate(model, proc, prompt, image, **kw):
         seen["prompt"], seen["image"] = prompt, image
-        return GROUNDING
+        yield SimpleNamespace(text=GROUNDING, generation_tokens=7, prompt_tokens=0,
+                              prompt_tps=0.0, generation_tps=0.0, finish_reason="stop")
 
-    monkeypatch.setattr(LightOnExtractor, "_load_impl", lambda self: ("M", "P", (gen, "PROMPT")))
+    monkeypatch.setattr(LightOnExtractor, "_load_impl",
+                        lambda self: ("M", "P", (stream_generate, "PROMPT")))
     blocks = ext.extract(SCAN, "", image=lambda: "IMG")
     assert seen == {"prompt": "PROMPT", "image": ["IMG"]} and len(blocks) == 7
 

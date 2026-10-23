@@ -17,13 +17,56 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, Literal
 
 from packet.extract import Extractor, NativeTextExtractor, call_extractor
 from packet.ocr_parse import parse_lighton_grounding, parse_paddle_blocks
 from packet.types import Block, PageClass, PageRef
 
 ImageThunk = Callable[[], Any]
+
+StopReason = Literal["eos", "max_tokens"]
+
+
+@dataclass(frozen=True)
+class Recognition:
+    raw: str
+    tokens: int
+    prompt_tokens: int
+    prefill_s: float
+    decode_s: float
+    stop: StopReason
+
+
+def _empty_generation(text: str = "") -> SimpleNamespace:
+    return SimpleNamespace(text=text, generation_tokens=0, prompt_tokens=0,
+                           prompt_tps=0.0, generation_tps=0.0, finish_reason=None)
+
+
+def _last_generation(out: Any) -> Any:
+    if isinstance(out, str):
+        return _empty_generation(out)
+    if hasattr(out, "text"):
+        return out
+    last = None
+    parts: list[str] = []
+    for last in out:
+        parts.append(last if isinstance(last, str) else getattr(last, "text", "") or "")
+    if last is None:
+        return _empty_generation()
+    raw = "".join(parts)
+    if getattr(last, "text", None) == raw:
+        return last
+    return SimpleNamespace(
+        text=raw,
+        generation_tokens=getattr(last, "generation_tokens", 0),
+        prompt_tokens=getattr(last, "prompt_tokens", 0),
+        prompt_tps=getattr(last, "prompt_tps", 0.0),
+        generation_tps=getattr(last, "generation_tps", 0.0),
+        finish_reason=getattr(last, "finish_reason", None),
+    )
+
 
 log = logging.getLogger(__name__)
 
@@ -158,6 +201,10 @@ class LightOnExtractor(_LazyEngine):
         except ImportError as exc:  # mlx only exists on Apple silicon
             raise OcrUnavailable(f"LightOnOCR needs mlx-vlm: {exc}") from exc
         try:
+            from mlx_vlm import stream_generate
+        except ImportError:
+            stream_generate = generate
+        try:
             path = snapshot_download(self.model, revision=self.revision)
             model, processor = load(path, trust_remote_code=False)
             prompt = apply_chat_template(processor, model.config, self.mode, num_images=1)
@@ -167,21 +214,38 @@ class LightOnExtractor(_LazyEngine):
                     f"PACKET_OCR_MODEL={self.model!r}: failed to load ({exc})",
                 ) from exc
             raise OcrUnavailable(f"LightOnOCR failed to load: {exc}") from exc
-        return (model, processor, (generate, prompt))
+        return (model, processor, (stream_generate, prompt))
 
-    def recognize(self, img) -> tuple[str, int | None]:
-        """Raw grounding text and generated token count for one rendered page image."""
-        model, processor, (generate, prompt) = self._load()
-        r = generate(model, processor, prompt, image=[img], max_tokens=self.max_tokens,
-                     temperature=0.0, verbose=False)
-        raw = r.text if hasattr(r, "text") else str(r)
-        tokens = getattr(r, "generation_tokens", None)
-        return raw, tokens if isinstance(tokens, int) else None
+    def recognize(self, img) -> Recognition:
+        """Raw grounding text, token counts, stage times, and stop reason for one page image."""
+        model, processor, (stream_generate, prompt) = self._load()
+        out = stream_generate(model, processor, prompt, image=[img], max_tokens=self.max_tokens,
+                              temperature=0.0, verbose=False)
+        last = _last_generation(out)
+        raw = last.text if hasattr(last, "text") else str(last)
+        tokens = getattr(last, "generation_tokens", 0)
+        tokens = tokens if isinstance(tokens, int) else 0
+        prompt_tokens = getattr(last, "prompt_tokens", 0)
+        prompt_tokens = prompt_tokens if isinstance(prompt_tokens, int) else 0
+        prompt_tps = float(getattr(last, "prompt_tps", 0.0) or 0.0)
+        generation_tps = float(getattr(last, "generation_tps", 0.0) or 0.0)
+        finish = getattr(last, "finish_reason", None)
+        stop: StopReason = (
+            "max_tokens" if finish == "length" or tokens >= self.max_tokens else "eos"
+        )
+        return Recognition(
+            raw=raw,
+            tokens=tokens,
+            prompt_tokens=prompt_tokens,
+            prefill_s=prompt_tokens / prompt_tps if prompt_tps > 0 else 0.0,
+            decode_s=tokens / generation_tps if generation_tps > 0 else 0.0,
+            stop=stop,
+        )
 
     def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
         img = _need_image(image)
-        raw, _tokens = self.recognize(img)
-        return parse_lighton_grounding(raw, ref)
+        rec = self.recognize(img)
+        return parse_lighton_grounding(rec.raw, ref)
 
 
 class PaddleExtractor(_LazyEngine):

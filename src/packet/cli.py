@@ -397,9 +397,11 @@ def _cmd_politax_ocr(args) -> int:
         print(po.format_report(rep))
         return 0
     m = politax.load_manifest()
+    t_setup = time.perf_counter()
     politax.fetch(m, cache=data)
     plans, native = po.plan_pages(m.docs, data, subject=args.subject, file=args.file)
     states = po.classify(plans, data, engine)
+    setup_s = time.perf_counter() - t_setup
     print(f"selected {len(plans)} pages (<{po.OCR_MIN_NATIVE_CHARS} native chars), "
           f"native-text skipped {native}; cached {states['cached']} stale {states['stale']} "
           f"corrupt {states['corrupt']} pending {states['pending']}")
@@ -413,18 +415,25 @@ def _cmd_politax_ocr(args) -> int:
     sources: dict[str, PdfPageSource] = {}
 
     def recognize(plan):
+        t0 = time.perf_counter()
         src = sources.get(plan.file)
         if src is None:
             for old in sources.values():
                 old.close()
             sources.clear()
             src = sources[plan.file] = PdfPageSource(data / plan.file)
-        return ext.recognize(src.render(plan.index, longest_px=engine.render_px))
+        img = src.render(plan.index, longest_px=engine.render_px)
+        render_s = time.perf_counter() - t0
+        rec = ext.recognize(img)
+        return po.PageResult(raw=rec.raw, tokens=rec.tokens, prompt_tokens=rec.prompt_tokens,
+                             prefill_s=rec.prefill_s, decode_s=rec.decode_s, stop=rec.stop,
+                             render_s=render_s)
 
     versions = {"packet": _version_or_dash(importlib.metadata, _DISTRIBUTION),
                 "mlx_vlm": _version_or_dash(importlib.metadata, "mlx-vlm")}
     try:
-        s = po.run(plans, recognize, data, engine, limit=args.limit_pages, versions=versions)
+        s = po.run(plans, recognize, data, engine, limit=args.limit_pages, versions=versions,
+                   setup_s=setup_s)
     except Exception as exc:  # noqa: BLE001 - any engine failure exits 1; log is kept
         print(f"packet: politax-ocr engine error: {exc}", file=sys.stderr)
         return 1

@@ -36,16 +36,31 @@ def corpus(tmp_path):
 
 
 class FakeRecognizer:
-    def __init__(self, tokens: int = 10, fail_at: int | None = None):
+    def __init__(self, tokens: int = 10, fail_at: int | None = None, *,
+                 stop: str = "eos", prompt_tokens: int = 0,
+                 prefill_s: float = 0.0, decode_s: float = 0.0, render_s: float = 0.0):
         self.calls: list[tuple[str, int]] = []
         self.tokens = tokens
         self.fail_at = fail_at
+        self.stop = stop
+        self.prompt_tokens = prompt_tokens
+        self.prefill_s = prefill_s
+        self.decode_s = decode_s
+        self.render_s = render_s
 
     def __call__(self, plan: po.PagePlan):
         if self.fail_at is not None and len(self.calls) == self.fail_at:
             raise RuntimeError("engine boom")
         self.calls.append((plan.pdf_sha256, plan.index))
-        return f"<raw {plan.file_name} {plan.index}>", self.tokens
+        return po.PageResult(
+            raw=f"<raw {plan.file_name} {plan.index}>",
+            tokens=self.tokens,
+            prompt_tokens=self.prompt_tokens,
+            prefill_s=self.prefill_s,
+            decode_s=self.decode_s,
+            stop=self.stop,
+            render_s=self.render_s,
+        )
 
 
 def _page_files(data: Path) -> list[Path]:
@@ -177,8 +192,10 @@ def test_engine_error_stops_and_resume_finishes(corpus):
 def test_truncated_flag_when_tokens_reach_max(corpus):
     data, docs = corpus
     plans, _ = po.plan_pages(docs, data, file="scan.pdf")
-    po.run(plans, FakeRecognizer(tokens=4096), data, ENGINE)
-    assert all(json.loads(f.read_text())["truncated"] for f in _page_files(data))
+    po.run(plans, FakeRecognizer(tokens=4096, stop="max_tokens"), data, ENGINE)
+    recs = [json.loads(f.read_text()) for f in _page_files(data)]
+    assert all(r["truncated"] for r in recs)
+    assert all(r["stop"] == "max_tokens" for r in recs)
     assert po.report(data, ENGINE)["truncated"] == 3
 
 
@@ -222,24 +239,72 @@ def test_leftover_temp_files_are_removed_at_start(corpus):
 def test_lighton_recognize_returns_raw_and_tokens_and_extract_is_unchanged():
     from types import SimpleNamespace
 
-    from packet.backends import LightOnExtractor
+    from packet.backends import LightOnExtractor, Recognition
     from packet.ocr_parse import parse_lighton_grounding
     from packet.types import PageRef
 
     raw = "Hello world"
     calls = []
 
-    def fake_generate(model, processor, prompt, image, max_tokens, temperature, verbose):
+    def fake_stream(model, processor, prompt, image, max_tokens, temperature, verbose):
         calls.append(max_tokens)
-        return SimpleNamespace(text=raw, generation_tokens=17)
+        yield SimpleNamespace(text=raw, generation_tokens=17, prompt_tokens=40,
+                              prompt_tps=20.0, generation_tps=10.0, finish_reason="stop")
 
     ext = LightOnExtractor(max_tokens=123)
-    ext._load = lambda: (None, None, (fake_generate, "prompt"))
-    assert ext.recognize(object()) == (raw, 17)
+    ext._load = lambda: (None, None, (fake_stream, "prompt"))
+    rec = ext.recognize(object())
+    assert isinstance(rec, Recognition)
+    assert rec.raw == raw and rec.tokens == 17 and rec.prompt_tokens == 40
+    assert rec.prefill_s == pytest.approx(2.0) and rec.decode_s == pytest.approx(1.7)
+    assert rec.stop == "eos"
     ref = PageRef(packet_id="p", index=0, width=612.0, height=792.0, rotation=0,
                   has_text_ops=False)
     assert ext.extract(ref, "", image=lambda: object()) == parse_lighton_grounding(raw, ref)
     assert calls == [123, 123]
+
+
+@pytest.mark.parametrize(
+    "finish,tokens,max_tokens,want",
+    [("length", 10, 4096, "max_tokens"),
+     ("stop", 4096, 4096, "max_tokens"),
+     ("stop", 10, 4096, "eos"),
+     (None, 5, 4096, "eos")],
+)
+def test_lighton_recognize_maps_stop_reason(finish, tokens, max_tokens, want):
+    from types import SimpleNamespace
+
+    from packet.backends import LightOnExtractor
+
+    def fake_stream(model, processor, prompt, image, max_tokens, temperature, verbose):
+        yield SimpleNamespace(text="x", generation_tokens=tokens, prompt_tokens=0,
+                              prompt_tps=0.0, generation_tps=0.0, finish_reason=finish)
+
+    ext = LightOnExtractor(max_tokens=max_tokens)
+    ext._load = lambda: (None, None, (fake_stream, "prompt"))
+    rec = ext.recognize(object())
+    assert rec.stop == want
+    assert rec.prefill_s == 0.0 and rec.decode_s == 0.0
+
+
+def test_lighton_recognize_uses_last_generation_result_for_stats():
+    from types import SimpleNamespace
+
+    from packet.backends import LightOnExtractor
+
+    def fake_stream(model, processor, prompt, image, max_tokens, temperature, verbose):
+        yield SimpleNamespace(text="Hel", generation_tokens=1, prompt_tokens=8,
+                              prompt_tps=8.0, generation_tps=1.0, finish_reason=None)
+        yield SimpleNamespace(text="lo", generation_tokens=5, prompt_tokens=8,
+                              prompt_tps=16.0, generation_tps=5.0, finish_reason="stop")
+
+    ext = LightOnExtractor(max_tokens=4096)
+    ext._load = lambda: (None, None, (fake_stream, "prompt"))
+    rec = ext.recognize(object())
+    assert rec.raw == "Hello"
+    assert rec.tokens == 5 and rec.prompt_tokens == 8
+    assert rec.prefill_s == pytest.approx(0.5) and rec.decode_s == pytest.approx(1.0)
+    assert rec.stop == "eos"
 
 
 def test_failed_first_engine_call_still_counts_in_wall_time(corpus):
@@ -254,3 +319,67 @@ def test_failed_first_engine_call_still_counts_in_wall_time(corpus):
     assert log["engine_calls"] == 1 and log["ocr_done"] == 0
     rep = po.report(data, ENGINE)
     assert rep["runs"] == 1 and rep["wall_s_total"] > 0
+
+
+def test_page_json_records_stage_fields_and_summary_accumulates(corpus):
+    data, docs = corpus
+    plans, _ = po.plan_pages(docs, data, file="scan.pdf")
+    fake = FakeRecognizer(tokens=8, prompt_tokens=12, prefill_s=0.5, decode_s=1.25,
+                          stop="eos", render_s=0.04)
+    s = po.run(plans, fake, data, ENGINE, setup_s=1.5)
+    rec = json.loads((data / "ocr" / docs[0].sha256 / "p00000.json").read_text())
+    assert rec["schema"] == 1
+    assert rec["render_s"] == 0.04
+    assert rec["prefill_s"] == 0.5
+    assert rec["decode_s"] == 1.25
+    assert rec["prompt_tokens"] == 12
+    assert rec["stop"] == "eos"
+    assert rec["generation_tokens"] == 8
+    assert rec["truncated"] is False
+    assert "seconds" in rec
+    assert s.stops == {"eos": 3}
+    assert s.setup_s == pytest.approx(1.5)
+    assert s.render_s == pytest.approx(0.12)
+    assert s.prefill_s == pytest.approx(1.5)
+    assert s.decode_s == pytest.approx(3.75)
+    assert s.write_s >= 0
+    log = json.loads(next((data / "ocr" / "_runs").glob("*.json")).read_text())
+    assert log["setup_s"] == pytest.approx(1.5)
+    assert log["stops"] == {"eos": 3}
+
+
+def test_old_records_without_stage_keys_stay_cached(corpus):
+    data, docs = corpus
+    plans, _ = po.plan_pages(docs, data, file="scan.pdf")
+    po.run(plans, FakeRecognizer(), data, ENGINE)
+    for path in _page_files(data):
+        rec = json.loads(path.read_text())
+        for k in ("render_s", "prefill_s", "decode_s", "prompt_tokens", "stop"):
+            rec.pop(k, None)
+        path.write_text(json.dumps(rec))
+    assert po.classify(plans, data, ENGINE)["cached"] == 3
+    fake = FakeRecognizer()
+    s = po.run(plans, fake, data, ENGINE)
+    assert fake.calls == [] and s.skipped_cached == 3
+
+
+def test_report_sums_stage_times_and_stop_counts_missing_keys_are_zero(corpus):
+    data, docs = corpus
+    plans, _ = po.plan_pages(docs, data)
+    po.run(plans, FakeRecognizer(prompt_tokens=2, prefill_s=0.2, decode_s=0.3,
+                                 render_s=0.1, stop="eos"), data, ENGINE, setup_s=1.0)
+    po.run(plans, FakeRecognizer(), data, ENGINE)  # no-op resume
+    old = data / "ocr" / "_runs" / "old.json"
+    old.write_text(json.dumps({"engine_calls": 1, "wall_s": 0.0, "gen_s": 0.0}))
+    rep = po.report(data, ENGINE)
+    assert rep["setup_s"] == pytest.approx(1.0)
+    assert rep["render_s"] == pytest.approx(0.5)
+    assert rep["prefill_s"] == pytest.approx(1.0)
+    assert rep["decode_s"] == pytest.approx(1.5)
+    assert rep["write_s"] >= 0
+    assert rep["stops"]["eos"] == 5
+    assert rep["stops"]["max_tokens"] == 0
+    text = po.format_report(rep)
+    assert "pages_cached 5" in text
+    assert "render_s" in text and "stops" in text
+    assert "eos=5" in text
