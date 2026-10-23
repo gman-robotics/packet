@@ -130,6 +130,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="stop after this many engine calls (cached pages do not count)")
     po.add_argument("--max-tokens", type=int, default=4096)
     po.add_argument("--render-px", type=int, default=1540)
+    po.add_argument(
+        "--loop-stop",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="stop a page when its tail compresses under the zlib loop rule "
+             "(default: on; --no-loop-stop runs to eos or max tokens)",
+    )
     mode = po.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true",
                       help="fetch PDFs, print selected/cached/pending pages; no model load")
@@ -375,7 +382,7 @@ def _cmd_politax_ocr(args) -> int:
     import importlib.metadata
     import importlib.util
 
-    from packet.backends import LightOnExtractor
+    from packet.backends import LightOnExtractor, LoopRule
     from packet.eval import politax
     from packet.eval import politax_ocr as po
     from packet.eval.run import DEFAULT_POLITAX_CACHE
@@ -413,6 +420,7 @@ def _cmd_politax_ocr(args) -> int:
 
     ext = LightOnExtractor(max_tokens=args.max_tokens)
     sources: dict[str, PdfPageSource] = {}
+    loop_rule = LoopRule() if args.loop_stop else None
 
     def recognize(plan):
         t0 = time.perf_counter()
@@ -424,7 +432,7 @@ def _cmd_politax_ocr(args) -> int:
             src = sources[plan.file] = PdfPageSource(data / plan.file)
         img = src.render(plan.index, longest_px=engine.render_px)
         render_s = time.perf_counter() - t0
-        rec = ext.recognize(img)
+        rec = ext.recognize(img, loop_rule=loop_rule)
         return po.PageResult(raw=rec.raw, tokens=rec.tokens, prompt_tokens=rec.prompt_tokens,
                              prefill_s=rec.prefill_s, decode_s=rec.decode_s, stop=rec.stop,
                              render_s=render_s)

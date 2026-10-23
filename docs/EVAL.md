@@ -255,3 +255,17 @@ under 40 characters (the section 5 / census threshold). Layout, beside the PDFs:
 - `--data-dir` inside the repo exits 2. Nothing is committed.
 - `packet eval` (every set) and CI never read this cache or import OCR extras;
   `tests/test_politax_ocr_guard.py` enforces that in a no-extras subprocess.
+
+### Loop early-stop
+
+`packet politax-ocr --loop-stop` is on by default (`--no-loop-stop` drains each page).
+LightOn watches the stream and stops when the last 1,500 characters compress with
+zlib level 9 to a ratio under 0.02. The rule is not part of `EngineId`, so records
+already in the cache stay current. A page that stops early is stored with
+`stop=loop` and `truncated=false`. `truncated` still means the token count reached
+`max_tokens`.
+
+Read-only check (does not write the cache and does not load MLX):
+
+    python scripts/replay_ocr_loop_stop.py
+    python scripts/replay_ocr_loop_stop.py --data-dir ~/.cache/packet/politax/ocr

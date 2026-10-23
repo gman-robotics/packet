@@ -383,3 +383,258 @@ def test_report_sums_stage_times_and_stop_counts_missing_keys_are_zero(corpus):
     assert "pages_cached 5" in text
     assert "render_s" in text and "stops" in text
     assert "eos=5" in text
+
+
+def _prose(n: int = 1500) -> str:
+    parts: list[str] = []
+    i = 0
+    while sum(map(len, parts)) < n:
+        parts.append(
+            f"Schedule {i} names taxpayer {i * 17 + 3} of precinct {1000 + i}, "
+            f"ballot {chr(65 + (i % 26))}{i}-{i * 13 % 97}, "
+            f"and a note about levy {i * 29 % 300} distinct from the prior line. "
+        )
+        i += 1
+    return "".join(parts)[:n]
+
+
+def test_loop_fired_on_short_repeat_not_on_prose():
+    from packet.backends import LoopRule, _loop_fired
+
+    rule = LoopRule()
+    assert _loop_fired("a" * 1500, rule) is True
+    assert _loop_fired("ab" * 800, rule) is True
+    assert _loop_fired("a" * 1499, rule) is False
+    assert _loop_fired(_prose(1500), rule) is False
+    assert _loop_fired(_prose(1800), rule) is False
+
+
+def test_lighton_recognize_loop_rule_stops_before_max_tokens():
+    from types import SimpleNamespace
+
+    from packet.backends import LightOnExtractor, LoopRule
+
+    max_tokens = 2000
+    yielded = {"n": 0}
+
+    def fake_stream(model, processor, prompt, image, max_tokens, temperature, verbose):
+        assert temperature == 0.0 and verbose is False and max_tokens == 2000
+        for i in range(1, max_tokens + 1):
+            yielded["n"] += 1
+            yield SimpleNamespace(
+                text="a",
+                generation_tokens=i,
+                prompt_tokens=8,
+                prompt_tps=16.0,
+                generation_tps=10.0,
+                finish_reason="length" if i == max_tokens else None,
+            )
+
+    ext = LightOnExtractor(max_tokens=max_tokens)
+    ext._load = lambda: (None, None, (fake_stream, "prompt"))
+    rec = ext.recognize(object(), loop_rule=LoopRule())
+    assert rec.stop == "loop"
+    assert rec.tokens == 1536 and rec.tokens < max_tokens
+    assert rec.raw == "a" * 1536
+    assert yielded["n"] == 1536
+    assert rec.prompt_tokens == 8
+    assert rec.prefill_s == pytest.approx(0.5)
+    assert rec.decode_s == pytest.approx(153.6)
+
+
+def test_lighton_recognize_without_loop_rule_drains_repetitive_stream():
+    from types import SimpleNamespace
+
+    from packet.backends import LightOnExtractor
+
+    max_tokens = 2000
+    yielded = {"n": 0}
+
+    def fake_stream(model, processor, prompt, image, max_tokens, temperature, verbose):
+        for i in range(1, max_tokens + 1):
+            yielded["n"] += 1
+            yield SimpleNamespace(
+                text="a",
+                generation_tokens=i,
+                prompt_tokens=8,
+                prompt_tps=16.0,
+                generation_tps=10.0,
+                finish_reason="length" if i == max_tokens else None,
+            )
+
+    ext = LightOnExtractor(max_tokens=max_tokens)
+    ext._load = lambda: (None, None, (fake_stream, "prompt"))
+    rec = ext.recognize(object())
+    assert rec.stop == "max_tokens"
+    assert rec.tokens == max_tokens and rec.raw == "a" * max_tokens
+    assert yielded["n"] == max_tokens
+
+
+def test_lighton_recognize_loop_rule_leaves_short_text_on_eos():
+    from types import SimpleNamespace
+
+    from packet.backends import LightOnExtractor, LoopRule
+
+    def fake_stream(model, processor, prompt, image, max_tokens, temperature, verbose):
+        yield SimpleNamespace(text="Hel", generation_tokens=1, prompt_tokens=8,
+                              prompt_tps=8.0, generation_tps=1.0, finish_reason=None)
+        yield SimpleNamespace(text="lo", generation_tokens=5, prompt_tokens=8,
+                              prompt_tps=16.0, generation_tps=5.0, finish_reason="stop")
+
+    ext = LightOnExtractor(max_tokens=4096)
+    ext._load = lambda: (None, None, (fake_stream, "prompt"))
+    rec = ext.recognize(object(), loop_rule=LoopRule())
+    assert rec.raw == "Hello" and rec.tokens == 5 and rec.stop == "eos"
+    assert rec.prefill_s == pytest.approx(0.5) and rec.decode_s == pytest.approx(1.0)
+
+
+def test_loop_rule_counts_yields_when_generation_tokens_absent():
+    from types import SimpleNamespace
+
+    from packet.backends import LightOnExtractor, LoopRule
+
+    yielded = {"n": 0}
+
+    def fake_stream(model, processor, prompt, image, max_tokens, temperature, verbose):
+        for _ in range(500):
+            yielded["n"] += 1
+            yield SimpleNamespace(text="a", prompt_tokens=2, prompt_tps=2.0,
+                                  generation_tps=1.0, finish_reason=None)
+
+    rule = LoopRule(window_chars=80, max_zlib_ratio=0.25, check_every_tokens=8)
+    ext = LightOnExtractor(max_tokens=4096)
+    ext._load = lambda: (None, None, (fake_stream, "prompt"))
+    rec = ext.recognize(object(), loop_rule=rule)
+    assert rec.stop == "loop" and rec.tokens == 80 and rec.raw == "a" * 80
+    assert yielded["n"] == 80
+    assert rec.tokens < ext.max_tokens
+
+
+def test_loop_stop_page_is_not_truncated(corpus):
+    data, docs = corpus
+    plans, _ = po.plan_pages(docs, data, file="scan.pdf")
+    s = po.run(plans, FakeRecognizer(tokens=100, stop="loop"), data, ENGINE)
+    recs = [json.loads(f.read_text()) for f in _page_files(data)]
+    assert len(recs) == 3
+    assert all(r["stop"] == "loop" and r["truncated"] is False for r in recs)
+    assert all(r["generation_tokens"] == 100 for r in recs)
+    assert all(r["schema"] == 1 for r in recs)
+    assert s.stops == {"loop": 3} and s.truncated == 0
+    rep = po.report(data, ENGINE)
+    assert rep["stops"]["loop"] == 3 and rep["stops"]["eos"] == 0
+    assert rep["truncated"] == 0
+    assert "loop=3" in po.format_report(rep)
+
+
+def test_engine_id_has_no_loop_fields():
+    import dataclasses
+
+    assert [f.name for f in dataclasses.fields(po.EngineId)] == [
+        "name", "model", "revision", "mode", "max_tokens", "render_px",
+    ]
+    assert po.SCHEMA == 1
+
+
+def test_politax_ocr_loop_stop_flag_reaches_recognize(monkeypatch, corpus):
+    import importlib.util
+    import shutil
+
+    from packet import cli
+    from packet.backends import LightOnExtractor, LoopRule, Recognition
+    from packet.source import PdfPageSource
+
+    data, docs = corpus
+
+    class Manifest:
+        pass
+
+    manifest = Manifest()
+    manifest.docs = docs
+    monkeypatch.setattr(politax, "load_manifest", lambda: manifest)
+    monkeypatch.setattr(politax, "fetch", lambda *a, **k: None)
+    monkeypatch.setattr(PdfPageSource, "render", lambda self, index, longest_px=1540: "img")
+    seen: list = []
+
+    def fake_recognize(self, img, loop_rule=None):
+        seen.append(loop_rule)
+        return Recognition("ok", 3, 1, 0.0, 0.0, "eos")
+
+    monkeypatch.setattr(LightOnExtractor, "recognize", fake_recognize)
+    real_find = importlib.util.find_spec
+
+    def find_spec(name, *a, **k):
+        if name == "mlx_vlm":
+            return object()
+        return real_find(name, *a, **k)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+
+    def run(flag: str | None):
+        shutil.rmtree(data / "ocr", ignore_errors=True)
+        seen.clear()
+        argv = ["politax-ocr", "--data-dir", str(data), "--limit-pages", "1"]
+        if flag:
+            argv.append(flag)
+        assert cli.main(argv) == 0
+        return list(seen)
+
+    assert run(None) == [LoopRule()]
+    assert run("--loop-stop") == [LoopRule()]
+    assert run("--no-loop-stop") == [None]
+
+
+def test_replay_script_flags_only_non_truncated_loops(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    root = tmp_path / "ocr" / "abc"
+    root.mkdir(parents=True)
+    prose = _prose(1600)
+
+    def write(name: str, raw: str, truncated: bool) -> None:
+        (root / name).write_text(json.dumps({"raw": raw, "truncated": truncated}))
+
+    write("p00000.json", "a" * 1600, False)
+    write("p00001.json", "a" * 1600, True)
+    write("p00002.json", prose, False)
+    import ast
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "replay_ocr_loop_stop.py"
+    mods: list[str] = []
+    for node in ast.walk(ast.parse(script.read_text())):
+        if isinstance(node, ast.Import):
+            mods.extend(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            mods.append(node.module.split(".")[0])
+    assert "mlx" not in mods and "mlx_vlm" not in mods
+    env = os.environ.copy()
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
+    bad = subprocess.run(
+        [sys.executable, str(script), "--data-dir", str(tmp_path / "ocr")],
+        check=False, capture_output=True, text=True, env=env,
+    )
+    assert bad.returncode == 1
+    assert "fired 1" in bad.stdout
+    assert "truncated_would_fire 1" in bad.stdout
+    assert "p00000.json" in bad.stderr
+
+    (root / "p00000.json").unlink()
+    before = sorted(p.name for p in root.iterdir())
+    ok = subprocess.run(
+        [sys.executable, str(script), "--data-dir", str(tmp_path / "ocr")],
+        check=False, capture_output=True, text=True, env=env,
+    )
+    assert ok.returncode == 0
+    assert "fired 0" in ok.stdout
+    assert "truncated_would_fire 1" in ok.stdout
+    assert sorted(p.name for p in root.iterdir()) == before
+
+    missing = subprocess.run(
+        [sys.executable, str(script), "--data-dir", str(tmp_path / "nope")],
+        check=False, capture_output=True, text=True, env=env,
+    )
+    assert missing.returncode == 0
+    assert "not found" in missing.stdout
+    assert not (tmp_path / "nope").exists()
