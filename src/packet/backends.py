@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -26,7 +27,14 @@ from packet.types import Block, PageClass, PageRef
 
 ImageThunk = Callable[[], Any]
 
-StopReason = Literal["eos", "max_tokens"]
+StopReason = Literal["eos", "max_tokens", "loop"]
+
+
+@dataclass(frozen=True)
+class LoopRule:
+    window_chars: int = 1500
+    max_zlib_ratio: float = 0.02
+    check_every_tokens: int = 64
 
 
 @dataclass(frozen=True)
@@ -65,6 +73,117 @@ def _last_generation(out: Any) -> Any:
         prompt_tps=getattr(last, "prompt_tps", 0.0),
         generation_tps=getattr(last, "generation_tps", 0.0),
         finish_reason=getattr(last, "finish_reason", None),
+    )
+
+
+def _loop_fired(text: str, rule: LoopRule) -> bool:
+    """True when the last window compresses strictly under ``rule.max_zlib_ratio``."""
+    if rule.window_chars <= 0 or len(text) < rule.window_chars:
+        return False
+    raw = text[-rule.window_chars:].encode("utf-8")
+    return len(zlib.compress(raw, 9)) / len(raw) < rule.max_zlib_ratio
+
+
+def _loop_check_due(checked_at: int, tokens: int, every: int) -> bool:
+    if tokens <= checked_at:
+        return False
+    if every <= 0:
+        return True
+    if tokens - checked_at >= every:
+        return True
+    return tokens // every > checked_at // every
+
+
+def _iter_stream(out: Any):
+    if isinstance(out, str):
+        yield out
+        return
+    if hasattr(out, "__next__"):
+        yield from out
+        return
+    if hasattr(out, "text"):
+        yield out
+        return
+    try:
+        yield from out
+    except TypeError:
+        yield out
+
+
+def _consume_until_loop(out: Any, rule: LoopRule) -> tuple[Any, bool]:
+    """Drain ``out``. Stop early when the loop rule fires.
+
+    Token cadence prefers each chunk's ``generation_tokens`` (cumulative). Chunks
+    without that count as one yield each. A full drain that never fires matches
+    ``_last_generation`` when those counts are present.
+    """
+    parts: list[str] = []
+    last = None
+    tokens = 0
+    saw_gen = False
+    checked_at = 0
+    fired = False
+    for chunk in _iter_stream(out):
+        last = chunk
+        if isinstance(chunk, str):
+            parts.append(chunk)
+            gen = None
+        else:
+            parts.append(getattr(chunk, "text", "") or "")
+            gen = getattr(chunk, "generation_tokens", None)
+        if isinstance(gen, int):
+            tokens = gen
+            saw_gen = True
+        elif not saw_gen:
+            tokens += 1
+        if not _loop_check_due(checked_at, tokens, rule.check_every_tokens):
+            continue
+        checked_at = tokens
+        if _loop_fired("".join(parts), rule):
+            fired = True
+            break
+    if last is None:
+        return _empty_generation(), False
+    raw = "".join(parts)
+    if not fired and saw_gen and getattr(last, "text", None) == raw:
+        return last, False
+    if isinstance(last, str):
+        prompt_tokens, prompt_tps, generation_tps, finish = 0, 0.0, 0.0, None
+    else:
+        prompt_tokens = getattr(last, "prompt_tokens", 0)
+        prompt_tps = getattr(last, "prompt_tps", 0.0)
+        generation_tps = getattr(last, "generation_tps", 0.0)
+        finish = getattr(last, "finish_reason", None)
+    return SimpleNamespace(
+        text=raw,
+        generation_tokens=tokens,
+        prompt_tokens=prompt_tokens,
+        prompt_tps=prompt_tps,
+        generation_tps=generation_tps,
+        finish_reason=finish,
+    ), fired
+
+
+def _recognition(max_tokens: int, last: Any, looped: bool) -> Recognition:
+    raw = last.text if hasattr(last, "text") else str(last)
+    tokens = getattr(last, "generation_tokens", 0)
+    tokens = tokens if isinstance(tokens, int) else 0
+    prompt_tokens = getattr(last, "prompt_tokens", 0)
+    prompt_tokens = prompt_tokens if isinstance(prompt_tokens, int) else 0
+    prompt_tps = float(getattr(last, "prompt_tps", 0.0) or 0.0)
+    generation_tps = float(getattr(last, "generation_tps", 0.0) or 0.0)
+    finish = getattr(last, "finish_reason", None)
+    if looped:
+        stop: StopReason = "loop"
+    else:
+        stop = "max_tokens" if finish == "length" or tokens >= max_tokens else "eos"
+    return Recognition(
+        raw=raw,
+        tokens=tokens,
+        prompt_tokens=prompt_tokens,
+        prefill_s=prompt_tokens / prompt_tps if prompt_tps > 0 else 0.0,
+        decode_s=tokens / generation_tps if generation_tps > 0 else 0.0,
+        stop=stop,
     )
 
 
@@ -216,31 +335,20 @@ class LightOnExtractor(_LazyEngine):
             raise OcrUnavailable(f"LightOnOCR failed to load: {exc}") from exc
         return (model, processor, (stream_generate, prompt))
 
-    def recognize(self, img) -> Recognition:
-        """Raw grounding text, token counts, stage times, and stop reason for one page image."""
+    def recognize(self, img, *, loop_rule: LoopRule | None = None) -> Recognition:
+        """Raw grounding text, token counts, stage times, and stop reason for one page image.
+
+        ``loop_rule=None`` drains the stream. A rule stops early with ``stop="loop"``
+        when the zlib window fires. ``truncated`` is not decided here.
+        """
         model, processor, (stream_generate, prompt) = self._load()
         out = stream_generate(model, processor, prompt, image=[img], max_tokens=self.max_tokens,
                               temperature=0.0, verbose=False)
-        last = _last_generation(out)
-        raw = last.text if hasattr(last, "text") else str(last)
-        tokens = getattr(last, "generation_tokens", 0)
-        tokens = tokens if isinstance(tokens, int) else 0
-        prompt_tokens = getattr(last, "prompt_tokens", 0)
-        prompt_tokens = prompt_tokens if isinstance(prompt_tokens, int) else 0
-        prompt_tps = float(getattr(last, "prompt_tps", 0.0) or 0.0)
-        generation_tps = float(getattr(last, "generation_tps", 0.0) or 0.0)
-        finish = getattr(last, "finish_reason", None)
-        stop: StopReason = (
-            "max_tokens" if finish == "length" or tokens >= self.max_tokens else "eos"
-        )
-        return Recognition(
-            raw=raw,
-            tokens=tokens,
-            prompt_tokens=prompt_tokens,
-            prefill_s=prompt_tokens / prompt_tps if prompt_tps > 0 else 0.0,
-            decode_s=tokens / generation_tps if generation_tps > 0 else 0.0,
-            stop=stop,
-        )
+        if loop_rule is None:
+            last, looped = _last_generation(out), False
+        else:
+            last, looped = _consume_until_loop(out, loop_rule)
+        return _recognition(self.max_tokens, last, looped)
 
     def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
         img = _need_image(image)
