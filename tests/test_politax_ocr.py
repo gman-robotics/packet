@@ -592,12 +592,17 @@ def test_replay_script_flags_only_non_truncated_loops(tmp_path):
     root.mkdir(parents=True)
     prose = _prose(1600)
 
-    def write(name: str, raw: str, truncated: bool) -> None:
-        (root / name).write_text(json.dumps({"raw": raw, "truncated": truncated}))
+    def write(name: str, raw: str, truncated: bool, stop: str | None = None) -> None:
+        rec = {"raw": raw, "truncated": truncated}
+        if stop is not None:
+            rec["stop"] = stop
+        (root / name).write_text(json.dumps(rec))
 
     write("p00000.json", "a" * 1600, False)
     write("p00001.json", "a" * 1600, True)
     write("p00002.json", prose, False)
+    write("p00003.json", "b" * 1600, False, stop="loop")  # GMA-388: loop stop, not a failure
+    write("p00004.json", prose, False, stop="eos")
     import ast
 
     script = Path(__file__).resolve().parents[1] / "scripts" / "replay_ocr_loop_stop.py"
@@ -618,7 +623,9 @@ def test_replay_script_flags_only_non_truncated_loops(tmp_path):
     assert bad.returncode == 1
     assert "fired 1" in bad.stdout
     assert "truncated_would_fire 1" in bad.stdout
-    assert "p00000.json" in bad.stderr
+    assert "checked 3 " in bad.stdout
+    assert "loop_stopped 1 loop_would_fire 1" in bad.stdout
+    assert "p00000.json" in bad.stderr and "p00003.json" not in bad.stderr
 
     (root / "p00000.json").unlink()
     before = sorted(p.name for p in root.iterdir())
@@ -629,6 +636,7 @@ def test_replay_script_flags_only_non_truncated_loops(tmp_path):
     assert ok.returncode == 0
     assert "fired 0" in ok.stdout
     assert "truncated_would_fire 1" in ok.stdout
+    assert "loop_stopped 1 loop_would_fire 1" in ok.stdout
     assert sorted(p.name for p in root.iterdir()) == before
 
     missing = subprocess.run(

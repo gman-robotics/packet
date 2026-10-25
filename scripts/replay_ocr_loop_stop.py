@@ -3,6 +3,8 @@
 Walks page JSON under the OCR cache and checks that non-truncated ``raw`` text
 does not trip ``LoopRule`` (last 1,500 characters, zlib level 9, ratio under
 0.02). Truncated pages that would trip are counted and do not fail the run.
+Pages stored with ``stop == "loop"`` (early-stopped by ``--loop-stop``) are
+counted the same way: their tail is expected to fire, so it does not fail the run.
 This script does not write the cache and does not load MLX.
 
 Usage:
@@ -11,7 +13,7 @@ Usage:
 
 The default directory is the politax-ocr cache root
 (``~/.cache/packet/politax/ocr``), one level under the politax data dir. Exit
-status is 0 when no non-truncated page fires, and 1 when one or more do. A
+status is 0 when no page that is neither truncated nor loop-stopped fires, and 1 when one or more do. A
 missing cache directory prints a note and exits 0.
 """
 
@@ -51,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     rule = LoopRule()
     pages = checked = fired = truncated_pages = truncated_would = 0
+    loop_pages = loop_would = 0
     failures: list[Path] = []
     for path in _page_files(root):
         try:
@@ -67,13 +70,18 @@ def main(argv: list[str] | None = None) -> int:
             truncated_pages += 1
             truncated_would += int(hit)
             continue
+        if rec.get("stop") == "loop":
+            loop_pages += 1
+            loop_would += int(hit)
+            continue
         checked += 1
         if hit:
             fired += 1
             failures.append(path)
     print(
         f"pages {pages} checked {checked} fired {fired} "
-        f"truncated {truncated_pages} truncated_would_fire {truncated_would}"
+        f"truncated {truncated_pages} truncated_would_fire {truncated_would} "
+        f"loop_stopped {loop_pages} loop_would_fire {loop_would}"
     )
     for path in failures:
         print(f"fired {path}", file=sys.stderr)
