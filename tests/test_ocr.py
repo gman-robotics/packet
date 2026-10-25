@@ -621,6 +621,37 @@ def test_lighton_extract_with_mocked_model(monkeypatch):
     assert seen == {"prompt": "PROMPT", "image": ["IMG"]} and len(blocks) == 7
 
 
+def _chunks(*texts, finish="stop"):
+    from types import SimpleNamespace
+    for i, t in enumerate(texts, 1):
+        yield SimpleNamespace(text=t, generation_tokens=i, prompt_tokens=0, prompt_tps=0.0,
+                              generation_tps=0.0, finish_reason=finish if i == len(texts) else None)
+
+
+def test_lighton_clean_output_runs_on_joined_stream(monkeypatch):
+    """GMA-386: the hook sees the full joined text once, not per delta."""
+    from types import SimpleNamespace
+
+    seen = []
+
+    def clean(text):
+        seen.append(text)
+        return text.replace("<junk>", "")
+
+    proc = SimpleNamespace(clean_output=clean)
+    gen = lambda *a, **k: _chunks("ab<ju", "nk>cd")
+    monkeypatch.setattr(LightOnExtractor, "_load_impl", lambda self: ("M", proc, (gen, "P")))
+    rec = LightOnExtractor().recognize("IMG")
+    assert seen == ["ab<junk>cd"]
+    assert rec.raw == "abcd" and rec.tokens == 2 and rec.stop == "eos"
+
+
+def test_lighton_without_clean_output_keeps_raw(monkeypatch):
+    gen = lambda *a, **k: _chunks("ab<ju", "nk>cd")
+    monkeypatch.setattr(LightOnExtractor, "_load_impl", lambda self: ("M", object(), (gen, "P")))
+    assert LightOnExtractor().recognize("IMG").raw == "ab<junk>cd"
+
+
 @pytest.mark.needs_ocr_extras
 def test_paddle_extract_with_mocked_pipeline(monkeypatch):
     pytest.importorskip("PIL")

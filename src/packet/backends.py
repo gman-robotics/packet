@@ -164,6 +164,29 @@ def _consume_until_loop(out: Any, rule: LoopRule) -> tuple[Any, bool]:
     ), fired
 
 
+def _clean_output(processor: Any, last: Any) -> Any:
+    """Apply ``processor.clean_output`` to the joined text, as upstream ``generate()`` does.
+
+    mlx-vlm 0.7.10 defines the hook only for some processors (glm4v, aya_vision, ...).
+    LightOnOCR's processor has none today, so this is a no-op there. Token counts and
+    ``finish_reason`` are kept; only ``text`` changes.
+    """
+    clean = getattr(processor, "clean_output", None)
+    if not callable(clean) or not hasattr(last, "text"):
+        return last
+    text = clean(last.text)
+    if text == last.text:
+        return last
+    return SimpleNamespace(
+        text=text,
+        generation_tokens=getattr(last, "generation_tokens", 0),
+        prompt_tokens=getattr(last, "prompt_tokens", 0),
+        prompt_tps=getattr(last, "prompt_tps", 0.0),
+        generation_tps=getattr(last, "generation_tps", 0.0),
+        finish_reason=getattr(last, "finish_reason", None),
+    )
+
+
 def _recognition(max_tokens: int, last: Any, looped: bool) -> Recognition:
     raw = last.text if hasattr(last, "text") else str(last)
     tokens = getattr(last, "generation_tokens", 0)
@@ -348,7 +371,7 @@ class LightOnExtractor(_LazyEngine):
             last, looped = _last_generation(out), False
         else:
             last, looped = _consume_until_loop(out, loop_rule)
-        return _recognition(self.max_tokens, last, looped)
+        return _recognition(self.max_tokens, _clean_output(processor, last), looped)
 
     def extract(self, ref: PageRef, text: str, image: ImageThunk | None = None) -> list[Block]:
         img = _need_image(image)
