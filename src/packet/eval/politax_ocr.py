@@ -7,8 +7,10 @@ Outside the eval gate and outside CI. Pages whose stripped native text is under
     <data-dir>/ocr/_runs/<utc>-<pid>.json     # one log per invocation
 
 Records hold the raw engine output only. This module never imports an OCR engine;
-the recognizer arrives as a callable from ``packet politax-ocr``. Nothing else in
-``packet`` imports this module (guarded by tests/test_politax_ocr_guard.py).
+the recognizer arrives as a callable from ``packet politax-ocr``. The default
+``packet eval`` and CI never import this module or read the cache (guarded by
+tests/test_politax_ocr_guard.py). The only other importer is
+``packet.eval.politax_ocr_eval``, loaded lazily for opt-in ``eval --ocr-cache`` (GMA-274).
 """
 
 from __future__ import annotations

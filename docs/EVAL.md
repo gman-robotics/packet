@@ -253,8 +253,10 @@ under 40 characters (the section 5 / census threshold). Layout, beside the PDFs:
 - `--dry-run` fetches (sha256-checked) and prints selected/cached/pending counts without
   loading a model. `--report` prints page count, engine and summed wall time for the PR.
 - `--data-dir` inside the repo exits 2. Nothing is committed.
-- `packet eval` (every set) and CI never read this cache or import OCR extras;
-  `tests/test_politax_ocr_guard.py` enforces that in a no-extras subprocess.
+- The default `packet eval` (every set) and CI never read this cache or import OCR
+  extras; `tests/test_politax_ocr_guard.py` enforces that in a no-extras subprocess.
+  The only reader is the opt-in `packet eval --set politax --ocr-cache` (GMA-274),
+  which reads cached text and still loads no OCR engine.
 
 ### Loop early-stop
 

@@ -57,7 +57,8 @@ class CachedOcrExtractor:
             return None
         if not (isinstance(rec, dict) and rec.get("schema") == SCHEMA
                 and rec.get("pdf_sha256") == self.pdf_sha256 and rec.get("page") == index
-                and isinstance(rec.get("raw"), str)):
+                and isinstance(rec.get("raw"), str)
+                and isinstance(rec.get("engine", {}), dict)):
             return None
         return rec
 
@@ -68,7 +69,7 @@ class CachedOcrExtractor:
             return []
         self.stats.used += 1
         self.stats.truncated += int(rec.get("truncated") is True)
-        eng = rec.get("engine") or {}
+        eng = rec.get("engine", {})
         self.stats.engines[f"{eng.get('name')}:{eng.get('model')}@{eng.get('revision')}"] += 1
         return parse_lighton_grounding(rec["raw"], ref)
 
