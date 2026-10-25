@@ -95,7 +95,8 @@ def main(argv: list[str] | None = None) -> int:
                          "which suits the deterministic built-in fixtures; lower it for "
                          "real-model or DocLayNet runs")
     ev.add_argument("--min-macro-f1", type=_unit_interval, default=None,
-                    help="macro-average boundary F1 floor in [0,1]; default = --min-f1")
+                    help="macro-average boundary F1 floor in [0,1]; default = the set floor "
+                         "(politax --ocr-cache 0.41 on holdout; builtin = --min-f1)")
     ev.add_argument(
         "--boundary-weights",
         default=None,
@@ -105,7 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         "--ocr-cache",
         action="store_true",
         help="--set politax only (GMA-274, opt-in): feed scan pages from the cached "
-             "politax-ocr text under <data-dir>/ocr; no OCR runs; off by default",
+             "politax-ocr text under <data-dir>/ocr; no OCR runs; off by default; "
+             "gates holdout macro F1 >= 0.41 (GMA-274 Q7)",
     )
 
     pt = sub.add_parser(

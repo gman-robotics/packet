@@ -11,7 +11,7 @@ and can plan DocLayNet concatenations from a local catalog.
 | develop | DocLayNet train/val pages | layout F1 (internal) | yes (train only) |
 | synth packets | concatenate DocLayNet **documents** from val | `packet-dlnet-synth` | no |
 | whole-doc packets | whole public PDFs named by DocLayNet, joined | `packet-dlnet-whole` | no |
-| PoliTax-Split | Extend-AI/PoliTax-Split whole PDFs + CC0 labels | `packet-politax` | no (report-only) |
+| PoliTax-Split | Extend-AI/PoliTax-Split whole PDFs + CC0 labels | `packet-politax` | `--ocr-cache` only: holdout macro >= 0.41 (plain run report-only) |
 | frozen | OmniDocBench, olmOCR-bench | public parse scores | **never** |
 
 ## Commands
@@ -52,6 +52,7 @@ PoliTax-Split (`packet-politax`, GMA-270):
 
 ```bash
 packet eval --set politax                     # report-only: floors 0.0; macro + micro P/R/F1
+packet eval --set politax --ocr-cache         # gated: holdout macro >= 0.41, per-fixture >= 0.0
 packet eval --set politax --data-dir ~/.cache/packet/politax --json
 ```
 
@@ -66,8 +67,9 @@ government public-domain works in the dataset README.
 
 Train/holdout (GMA-274): train = 23 ``trump`` PDFs; holdout = 4 Obama, 2 Harris,
 1 Biden (whole files only). The CLI prints holdout heuristic macro/micro F1 and a
-proposed macro floor (truncated to two decimals); gates stay report-only until Tom
-confirms.
+proposed macro floor (truncated to two decimals). Q7 locked 2026-10-24:
+`--ocr-cache` runs gate the holdout macro at 0.41 (per-fixture 0.0); the plain
+run stays report-only.
 
 Train trump-only logistic weights (GMA-288):
 

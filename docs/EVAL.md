@@ -242,7 +242,7 @@ Next: add `dirty-scan` and `handwriting` variants of `scan` that run with
 OCR enabled. The OCR backends exist now, so these fixtures would have
 output to score.
 
-## PoliTax OCR cache (optional, outside the gate; GMA-275)
+## PoliTax OCR cache (optional; GMA-275; `--ocr-cache` gate holdout macro 0.41)
 
 `packet politax-ocr` writes raw LightOnOCR-3-1B grounding text (MLX, Apple silicon,
 `pip install -e '.[ocr-mlx]'`) for every PoliTax page whose stripped native text is
