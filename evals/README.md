@@ -55,6 +55,10 @@ packet eval --set politax                     # report-only: floors 0.0; macro +
 packet eval --set politax --data-dir ~/.cache/packet/politax --json
 ```
 
+Opt-in (GMA-274): `packet eval --set politax --ocr-cache` feeds scan pages from the
+cached `packet politax-ocr` text under `<data-dir>/ocr` (no OCR runs). Off by
+default; CI and the plain eval never read the cache.
+
 ``evals/politax.json`` pins 30 public-domain tax PDFs and ``annotations.jsonl``
 by HTTPS URL and sha256. The first run downloads them (~711 MB) to
 ``~/.cache/packet/politax``. Labels are CC0 1.0; PDFs are described as U.S.
