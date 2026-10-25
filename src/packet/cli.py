@@ -101,6 +101,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="JSON logistic boundary weights for eval (optional; load errors exit 2)",
     )
+    ev.add_argument(
+        "--ocr-cache",
+        action="store_true",
+        help="--set politax only (GMA-274, opt-in): feed scan pages from the cached "
+             "politax-ocr text under <data-dir>/ocr; no OCR runs; off by default",
+    )
 
     pt = sub.add_parser(
         "politax-train-weights",
@@ -470,6 +476,13 @@ def _cmd_eval(args) -> int:
     politax_census = None
     politax_holdout_baseline = None
     politax_holdout_scorer = None
+    ocr_stats = None
+    if args.ocr_cache and args.set != "politax":
+        print("packet: --ocr-cache needs --set politax", file=sys.stderr)
+        return 2
+    if args.ocr_cache and args.boundary_weights:
+        print("packet: --ocr-cache cannot be used with --boundary-weights", file=sys.stderr)
+        return 2
     pipe = _pipeline_for_boundary_weights(args.boundary_weights)
     if pipe is None:
         return 2
@@ -485,8 +498,13 @@ def _cmd_eval(args) -> int:
         m, fixtures = ev.prepare_politax(data)
         subjects = {d.file_name: d.subject for d in m.docs}
         politax_census = politax.text_layer_census(fixtures, subjects=subjects)
-        heur_pipe = Pipeline() if args.boundary_weights else pipe
-        results_heur = [ev.run_fixture(fx, heur_pipe) for fx in fixtures]
+        if args.ocr_cache:
+            from packet.eval.politax_ocr_eval import run_with_ocr_cache
+
+            results_heur, ocr_stats = run_with_ocr_cache(m, fixtures, data)
+        else:
+            heur_pipe = Pipeline() if args.boundary_weights else pipe
+            results_heur = [ev.run_fixture(fx, heur_pipe) for fx in fixtures]
         politax_holdout_baseline = compute_holdout_baseline(m, fixtures, results_heur)
         if args.boundary_weights:
             results = [ev.run_fixture(fx, pipe) for fx in fixtures]
@@ -517,6 +535,8 @@ def _cmd_eval(args) -> int:
             payload["micro_boundary_f1"] = mf
             if politax_census is not None:
                 payload["text_layer_census"] = politax_census
+            if ocr_stats is not None:
+                payload["ocr_cache"] = ocr_stats.as_dict()
             if politax_holdout_baseline is not None:
                 from packet.eval.politax_split import holdout_baseline_as_dict
 
@@ -546,6 +566,10 @@ def _cmd_eval(args) -> int:
         print(politax.format_census(politax_census))
         mp, mr, mf = micro_boundary_prf(results)
         print(f"micro boundary P {mp:.2f} R {mr:.2f} F1 {mf:.2f} (all {len(results)} packets)")
+        if ocr_stats is not None:
+            st = ocr_stats.as_dict()
+            print(f"ocr cache (GMA-274 opt-in): pages used {st['pages_used']} "
+                  f"missing {st['pages_missing']} truncated {st['pages_truncated']}")
         if politax_holdout_baseline is not None:
             from packet.eval.politax_split import format_holdout_baseline
 

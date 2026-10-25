@@ -172,8 +172,8 @@ def test_only_the_politax_ocr_cli_handler_imports_the_cache_module():
             allowed = set(range(node.lineno, node.end_lineno + 1))
     assert allowed, "_cmd_politax_ocr missing"
     for py in (SRC / "packet").rglob("*.py"):
-        if py.name == "politax_ocr.py":
-            continue
+        if py.name in {"politax_ocr.py", "politax_ocr_eval.py"}:
+            continue  # politax_ocr_eval: GMA-274 opt-in --ocr-cache only (lazy import in cli)
         for name, line in _politax_ocr_refs(py):
             assert py == cli and line in allowed, f"{name}:{line} imports politax_ocr"
 
