@@ -102,7 +102,7 @@ def test_opt_in_feeds_cached_text_and_reports_stats(tmp_path, monkeypatch):
 def test_opt_in_missing_records_count_and_yield_no_blocks(tmp_path, monkeypatch):
     mp, data, _ = _corpus(tmp_path)
     rc, on = _eval(monkeypatch, mp, data, "--ocr-cache")
-    assert rc == 0
+    assert rc == 1  # no cached text -> holdout macro 0.0 < Q7 floor 0.41
     assert on["ocr_cache"]["pages_used"] == 0 and on["ocr_cache"]["pages_missing"] == 6
 
 
@@ -132,3 +132,43 @@ def test_opt_in_rejects_other_sets_and_weights(extra, capsys):
         args += ["--set", "politax"]
     assert cli.main(args) == 2
     assert "--ocr-cache" in capsys.readouterr().err
+
+
+def test_q7_floor_applies_only_to_ocr_cache_runs(tmp_path, monkeypatch):
+    """GMA-274 Q7: --ocr-cache gates holdout macro at 0.41; plain eval stays (0, 0)."""
+    from packet.eval import run as ev
+
+    assert ev.SET_FLOORS["politax"] == (0.0, 0.0)
+    assert ev.OCR_CACHE_FLOORS["politax"] == (0.0, 0.41)
+    mp, data, shas = _corpus(tmp_path)
+    rc_plain, plain = _eval(monkeypatch, mp, data)
+    assert rc_plain == 0
+    assert plain["gate"]["min_f1"] == 0.0 and plain["gate"]["min_macro_f1"] == 0.0
+    assert plain["gate"]["macro_scope"] == "all"
+    # No cache: holdout macro is 0.0, below the locked floor, so the ocr-cache gate fails.
+    rc_miss, miss = _eval(monkeypatch, mp, data, "--ocr-cache")
+    assert rc_miss == 1 and miss["gate"]["passed"] is False
+    assert miss["gate"]["min_macro_f1"] == 0.41 and miss["gate"]["min_f1"] == 0.0
+    assert miss["gate"]["macro_scope"] == "holdout"
+    assert any("macro boundary F1" in f for f in miss["gate"]["failures"])
+    # Cached text finds the holdout cut: macro is the holdout macro and clears 0.41.
+    _write_cache(data, shas, PAGES)
+    rc_hit, hit = _eval(monkeypatch, mp, data, "--ocr-cache")
+    assert rc_hit == 0 and hit["gate"]["passed"] is True
+    assert hit["gate"]["macro_f1"] == hit["holdout_heuristic"]["macro_f1"] >= 0.41
+    # Explicit flags still override the locked floor.
+    rc_ovr, ovr = _eval(monkeypatch, mp, data, "--ocr-cache", "--min-macro-f1", "0")
+    assert rc_ovr == 0 and ovr["gate"]["min_macro_f1"] == 0.0
+
+
+def test_macro_results_scopes_only_the_macro_floor():
+    from packet.eval import run as ev
+    from packet.eval.metrics import BoundaryScore
+
+    def row(name, f1):
+        return ev.EvalResult(name, "c", 1, 1, 1, BoundaryScore(f1, f1, f1, [], [], 0), [])
+
+    rows = [row("a", 0.0), row("b", 0.5)]
+    g = ev.evaluate_gate(rows, min_f1=0.0, min_macro_f1=0.41, macro_results=rows[1:])
+    assert g.passed and g.macro_f1 == 0.5
+    assert not ev.evaluate_gate(rows, min_f1=0.0, min_macro_f1=0.41).passed

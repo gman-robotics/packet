@@ -1,8 +1,9 @@
 """Frozen PoliTax train/holdout split (GMA-274).
 
 Train on ``trump`` whole PDFs only. Hold out ``obama``, ``harris``, and ``biden`` as whole
-files (never split inside a PDF). Q7: ``SET_FLOORS["politax"]`` stays report-only until Tom
-confirms; this module computes the proposed macro floor from the holdout heuristic baseline.
+files (never split inside a PDF). Q7 (locked 2026-10-24): ``OCR_CACHE_FLOORS["politax"]`` gates ``--ocr-cache`` runs at holdout
+macro 0.41; plain ``SET_FLOORS["politax"]`` stays report-only. This module computes the
+proposed macro floor from the holdout heuristic baseline.
 """
 
 from __future__ import annotations
@@ -132,9 +133,9 @@ def format_holdout_baseline(baseline: HoldoutBaseline) -> str:
         f"micro P {baseline.micro_p:.4f} R {baseline.micro_r:.4f} F1 {baseline.micro_f1:.4f}"
     )
     lines.append(
-        f"  proposed macro floor (truncated to 2 decimals, Q7 pending Tom): "
+        f"  proposed macro floor (truncated to 2 decimals; Q7 locks 0.41 for --ocr-cache): "
         f"{baseline.proposed_macro_floor:.2f}  "
-        "(SET_FLOORS politax stays 0.0 until confirmed)"
+        "(plain eval floors stay 0.0)"
     )
     return "\n".join(lines)
 

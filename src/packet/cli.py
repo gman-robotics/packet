@@ -95,7 +95,8 @@ def main(argv: list[str] | None = None) -> int:
                          "which suits the deterministic built-in fixtures; lower it for "
                          "real-model or DocLayNet runs")
     ev.add_argument("--min-macro-f1", type=_unit_interval, default=None,
-                    help="macro-average boundary F1 floor in [0,1]; default = --min-f1")
+                    help="macro-average boundary F1 floor in [0,1]; default = the set floor "
+                         "(politax --ocr-cache 0.41 on holdout; builtin = --min-f1)")
     ev.add_argument(
         "--boundary-weights",
         default=None,
@@ -105,7 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         "--ocr-cache",
         action="store_true",
         help="--set politax only (GMA-274, opt-in): feed scan pages from the cached "
-             "politax-ocr text under <data-dir>/ocr; no OCR runs; off by default",
+             "politax-ocr text under <data-dir>/ocr; no OCR runs; off by default; "
+             "gates holdout macro F1 >= 0.41 (GMA-274 Q7)",
     )
 
     pt = sub.add_parser(
@@ -470,13 +472,15 @@ def _cmd_eval(args) -> int:
     from packet.eval import run as ev
 
     root = Path(args.dir) if args.dir else None
-    floors = ev.SET_FLOORS[args.set]
+    floors = (ev.OCR_CACHE_FLOORS if args.ocr_cache else ev.SET_FLOORS).get(
+        args.set, ev.SET_FLOORS[args.set])
     min_f1 = floors[0] if args.min_f1 is None else args.min_f1
     min_macro = floors[1] if args.min_macro_f1 is None else args.min_macro_f1
     politax_census = None
     politax_holdout_baseline = None
     politax_holdout_scorer = None
     ocr_stats = None
+    macro_results = None
     if args.ocr_cache and args.set != "politax":
         print("packet: --ocr-cache needs --set politax", file=sys.stderr)
         return 2
@@ -500,8 +504,10 @@ def _cmd_eval(args) -> int:
         politax_census = politax.text_layer_census(fixtures, subjects=subjects)
         if args.ocr_cache:
             from packet.eval.politax_ocr_eval import run_with_ocr_cache
+            from packet.eval.politax_split import holdout_results
 
             results_heur, ocr_stats = run_with_ocr_cache(m, fixtures, data)
+            macro_results = holdout_results(m, fixtures, results_heur)
         else:
             heur_pipe = Pipeline() if args.boundary_weights else pipe
             results_heur = [ev.run_fixture(fx, heur_pipe) for fx in fixtures]
@@ -513,7 +519,8 @@ def _cmd_eval(args) -> int:
             results = results_heur
     else:
         results = ev.run_named_fixtures(root, pipeline=pipe)
-    gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=min_macro)
+    gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=min_macro,
+                            macro_results=macro_results)
     if args.json:
         payload = {
             "set": args.set,
@@ -524,6 +531,7 @@ def _cmd_eval(args) -> int:
                 "macro_f1": gate.macro_f1,
                 "min_f1": gate.min_f1,
                 "min_macro_f1": gate.min_macro_f1,
+                "macro_scope": "holdout" if macro_results is not None else "all",
             },
         }
         if args.set == "politax":
@@ -584,7 +592,9 @@ def _cmd_eval(args) -> int:
             )
             for name, f1 in politax_holdout_scorer.per_packet_f1.items():
                 print(f"    {name}: F1 {f1:.4f}")
-    print(f"macro F1 {gate.macro_f1:.2f} (min {gate.min_macro_f1:.2f}; per-fixture min {min_f1:.2f})")
+    scope = " holdout" if macro_results is not None else ""
+    print(f"macro{scope} F1 {gate.macro_f1:.2f} (min {gate.min_macro_f1:.2f}; "
+          f"per-fixture min {min_f1:.2f})")
     if gate.passed:
         print("GATE PASS")
         return 0
