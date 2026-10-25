@@ -44,8 +44,8 @@ to the macro F1, because one packet with a miss moves the macro number a lot.
 PoliTax-Split PDFs (Extend-AI/PoliTax-Split on Hugging Face). Each whole PDF
 is one fixture; gold sub-documents come from the pinned CC0
 ``annotations.jsonl``. Downloads land in ``~/.cache/packet/politax`` or
-``--data-dir``; nothing third-party is committed. Floors are report-only
-(0.0 per fixture and macro). The CLI prints macro F1, micro boundary P/R/F1,
+``--data-dir``; nothing third-party is committed. Plain-run floors are
+report-only (0.0 per fixture and macro); ``--ocr-cache`` runs are gated (Q7 below). The CLI prints macro F1, micro boundary P/R/F1,
 and a text-layer census (pages with at least 40 native characters).
 
 **PoliTax train/holdout** (GMA-274): train = ``trump`` whole PDFs; holdout =
@@ -62,8 +62,10 @@ macro F1 at **0.41** and every fixture at 0.0 (``OCR_CACHE_FLOORS`` in
 **What the eval pipeline runs.** `packet eval` uses `Pipeline()` with its
 default extractor, `NativeTextExtractor`, so it reads text layers (with the
 layout signals: titles, headings and band lines from font size, weight and
-position) and never OCRs. OCR quality and OCR-page splitting are measured
-outside `packet eval`, on real mixed packets run through `packet parse`.
+position) and never OCRs (plain run). OCR quality and live OCR-page splitting are
+measured outside `packet eval`, on real mixed packets run through `packet parse`;
+the one exception is the opt-in ``--set politax --ocr-cache`` gate, which reads
+cached OCR text (no OCR runs).
 
 All metrics are computed per-packet and then aggregated (macro-average
 across packets, not micro-average across pages) unless stated otherwise.

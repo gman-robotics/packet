@@ -78,7 +78,8 @@ def evaluate_gate(
     if not results or not pool:
         failures.append("no fixtures ran")
     elif not (macro >= floor):
-        failures.append(f"macro boundary F1 {macro:.2f} < {floor:.2f}")
+        scope = "" if macro_results is None else " (holdout)"
+        failures.append(f"macro{scope} boundary F1 {macro:.4f} < {floor:.2f}")
     return GateResult(not failures, failures, macro, min_f1, floor)
 
 
