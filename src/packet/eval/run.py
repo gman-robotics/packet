@@ -15,9 +15,13 @@ DEFAULT_MIN_F1 = 1.0
 SET_FLOORS = {
     "builtin": (DEFAULT_MIN_F1, None),
     "dlnet-whole": (0.0, 0.6),
-    # Report-only until Tom confirms Q7 proposed macro (see politax_split.compute_holdout_baseline).
+    # Plain (native text) PoliTax eval stays report-only.
     "politax": (0.0, 0.0),
 }
+# GMA-274 Q7 (Tom, 2026-10-24): floors for ``packet eval --set politax --ocr-cache``.
+# The macro floor applies to the frozen holdout packets (the population it was measured on:
+# heuristic holdout macro 0.4159 truncated to 0.41); the per-fixture floor applies to all.
+OCR_CACHE_FLOORS = {"politax": (0.0, 0.41)}
 DEFAULT_WHOLEDOC_CACHE = Path.home() / ".cache" / "packet" / "dlnet-whole"
 DEFAULT_POLITAX_CACHE = Path.home() / ".cache" / "packet" / "politax"
 
@@ -59,16 +63,19 @@ def evaluate_gate(
     results: list[EvalResult],
     min_f1: float = DEFAULT_MIN_F1,
     min_macro_f1: float | None = None,
+    macro_results: list[EvalResult] | None = None,
 ) -> GateResult:
     """EVAL.md gate: every fixture's boundary F1 (tolerance 0) >= ``min_f1``, the
     macro-average F1 >= ``min_macro_f1`` (defaults to ``min_f1``), and zero
-    false-OCR pages anywhere (absolute, section 5)."""
+    false-OCR pages anywhere (absolute, section 5). ``macro_results`` (default
+    ``results``) is the population the macro floor is averaged over."""
     floor = min_f1 if min_macro_f1 is None else min_macro_f1
     failures: list[str] = []
     for r in results:
         failures.extend(r.failures(min_f1))
-    macro = sum(r.boundary.f1 for r in results) / len(results) if results else float("nan")
-    if not results:
+    pool = results if macro_results is None else macro_results
+    macro = sum(r.boundary.f1 for r in pool) / len(pool) if pool else float("nan")
+    if not results or not pool:
         failures.append("no fixtures ran")
     elif not (macro >= floor):
         failures.append(f"macro boundary F1 {macro:.2f} < {floor:.2f}")

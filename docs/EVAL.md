@@ -52,8 +52,12 @@ and a text-layer census (pages with at least 40 native characters).
 ``obama``, ``harris``, and ``biden`` whole PDFs (frozen in
 ``packet.eval.politax_split``). ``packet eval --set politax`` prints the
 holdout heuristic baseline (macro and micro boundary F1) and a **proposed**
-macro floor (heuristic holdout macro truncated to two decimals). Floors stay
-``0.0`` until Tom confirms Q7.
+macro floor (heuristic holdout macro truncated to two decimals). Q7 is locked
+(Tom, 2026-10-24): ``packet eval --set politax --ocr-cache`` gates the holdout
+macro F1 at **0.41** and every fixture at 0.0 (``OCR_CACHE_FLOORS`` in
+``src/packet/eval/run.py``; measured holdout macro 0.4159). Plain
+``packet eval --set politax`` stays report-only at 0.0/0.0. Explicit
+``--min-f1``/``--min-macro-f1`` flags still override.
 
 **What the eval pipeline runs.** `packet eval` uses `Pipeline()` with its
 default extractor, `NativeTextExtractor`, so it reads text layers (with the
