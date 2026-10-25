@@ -114,12 +114,15 @@ def test_cached_extractor_rejects_bad_records(tmp_path):
     (root / "p00000.json").write_text("{garbage")
     (root / "p00001.json").write_text(json.dumps({"schema": 1, "pdf_sha256": "other", "page": 1, "raw": "x"}))
     (root / "p00002.json").write_text(json.dumps({"schema": 1, "pdf_sha256": "abc", "page": 9, "raw": "x"}))
+    for i, eng in ((3, "lighton"), (4, ["x"]), (5, None)):  # non-dict engine: missing, no crash
+        (root / f"p{i:05d}.json").write_text(json.dumps(
+            {"schema": 1, "pdf_sha256": "abc", "page": i, "raw": "x", "engine": eng}))
     stats = CacheStats()
     ext = CachedOcrExtractor(tmp_path, "abc", stats)
     assert ext.supports(PageClass.SCAN) and not ext.supports(PageClass.TEXT)
-    for i in range(4):
+    for i in range(7):
         assert ext.extract(PageRef(packet_id="p", index=i, page_class=PageClass.SCAN), "") == []
-    assert stats.used == 0 and stats.missing == 4
+    assert stats.used == 0 and stats.missing == 7
 
 
 @pytest.mark.parametrize("extra", [["--set", "builtin"], ["--boundary-weights", "w.json"]])
