@@ -189,6 +189,20 @@ def test_engine_error_stops_and_resume_finishes(corpus):
     assert len(fake.calls) == 3
 
 
+@pytest.mark.parametrize(("tokens", "want"), [(4096, True), (4095, False)])
+def test_truncated_follows_tokens_not_stop(corpus, tokens, want):
+    """GMA-386: ``truncated`` is tokens >= max_tokens, even when ``stop`` says eos."""
+    assert ENGINE.max_tokens == 4096
+    data, docs = corpus
+    plans, _ = po.plan_pages(docs, data, file="scan.pdf")
+    s = po.run(plans, FakeRecognizer(tokens=tokens), data, ENGINE)  # default stop="eos"
+    recs = [json.loads(f.read_text()) for f in _page_files(data)]
+    assert len(recs) == 3
+    assert all(r["stop"] == "eos" and r["truncated"] is want for r in recs)
+    assert s.truncated == (3 if want else 0)
+    assert po.report(data, ENGINE)["truncated"] == (3 if want else 0)
+
+
 def test_truncated_flag_when_tokens_reach_max(corpus):
     data, docs = corpus
     plans, _ = po.plan_pages(docs, data, file="scan.pdf")
