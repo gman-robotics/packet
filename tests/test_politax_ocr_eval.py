@@ -22,10 +22,12 @@ def _page(title: str, k: int, n: int) -> str:
             f"![page_number](900,960,950,980)\nPage {k} of {n}\n")
 
 
-def _corpus(tmp: Path) -> tuple[Path, Path, dict[str, str]]:
+SPECS = [("t1.pdf", "trump", 2), ("o1.pdf", "obama", 4)]
+
+
+def _corpus(tmp: Path, specs=SPECS) -> tuple[Path, Path, dict[str, str]]:
     data = tmp / "politax"
     data.mkdir()
-    specs = [("t1.pdf", "trump", 2), ("o1.pdf", "obama", 4)]
     docs, ann, shas = [], [], {}
     for name, subject, pages in specs:
         write_blank_scan_pdf(data / name, pages)
@@ -150,7 +152,7 @@ def test_q7_floor_applies_only_to_ocr_cache_runs(tmp_path, monkeypatch):
     assert rc_miss == 1 and miss["gate"]["passed"] is False
     assert miss["gate"]["min_macro_f1"] == 0.41 and miss["gate"]["min_f1"] == 0.0
     assert miss["gate"]["macro_scope"] == "holdout"
-    assert any("macro boundary F1" in f for f in miss["gate"]["failures"])
+    assert any("macro (holdout) boundary F1" in f for f in miss["gate"]["failures"])
     # Cached text finds the holdout cut: macro is the holdout macro and clears 0.41.
     _write_cache(data, shas, PAGES)
     rc_hit, hit = _eval(monkeypatch, mp, data, "--ocr-cache")
@@ -172,3 +174,36 @@ def test_macro_results_scopes_only_the_macro_floor():
     g = ev.evaluate_gate(rows, min_f1=0.0, min_macro_f1=0.41, macro_results=rows[1:])
     assert g.passed and g.macro_f1 == 0.5
     assert not ev.evaluate_gate(rows, min_f1=0.0, min_macro_f1=0.41).passed
+
+
+# Three train PDFs + one holdout: train and holdout score differently, so the gate
+# outcome depends on whether the macro averages the holdout or all fixtures.
+# Distinct page counts keep each blank PDF's sha256 (and OCR cache dir) unique.
+SCOPE_SPECS = [("t1.pdf", "trump", 2), ("t2.pdf", "trump", 6), ("t3.pdf", "trump", 8),
+               ("o1.pdf", "obama", 4)]
+SCOPE_PAGES = {name: pages for name, _, pages in SCOPE_SPECS}
+
+
+def _all_macro(out: dict) -> float:
+    rows = out["fixtures"]
+    return sum(r["boundary_f1"] for r in rows) / len(rows)
+
+
+def test_q7_gate_passes_on_holdout_macro_where_all_macro_would_fail(tmp_path, monkeypatch):
+    mp, data, shas = _corpus(tmp_path, SCOPE_SPECS)
+    _write_cache(data, {"o1.pdf": shas["o1.pdf"]}, SCOPE_PAGES)  # holdout only
+    rc, out = _eval(monkeypatch, mp, data, "--ocr-cache")
+    assert out["gate"]["macro_scope"] == "holdout"
+    assert out["gate"]["macro_f1"] >= 0.41
+    assert _all_macro(out) < 0.41  # an all-30-style macro would fail the floor
+    assert rc == 0 and out["gate"]["passed"] is True
+
+
+def test_q7_gate_fails_on_holdout_macro_where_all_macro_would_pass(tmp_path, monkeypatch):
+    mp, data, shas = _corpus(tmp_path, SCOPE_SPECS)
+    _write_cache(data, {n: shas[n] for n in ("t1.pdf", "t2.pdf", "t3.pdf")}, SCOPE_PAGES)
+    rc, out = _eval(monkeypatch, mp, data, "--ocr-cache")
+    assert out["gate"]["macro_f1"] < 0.41
+    assert _all_macro(out) >= 0.41  # an all-30-style macro would pass the floor
+    assert rc == 1 and out["gate"]["passed"] is False
+    assert any("macro (holdout) boundary F1" in f for f in out["gate"]["failures"])

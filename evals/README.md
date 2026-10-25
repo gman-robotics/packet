@@ -11,8 +11,11 @@ and can plan DocLayNet concatenations from a local catalog.
 | develop | DocLayNet train/val pages | layout F1 (internal) | yes (train only) |
 | synth packets | concatenate DocLayNet **documents** from val | `packet-dlnet-synth` | no |
 | whole-doc packets | whole public PDFs named by DocLayNet, joined | `packet-dlnet-whole` | no |
-| PoliTax-Split | Extend-AI/PoliTax-Split whole PDFs + CC0 labels | `packet-politax` | `--ocr-cache` only: holdout macro >= 0.41 (plain run report-only) |
+| PoliTax-Split | Extend-AI/PoliTax-Split whole PDFs + CC0 labels | `packet-politax` | no |
 | frozen | OmniDocBench, olmOCR-bench | public parse scores | **never** |
+
+PoliTax gate (GMA-274 Q7): `packet eval --set politax --ocr-cache` gates the
+holdout macro F1 at 0.41 (per-fixture 0.0); the plain run is report-only.
 
 ## Commands
 
