@@ -1,0 +1,43 @@
+name: Enhancement
+description: New capability or improvement to Packet
+title: "[enhancement]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposals should stay domain-agnostic in core `src/packet/` unless explicitly adapter work.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: User or system need not met today
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable outcomes and tests
+    validations:
+      required: true
+  - type: textarea
+    id: nongoals
+    attributes:
+      label: Non-goals
+      description: Related work deferred on purpose
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification plan
+      description: CI checks plus any verify-packet feature recipe
+      value: |
+        python -m ruff check src tests
+        python -m pytest -q -m "not needs_network and not needs_gpu and not needs_models and not needs_ocr_extras" --tb=short
+        packet eval --dir /tmp/packet-eval-issue
+        Optional: .cursor/skills/verify-packet/features/ recipe for CLI proof
+    validations:
+      required: true

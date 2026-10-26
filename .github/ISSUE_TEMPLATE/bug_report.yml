@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in Packet (CLI or library) is wrong or regressed
+title: "[bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the failure against current `main`. Verification should match CI where possible (see `.cursor/skills/standards-packet/SKILL.md`).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened vs what you expected
+      placeholder: "packet parse foo.pdf exits 1 with ..."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Testable conditions for done (cite pytest or eval gate if applicable)
+      placeholder: "- packet eval still prints GATE PASS\n- New test in tests/test_....py"
+    validations:
+      required: true
+  - type: textarea
+    id: nongoals
+    attributes:
+      label: Non-goals
+      description: Out of scope for this fix
+      placeholder: "No OCR backend changes"
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification plan
+      description: Commands to run before closing
+      value: |
+        pip install -e ".[dev]"
+        python -m ruff check src tests
+        python -m pytest -q -m "not needs_network and not needs_gpu and not needs_models and not needs_ocr_extras" --tb=short
+        packet eval --dir /tmp/packet-eval-issue
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: packet-dl version or commit
+      placeholder: "0.1.0 or git sha"
+    validations:
+      required: false
