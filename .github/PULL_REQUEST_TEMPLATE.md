@@ -18,7 +18,7 @@ Models:
 
 ## Linear
 
-<!-- https://linear.app/<workspace>/issue/<ID> or N/A -->
+<!-- Example: https://linear.app/gman-personal-projects/issue/GMA-412 — or N/A -->
 
 Linear:
 
@@ -36,7 +36,8 @@ Gates:
 
 ## Verification
 
+- [ ] `python -m pip install --upgrade pip` and `python -m pip install -e ".[dev]"` (exit 0)
 - [ ] `python -m ruff check src tests` (exit 0)
 - [ ] `python -m pytest -q -m "not needs_network and not needs_gpu and not needs_models and not needs_ocr_extras" --tb=short` (exit 0)
-- [ ] `packet eval --dir <local-cache>` prints `GATE PASS` (exit 0)
+- [ ] `PYTHONPATH=src packet eval --dir ${TMPDIR:-/tmp}/packet-eval-local` prints `GATE PASS` with `set -o pipefail` and tee (exit 0)
 - [ ] `.cursor/skills/verify-packet/control-packet ci-headless` after `launch` + `env` (exit 0)

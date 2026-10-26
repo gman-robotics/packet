@@ -5,7 +5,7 @@ description: "gman-robotics/packet (packet-dl): PR/issue shape, planning, implem
 
 # standards-packet
 
-Repository **Packet** (PyPI-style name `packet-dl`, CLI `packet`). Harness skills live under `.cursor/skills/`; verification harness is `verify-packet` at `.cursor/skills/verify-packet/SKILL.md`.
+Repository **Packet** (PyPI-style name `packet-dl`, CLI `packet`). Skill id is `standards-packet` (not hub default `standards-packet-dl` from `pyproject.toml` `[project].name`). Harness skills live under `.cursor/skills/`; verification harness is `verify-packet` at `.cursor/skills/verify-packet/SKILL.md`.
 
 ## PR format
 
@@ -20,7 +20,7 @@ Every pull request description uses this **header order** (values on the same li
 | Tier | Meaning |
 | --- | --- |
 | **T0** | Small change, docs-only, or check-only (hub Markdown, typos, config tweak) |
-| **T1** | Medium feature or fix in an existing module under `src/packet/` |
+| **T1** | Medium feature or fix in an existing module |
 | **T2** | Larger feature, new module, or cross-cutting behavior change |
 | **T3** | Infra, migration, or new service / major architectural move |
 
@@ -50,8 +50,8 @@ Use only labels that exist on the repo (`gh label list`). Current labels include
 ## Planning
 
 - **T0–T1** — inline plan in the PR `Summary` is enough; name files and risks.
-- **T2–T3** — use hub `plan-code-review-workflow` when the change spans multiple modules, eval gates, or CLI contracts; otherwise an architect-style plan in the PR body with file list, rollback, and named checks per **sequence-verifiable-units**.
-- Plans must name verification commands (ruff, filtered pytest, `packet eval`, `verify-packet`) before implementation starts.
+- **T2–T3** — use hub `architect` for design and tradeoffs; use hub `plan-code-review-workflow` when the change spans multiple modules, eval gates, or CLI contracts. Plans must list files, rollback, and named checks per **sequence-verifiable-units**.
+- Every plan names verification commands (ruff, filtered pytest, `packet eval`, `verify-packet`) before implementation starts.
 
 ## Implementation
 
@@ -62,29 +62,49 @@ Use only labels that exist on the repo (`gh label list`). Current labels include
 
 ## Verification
 
-**CI pass bar** (job `verify`, Ubuntu, Python 3.12.15) — all steps must succeed (exit code 0 unless noted):
+**CI pass bar** (job `verify`, Ubuntu, Python 3.12.15) — every step exits 0:
 
-| Step | Command / assertion |
-| --- | --- |
-| Editable install | `pip install -e ".[dev]"` then from `$RUNNER_TEMP`: `import packet` resolves under `$GITHUB_WORKSPACE/src/packet` |
-| Ruff | `python -m ruff check src tests` → exit 0 |
-| Pytest (unit) | `python -m pytest -q -m "not needs_network and not needs_gpu and not needs_models and not needs_ocr_extras" --tb=short` → exit 0 |
-| Builtin eval GATE | `PYTHONPATH=src packet eval --dir <cache-dir>` → exit 0 and stdout contains `GATE PASS` |
-| verify-packet smoke | `PACKET_VERIFY_RUN_ID=... PYTHONPATH=src` then `.cursor/skills/verify-packet/control-packet launch`, `eval "$(.cursor/skills/verify-packet/control-packet env)"`, `.cursor/skills/verify-packet/control-packet ci-headless` → exit 0 |
+1. **Install package** — `python -m pip install --upgrade pip` then `python -m pip install -e ".[dev]"`.
+2. **Editable install imports the checkout (GMA-219)** — from `$RUNNER_TEMP`:  
+   `python -c "import packet, pathlib, os; p=pathlib.Path(packet.__file__).resolve(); r=(pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'src'/'packet').resolve(); assert p.is_relative_to(r), p; print(p)"`
+3. **Ruff** — `python -m ruff check src tests`
+4. **Pytest (unit)** — `python -m pytest -q -m "not needs_network and not needs_gpu and not needs_models and not needs_ocr_extras" --tb=short`
+5. **Builtin eval GATE** (`PYTHONPATH: src`) —  
+   `set -o pipefail`  
+   `export PATH="${HOME}/.local/bin:${PATH}"`  
+   `python -c "import packet, pathlib; p=pathlib.Path(packet.__file__).resolve(); r=(pathlib.Path('src')/'packet').resolve(); assert p.is_relative_to(r), p"`  
+   `CACHE="${RUNNER_TEMP}/packet-eval"`  
+   `mkdir -p "$CACHE"`  
+   `packet eval --dir "$CACHE" | tee "${RUNNER_TEMP}/eval-builtin.txt"`  
+   `grep -q 'GATE PASS' "${RUNNER_TEMP}/eval-builtin.txt"`
+6. **verify-packet headless smoke** (`PACKET_VERIFY_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}`, `PYTHONPATH: src`) —  
+   `set -o pipefail`  
+   `export PATH="${HOME}/.local/bin:${PATH}"`  
+   `python -c "import packet, pathlib; p=pathlib.Path(packet.__file__).resolve(); r=(pathlib.Path('src')/'packet').resolve(); assert p.is_relative_to(r), p"`  
+   `.cursor/skills/verify-packet/control-packet launch`  
+   `eval "$(.cursor/skills/verify-packet/control-packet env)"`  
+   `.cursor/skills/verify-packet/control-packet ci-headless`
 
-**Local pre-push** (from repo root, Python 3.11+ per `pyproject.toml`):
+**Local pre-push** (from repo root; mirror CI order; Python 3.11+ per `pyproject.toml`):
 
 ```bash
+python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
+REPO_ROOT="$(pwd)"
+cd "${TMPDIR:-/tmp}"
+GITHUB_WORKSPACE="$REPO_ROOT" python -c "import packet, pathlib, os; p=pathlib.Path(packet.__file__).resolve(); r=(pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'src'/'packet').resolve(); assert p.is_relative_to(r), p; print(p)"
+cd "$REPO_ROOT"
 python -m ruff check src tests
 python -m pytest -q -m "not needs_network and not needs_gpu and not needs_models and not needs_ocr_extras" --tb=short
+set -o pipefail
 export PATH="${HOME}/.local/bin:${PATH}"
+export PYTHONPATH=src
+python -c "import packet, pathlib; p=pathlib.Path(packet.__file__).resolve(); r=(pathlib.Path('src')/'packet').resolve(); assert p.is_relative_to(r), p"
 CACHE="${TMPDIR:-/tmp}/packet-eval-local"
 mkdir -p "$CACHE"
-packet eval --dir "$CACHE" | tee /tmp/packet-eval-local.txt
-grep -q 'GATE PASS' /tmp/packet-eval-local.txt
+packet eval --dir "$CACHE" | tee "${TMPDIR:-/tmp}/packet-eval-local.txt"
+grep -q 'GATE PASS' "${TMPDIR:-/tmp}/packet-eval-local.txt"
 export PACKET_VERIFY_RUN_ID="local-$(date +%s)-$$"
-export PYTHONPATH=src
 .cursor/skills/verify-packet/control-packet launch
 eval "$(.cursor/skills/verify-packet/control-packet env)"
 .cursor/skills/verify-packet/control-packet ci-headless
