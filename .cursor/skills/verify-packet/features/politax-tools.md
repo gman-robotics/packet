@@ -5,7 +5,7 @@ Three CLI entry points support the PoliTax-Split eval set outside the builtin `p
 ## Sub-features
 
 - `politax-train-weights` fits schema-1 logistic boundary weights on **trump** training PDFs only and writes JSON via `-o`.
-- `politax-ocr` (optional, MLX + weights) renders PoliTax scan pages and writes cached text under `<data-dir>/ocr` for later `packet eval --set politax --ocr-cache`. Supports `--dry-run` and `--report` without loading the model.
+- `politax-ocr` (optional; needs `mlx-vlm` plus LightOn **model weights** on disk for a full run) renders PoliTax scan pages and writes cached text under `<data-dir>/ocr` for later `packet eval --set politax --ocr-cache`. `--dry-run` and `--report` return before `mlx_vlm` is imported (dry-run still fetches PoliTax PDFs and lists pending pages).
 - `politax-ship-check` evaluates the ship gate against existing weights or freshly trains trump weights to `--train-output`; needs PoliTax and dlnet-whole caches.
 
 ## How to get to it (user POV)
@@ -19,15 +19,16 @@ Three CLI entry points support the PoliTax-Split eval set outside the builtin `p
 Preconditions:
 
 - `.cursor/skills/verify-packet/control-packet doctor` reports `ok: true`.
-- PoliTax manifest PDFs fetched under `$DATA` (default `~/.cache/packet/politax`); first fetch needs network.
+- `DATA="${DATA:-$HOME/.cache/packet/politax}"` and `DLNET="${DLNET:-$HOME/.cache/packet/dlnet-whole}"`.
+- PoliTax PDFs under `$DATA` and dlnet-whole PDFs under `$DLNET` (first fetch for each needs network). If either cache is missing or empty, report the whole feature as **blocked** — do not treat partial runs as proof.
 
 - **Train weights.** Set `OUT="$PACKET_VERIFY_ROOT/scratch/politax-weights.json"` and `mkdir -p "$(dirname "$OUT")"`. Run `PACKET_VERIFY_CMD_LABEL=politax-train-weights .cursor/skills/verify-packet/control-packet cli -- politax-train-weights --data-dir "$DATA" -o "$OUT"`. Exit `0`. Stdout matches `wrote … trump PDFs`.
 - **OCR dry-run.** Run `PACKET_VERIFY_CMD_LABEL=politax-ocr-dry .cursor/skills/verify-packet/control-packet cli -- politax-ocr --data-dir "$DATA" --dry-run`. Exit `0` without `ocr-mlx` when only listing pages. Full OCR run needs `doctor` `ocr_lighton: ready` (not headless CI).
-- **Ship check.** With committed fixture `tests/fixtures/decision/logistic_weights.json`, run `PACKET_VERIFY_CMD_LABEL=politax-ship-check .cursor/skills/verify-packet/control-packet cli -- politax-ship-check --weights tests/fixtures/decision/logistic_weights.json --data-dir "$DATA" --dlnet-cache "$HOME/.cache/packet/dlnet-whole"`. Exit `0`. Stdout contains `ship=pass` and numbered `PASS` lines (needs both caches populated). Use `--json` for `report.as_dict()`.
-- **Proof.** When preconditions are met, append `feature=politax-tools data_dir=$DATA run_id=$PACKET_VERIFY_RUN_ID` to `$PACKET_VERIFY_ARTIFACTS/proof.txt`.
+- **Ship check.** With both caches populated, run either `politax-ship-check` without `--weights` (trains trump weights to a scratch path) or pass `-o` weights from **Train weights** above — not `tests/fixtures/decision/logistic_weights.json` (all-zero weights give p=0.5 everywhere, so holdout scorer-on cannot beat scorer-off). Example: `PACKET_VERIFY_CMD_LABEL=politax-ship-check .cursor/skills/verify-packet/control-packet cli -- politax-ship-check --weights "$OUT" --data-dir "$DATA" --dlnet-cache "$DLNET"`. The CLI **always exits 0**; read stdout (or `--json` `.ship` / `.outcome`): proof requires `ship=pass outcome (a)` and every checklist line `N. [PASS] …`. `ship=FAIL outcome (b)` or any `[FAIL]` line is a failed gate even at exit 0. An empty or incomplete `$DLNET` can raise an uncaught traceback from `wholedoc.fetch` during item 4 — that is not a formatted checklist FAIL.
+- **Proof.** When preconditions are met and ship stdout shows `ship=pass outcome (a)`, append `feature=politax-tools data_dir=$DATA run_id=$PACKET_VERIFY_RUN_ID` to `$PACKET_VERIFY_ARTIFACTS/proof.txt`.
 
 ## Gotchas
 
 - `politax-ocr` and full `politax-ship-check` are intentionally outside CI; builtin `ci-headless` stays on synthetic fixtures only.
-- Ship check item 4 touches dlnet-whole; an empty dlnet cache fails or blocks until `packet eval --set dlnet-whole` has run once.
+- Ship check item 4 calls `run_dlnet_whole`; populate `$DLNET` first (e.g. `packet eval --set dlnet-whole --data-dir "$DLNET"`). An empty cache often aborts with an uncaught network/traceback from `wholedoc.fetch`, not a numbered `[FAIL]` line.
 - Without PoliTax data on disk, report each recipe as blocked rather than skipping verification silently.
