@@ -38,3 +38,4 @@ Each feature file has an H1 title, one introductory paragraph, then exactly four
 - [Run builtin eval](./eval.md) — boundary metrics on synthetic fixtures with pass/fail gates.
 - [OCR paths](./ocr.md) — LightOnOCR on a scanned PDF, `--force-inspect`, and `PACKET_OCR=off`.
 - [Plan DocLayNet eval packets](./eval-plan.md) — generate a manifest and placeholder PDFs from an external catalog.
+- [PoliTax tooling](./politax-tools.md) — train weights, optional OCR cache, and default-on ship gate.
