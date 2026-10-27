@@ -87,6 +87,19 @@ def test_default_off_ignores_cache_and_never_imports_module(tmp_path, monkeypatc
     assert "packet.eval.politax_ocr_eval" not in sys.modules
 
 
+def test_ocr_cache_stdout_holdout_block_stays_native_baseline(tmp_path, monkeypatch, capsys):
+    mp, data, shas = _corpus(tmp_path)
+    _write_cache(data, shas, PAGES)
+    monkeypatch.setattr(politax, "MANIFEST", mp)
+    rc = cli.main(["eval", "--set", "politax", "--data-dir", str(data), "--ocr-cache"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    start = out.index("holdout heuristic baseline")
+    block = out[start : out.find("macro holdout F1", start)]
+    assert "0 predicted boundaries" in block
+    assert "macro F1 0.0000" in block
+
+
 def test_opt_in_feeds_cached_text_and_reports_stats(tmp_path, monkeypatch):
     mp, data, shas = _corpus(tmp_path)
     _, off = _eval(monkeypatch, mp, data)
@@ -97,8 +110,10 @@ def test_opt_in_feeds_cached_text_and_reports_stats(tmp_path, monkeypatch):
                                "engines": {"lighton-mlx:m@r": 6}}
     hold = on["holdout_heuristic"]
     assert hold["holdout_files"] == ["o1.pdf"]
-    # Cached text adds page-number restarts, so the holdout cut is found; text-free is not.
-    assert hold["macro_f1"] > off["holdout_heuristic"]["macro_f1"]
+    assert on["holdout_baseline"] == hold
+    # JSON holdout baseline stays native-text; the OCR lift shows up in the gated macro.
+    assert hold["macro_f1"] == off["holdout_heuristic"]["macro_f1"]
+    assert on["gate"]["macro_f1"] > off["gate"]["macro_f1"]
 
 
 def test_opt_in_missing_records_count_and_yield_no_blocks(tmp_path, monkeypatch):
@@ -157,7 +172,8 @@ def test_q7_floor_applies_only_to_ocr_cache_runs(tmp_path, monkeypatch):
     _write_cache(data, shas, PAGES)
     rc_hit, hit = _eval(monkeypatch, mp, data, "--ocr-cache")
     assert rc_hit == 0 and hit["gate"]["passed"] is True
-    assert hit["gate"]["macro_f1"] == hit["holdout_heuristic"]["macro_f1"] >= 0.41
+    assert hit["gate"]["macro_f1"] >= 0.41
+    assert hit["holdout_heuristic"]["macro_f1"] == 0.0
     # Explicit flags still override the locked floor.
     rc_ovr, ovr = _eval(monkeypatch, mp, data, "--ocr-cache", "--min-macro-f1", "0")
     assert rc_ovr == 0 and ovr["gate"]["min_macro_f1"] == 0.0

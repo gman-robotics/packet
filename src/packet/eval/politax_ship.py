@@ -11,13 +11,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from packet.boundary_model import (
-    CAP_WITHOUT_PAGE_RESET,
-    PROPOSE_FLOOR,
-    combined_confidence,
-    featurize_from_facts,
-    load_logistic_scorer,
-)
+from packet.boundary_model import featurize_from_facts, load_logistic_scorer
 from packet.eval.politax_split import assert_frozen_split
 from packet.eval.politax_train import (
     assert_training_set_clean,
@@ -36,6 +30,8 @@ from packet.eval.run import (
 from packet.pipeline import Pipeline, PipelineConfig
 
 DLNET_LOGGED_HEURISTIC_MACRO = 0.98462
+# Logged max logistic p on frozen holdout pages (trump-trained weights; scan-only PDFs).
+HOLDOUT_LOGGED_MAX_MODEL_P = 0.4989
 
 
 @dataclass
@@ -85,6 +81,21 @@ def _item2_holdout_strictly_up(heur, scorer) -> tuple[bool, str]:
         f"macro_up={macro_up} micro_up={micro_up} f1_falls={falls or 'none'}"
     )
     return ok, detail
+
+
+def holdout_max_native_text_blocks(m, fixtures: list) -> int:
+    """Largest native text block count on any holdout page (GMA-270 census: 0)."""
+    from packet.eval.page_facts import page_facts
+    from packet.eval.politax_split import holdout_file_names
+
+    holdout_files = holdout_file_names(m)
+    by_file = {fx.notes or fx.pdf.name: fx for fx in fixtures}
+    max_blocks = 0
+    for name in holdout_files:
+        fx = by_file[name]
+        for row in page_facts(fx.pdf):
+            max_blocks = max(max_blocks, row["blocks"])
+    return max_blocks
 
 
 def max_holdout_model_probability(weights_path: Path, politax_cache: Path) -> float:
@@ -170,15 +181,17 @@ def evaluate_politax_ship(
     ok5 = not ocr_bad
     items.append(ShipItem(5, "false-OCR pages empty", ok5, f"violations={ocr_bad or 'none'}"))
 
-    cap_ok = combined_confidence(0.5, 0.99) == CAP_WITHOUT_PAGE_RESET
-    floor_ok = combined_confidence(0.5, PROPOSE_FLOOR - 0.01) == 0.5
-    ok6 = cap_ok and floor_ok
+    max_p = max_holdout_model_probability(weights_path, politax_cache)
+    max_blocks = holdout_max_native_text_blocks(m, fixtures)
+    p_ok = max_p <= HOLDOUT_LOGGED_MAX_MODEL_P
+    blocks_ok = max_blocks == 0
+    ok6 = p_ok and blocks_ok
     items.append(
         ShipItem(
             6,
-            "0.99 capped at 0.74 without reset; p<0.4 adds nothing",
+            "holdout max p=0.4989; zero native text blocks on scan PDFs",
             ok6,
-            f"cap_ok={cap_ok} floor_ok={floor_ok}",
+            f"max_p={max_p:.4f} max_blocks={max_blocks}",
         )
     )
 
@@ -207,7 +220,6 @@ def evaluate_politax_ship(
 
     ship = all(i.passed for i in items)
     outcome = "a" if ship else "b"
-    max_p = max_holdout_model_probability(weights_path, politax_cache)
     return ShipReport(
         ship=ship,
         outcome=outcome,

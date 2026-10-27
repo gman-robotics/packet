@@ -4,6 +4,7 @@ from pathlib import Path
 
 from packet.eval.politax_ship import (
     DLNET_LOGGED_HEURISTIC_MACRO,
+    HOLDOUT_LOGGED_MAX_MODEL_P,
     _item2_holdout_strictly_up,
 )
 from packet.eval.politax_train import HoldoutScorecard
@@ -36,3 +37,7 @@ def test_eval_subcommand_does_not_read_decision_api_key():
 
 def test_dlnet_logged_heuristic_floor_constant():
     assert DLNET_LOGGED_HEURISTIC_MACRO == 0.98462
+
+
+def test_holdout_logged_max_model_p_constant():
+    assert HOLDOUT_LOGGED_MAX_MODEL_P == 0.4989

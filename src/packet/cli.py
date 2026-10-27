@@ -504,21 +504,21 @@ def _cmd_eval(args) -> int:
         subjects = {d.file_name: d.subject for d in m.docs}
         politax_gold_totals = politax.corpus_gold_label_totals(m)
         politax_census = politax.text_layer_census(fixtures, subjects=subjects)
+        native_heur_results = [ev.run_fixture(fx, Pipeline()) for fx in fixtures]
+        politax_holdout_baseline = compute_holdout_baseline(m, fixtures, native_heur_results)
         if args.ocr_cache:
             from packet.eval.politax_ocr_eval import run_with_ocr_cache
             from packet.eval.politax_split import holdout_results
 
             results_heur, ocr_stats = run_with_ocr_cache(m, fixtures, data)
             macro_results = holdout_results(m, fixtures, results_heur)
-        else:
-            heur_pipe = Pipeline() if args.boundary_weights else pipe
-            results_heur = [ev.run_fixture(fx, heur_pipe) for fx in fixtures]
-        politax_holdout_baseline = compute_holdout_baseline(m, fixtures, results_heur)
-        if args.boundary_weights:
+            results = results_heur
+        elif args.boundary_weights:
             results = [ev.run_fixture(fx, pipe) for fx in fixtures]
             politax_holdout_scorer = holdout_scorecard(m, fixtures, results)
+            results_heur = native_heur_results
         else:
-            results = results_heur
+            results = results_heur = native_heur_results
     else:
         results = ev.run_named_fixtures(root, pipeline=pipe)
     gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=min_macro,
@@ -556,7 +556,9 @@ def _cmd_eval(args) -> int:
             if politax_holdout_baseline is not None:
                 from packet.eval.politax_split import holdout_baseline_as_dict
 
-                payload["holdout_heuristic"] = holdout_baseline_as_dict(politax_holdout_baseline)
+                holdout_payload = holdout_baseline_as_dict(politax_holdout_baseline)
+                payload["holdout_heuristic"] = holdout_payload
+                payload["holdout_baseline"] = holdout_payload
             if politax_holdout_scorer is not None:
                 payload["holdout_scorer"] = {
                     "macro_f1": politax_holdout_scorer.macro_f1,

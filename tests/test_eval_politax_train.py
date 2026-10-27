@@ -1,17 +1,51 @@
 """GMA-288: train logistic weights on PoliTax trump PDFs only."""
 
+import pytest
 
-from packet.boundary_model import FEATURE_NAMES, train_logistic
+from packet.boundary_model import FEATURE_NAMES, LogisticBoundaryScorer, train_logistic
 from packet.cli import _pipeline_for_boundary_weights
 from packet.eval import politax
 from packet.eval.politax_split import partition_docs
 from packet.eval.politax_train import (
     TrainingRows,
+    TrainingSetError,
     assert_training_set_clean,
     collect_trump_training_rows,
 )
 from packet.eval.run import run_named_fixtures
 from tests.test_eval_politax import _fake_manifest, _write_ann
+
+
+def test_assert_training_set_clean_rejects_dlnet_whole_packet_id():
+    m = politax.load_manifest()
+    rows = TrainingRows([], [], ["dlw-00"])
+    with pytest.raises(TrainingSetError, match="dlnet-whole"):
+        assert_training_set_clean(rows, m)
+
+
+def test_collect_trump_rows_rejects_dlnet_whole_filename(tmp_path):
+    m = _fake_manifest(tmp_path, 1, subjects=["trump"])
+    orig_pdf = tmp_path / m.docs[0].file
+    d0 = m.docs[0]
+    m.docs[0] = politax.PoliTaxDoc(
+        d0.subject,
+        "dlw-00.pdf",
+        "dlw-00.pdf",
+        d0.url,
+        d0.pages,
+        d0.sha256,
+        d0.license,
+        d0.gold_cuts,
+    )
+    ann_path = _write_ann(tmp_path, m)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "dlw-00.pdf").write_bytes(orig_pdf.read_bytes())
+    annotations = politax.load_annotations(ann_path)
+    fixtures = politax.build_fixtures(m, cache, annotations)
+    by_file = {fx.notes or fx.pdf.name: fx for fx in fixtures}
+    with pytest.raises(TrainingSetError, match="dlnet-whole"):
+        collect_trump_training_rows(m, by_file)
 
 
 def test_training_manifest_excludes_holdout_and_dlnet_names():
@@ -46,12 +80,17 @@ def test_eval_bad_boundary_weights_exits_2(tmp_path, capsys):
 
 def test_builtin_fixtures_f1_one_with_loaded_weights(tmp_path):
     from packet.boundary_model import export_weights_json
+    from packet.pipeline import Pipeline
 
     w = train_logistic([[0.0] * len(FEATURE_NAMES)], [0])
     path = tmp_path / "neutral.json"
     export_weights_json(path, w, training_packets=["trump-only-test"])
     pipe = _pipeline_for_boundary_weights(str(path))
     assert pipe is not None
+    scorer = pipe.config.scorer
+    assert isinstance(scorer, LogisticBoundaryScorer)
+    assert scorer.bias == pytest.approx(w[3])
+    assert Pipeline().config.scorer is None
     results = run_named_fixtures(tmp_path, pipeline=pipe)
     assert len(results) == 4
     assert all(r.boundary.f1 == 1.0 for r in results)
