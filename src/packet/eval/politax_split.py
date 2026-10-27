@@ -133,6 +133,10 @@ def format_holdout_baseline(baseline: HoldoutBaseline) -> str:
         f"micro P {baseline.micro_p:.4f} R {baseline.micro_r:.4f} F1 {baseline.micro_f1:.4f}"
     )
     lines.append(
+        "  Q7 note: native-text heuristic yields 0 predicted boundaries on holdout "
+        "scan-only PDFs (baseline macro F1 0.00)."
+    )
+    lines.append(
         f"  proposed macro floor (truncated to 2 decimals; Q7 locks 0.41 for --ocr-cache): "
         f"{baseline.proposed_macro_floor:.2f}  "
         "(plain eval floors stay 0.0)"

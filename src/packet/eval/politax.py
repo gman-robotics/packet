@@ -20,8 +20,7 @@ from packet.eval.fixtures import NamedFixture
 from packet.types import LogicalDocument, Packet, PacketOrigin
 
 MANIFEST = Path(__file__).resolve().parents[3] / "evals" / "politax.json"
-# Public tax-return PDFs (mixed native text and scan pages); not born-digital synthetics.
-POLITAX_FIXTURE_CONDITION = "public-tax-return"
+POLITAX_FIXTURE_CONDITION = "pub-tax-return"
 
 
 class FetchError(RuntimeError):
