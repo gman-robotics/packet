@@ -211,4 +211,5 @@ def test_cli_eval_politax_is_report_only(tmp_path, monkeypatch, capsys):
     assert out["gate"]["passed"] is True
     assert "micro_boundary_f1" in out
     assert out["gold_label_totals"] == {"boundaries": 0, "sub_documents": len(m.docs)}
+    assert out["holdout_baseline"] == out["holdout_heuristic"]
     assert rc == 0

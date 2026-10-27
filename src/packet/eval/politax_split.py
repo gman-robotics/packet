@@ -118,7 +118,7 @@ def compute_holdout_baseline(
     )
 
 
-def format_holdout_baseline(baseline: HoldoutBaseline) -> str:
+def format_holdout_baseline(baseline: HoldoutBaseline, *, include_q7_native_note: bool = True) -> str:
     lines = [
         "holdout heuristic baseline (frozen split; scorer None):",
         f"  holdout PDFs ({len(baseline.holdout_files)}):",
@@ -132,10 +132,11 @@ def format_holdout_baseline(baseline: HoldoutBaseline) -> str:
         f"  macro F1 {baseline.macro_f1:.4f}  "
         f"micro P {baseline.micro_p:.4f} R {baseline.micro_r:.4f} F1 {baseline.micro_f1:.4f}"
     )
-    lines.append(
-        "  Q7 note: native-text heuristic yields 0 predicted boundaries on holdout "
-        "scan-only PDFs (baseline macro F1 0.00)."
-    )
+    if include_q7_native_note:
+        lines.append(
+            "  Q7 note: native-text heuristic yields 0 predicted boundaries on holdout "
+            "scan-only PDFs (baseline macro F1 0.00)."
+        )
     lines.append(
         f"  proposed macro floor (truncated to 2 decimals; Q7 locks 0.41 for --ocr-cache): "
         f"{baseline.proposed_macro_floor:.2f}  "

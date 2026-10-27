@@ -52,6 +52,21 @@ def test_q7_note_states_zero_predicted_boundaries():
     assert "0 predicted boundaries" in format_holdout_baseline(baseline)
 
 
+def test_q7_note_omitted_when_not_native_baseline():
+    baseline = HoldoutBaseline(
+        holdout_files=["obama_2009_complete_return.pdf"],
+        per_subject_cuts={"obama": 1},
+        macro_f1=0.42,
+        micro_p=0.4,
+        micro_r=0.4,
+        micro_f1=0.4,
+        proposed_macro_floor=0.41,
+    )
+    text = format_holdout_baseline(baseline, include_q7_native_note=False)
+    assert "0 predicted boundaries" not in text
+    assert "macro F1 0.4200" in text
+
+
 def test_holdout_baseline_excludes_train_rows(tmp_path: Path):
     m = _fake_manifest(tmp_path, 2, subjects=["trump", "obama"])
     ann_path = _write_ann(tmp_path, m)
