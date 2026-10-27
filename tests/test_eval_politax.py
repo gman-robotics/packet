@@ -33,16 +33,25 @@ def test_manifest_sha256_pins_locked_against_fixture():
 
 
 def test_fetch_rejects_cached_pdf_when_bytes_differ_from_manifest_pin(tmp_path):
-    m = politax.load_manifest()
-    pins = json.loads(POLITAX_SHA256_PINS.read_text())
+    m = _fake_manifest(tmp_path, 1)
+    ann_path = _write_ann(tmp_path, m)
     doc = m.docs[0]
-    assert doc.sha256 == pins["pdfs"][doc.file_name]
     wrong = write_text_pdf(tmp_path / "wrong.pdf", [["not the pinned tax return bytes"]])
     cache = tmp_path / "cache"
     cache.mkdir()
+    (cache / m.annotations.file).write_bytes(ann_path.read_bytes())
     (cache / doc.file).write_bytes(wrong.read_bytes())
-    with pytest.raises(politax.FetchError, match="sha256 mismatch"):
-        politax.fetch(m, cache=cache, opener=lambda url: b"", pause=0)
+    wrong_bytes = wrong.read_bytes()
+
+    def opener(url: str) -> bytes:
+        if url == m.annotations.url:
+            return ann_path.read_bytes()
+        if url == doc.url:
+            return wrong_bytes
+        return b""
+
+    with pytest.raises(politax.FetchError, match=f"{doc.file_name}: sha256 mismatch"):
+        politax.fetch(m, cache=cache, opener=opener, pause=0)
 
 
 def test_corpus_gold_label_totals_match_frozen_counts():

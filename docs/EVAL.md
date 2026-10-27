@@ -46,7 +46,9 @@ is one fixture; gold sub-documents come from the pinned CC0
 ``annotations.jsonl``. Downloads land in ``~/.cache/packet/politax`` or
 ``--data-dir``; nothing third-party is committed. Plain-run floors are
 report-only (0.0 per fixture and macro); ``--ocr-cache`` runs are gated (Q7 below). The CLI prints macro F1, micro boundary P/R/F1,
-and a text-layer census (pages with at least 40 native characters).
+gold label totals (boundaries and sub-documents), a text-layer census (pages with at least 40 native characters),
+and the holdout heuristic baseline (including the Q7 note that the native-text run yields **0 predicted boundaries**
+on holdout scan-only PDFs, baseline macro F1 0.00).
 
 **PoliTax train/holdout** (GMA-274): train = ``trump`` whole PDFs; holdout =
 ``obama``, ``harris``, and ``biden`` whole PDFs (frozen in
