@@ -20,6 +20,8 @@ from packet.eval.fixtures import NamedFixture
 from packet.types import LogicalDocument, Packet, PacketOrigin
 
 MANIFEST = Path(__file__).resolve().parents[3] / "evals" / "politax.json"
+# Public tax-return PDFs (mixed native text and scan pages); not born-digital synthetics.
+POLITAX_FIXTURE_CONDITION = "public-tax-return"
 
 
 class FetchError(RuntimeError):
@@ -47,6 +49,7 @@ class PoliTaxDoc:
     pages: int
     sha256: str
     license: str
+    gold_cuts: int
 
 
 @dataclass
@@ -85,6 +88,7 @@ def load_manifest(path: Path | None = None) -> Manifest:
             d["pages"],
             d["sha256"],
             d["license"],
+            int(d.get("gold_cuts", 0)),
         )
         for d in raw["docs"]
     ]
@@ -222,8 +226,23 @@ def build_fixtures(m: Manifest, cache: Path, annotations: dict[str, FileAnnotati
             origin=PacketOrigin(path=str(pdf_path), page_count=d.pages),
             documents=docs,
         )
-        fixtures.append(NamedFixture(name, pdf_path, gold, "born-digital", notes=d.file_name))
+        fixtures.append(NamedFixture(name, pdf_path, gold, POLITAX_FIXTURE_CONDITION, notes=d.file_name))
     return fixtures
+
+
+def corpus_gold_label_totals(m: Manifest) -> tuple[int, int]:
+    """Return ``(gold_boundaries, sub_documents)`` summed across all manifest PDFs.
+
+    Manifest ``gold_cuts`` counts sub-documents per whole PDF; internal boundaries are
+    ``sub_documents - packet_count`` (one packet per PDF).
+    """
+    sub_documents = sum(d.gold_cuts for d in m.docs)
+    boundaries = sub_documents - len(m.docs)
+    return boundaries, sub_documents
+
+
+def format_gold_label_totals(boundaries: int, sub_documents: int) -> str:
+    return f"gold labels: {boundaries} boundaries, {sub_documents} sub-documents"
 
 
 def subject_totals_from_manifest(m: Manifest, manifest_path: Path | None = None) -> dict[str, dict[str, int]]:

@@ -477,6 +477,7 @@ def _cmd_eval(args) -> int:
     min_f1 = floors[0] if args.min_f1 is None else args.min_f1
     min_macro = floors[1] if args.min_macro_f1 is None else args.min_macro_f1
     politax_census = None
+    politax_gold_totals = None
     politax_holdout_baseline = None
     politax_holdout_scorer = None
     ocr_stats = None
@@ -501,6 +502,7 @@ def _cmd_eval(args) -> int:
         data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_POLITAX_CACHE
         m, fixtures = ev.prepare_politax(data)
         subjects = {d.file_name: d.subject for d in m.docs}
+        politax_gold_totals = politax.corpus_gold_label_totals(m)
         politax_census = politax.text_layer_census(fixtures, subjects=subjects)
         if args.ocr_cache:
             from packet.eval.politax_ocr_eval import run_with_ocr_cache
@@ -541,6 +543,12 @@ def _cmd_eval(args) -> int:
             payload["micro_boundary_p"] = mp
             payload["micro_boundary_r"] = mr
             payload["micro_boundary_f1"] = mf
+            if politax_gold_totals is not None:
+                boundaries, sub_documents = politax_gold_totals
+                payload["gold_label_totals"] = {
+                    "boundaries": boundaries,
+                    "sub_documents": sub_documents,
+                }
             if politax_census is not None:
                 payload["text_layer_census"] = politax_census
             if ocr_stats is not None:
@@ -572,6 +580,8 @@ def _cmd_eval(args) -> int:
         from packet.eval.metrics import micro_boundary_prf
 
         print(politax.format_census(politax_census))
+        if politax_gold_totals is not None:
+            print(politax.format_gold_label_totals(*politax_gold_totals))
         mp, mr, mf = micro_boundary_prf(results)
         print(f"micro boundary P {mp:.2f} R {mr:.2f} F1 {mf:.2f} (all {len(results)} packets)")
         if ocr_stats is not None:
