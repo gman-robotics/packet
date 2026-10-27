@@ -9,6 +9,8 @@ from packet.eval import politax
 from packet.eval.metrics import document_boundaries
 from packet.eval.pdfutil import write_text_pdf
 
+POLITAX_SHA256_PINS = Path(__file__).resolve().parent / "fixtures" / "politax_sha256_pins.json"
+
 
 def test_manifest_lists_https_urls_and_pins_every_pdf():
     m = politax.load_manifest()
@@ -18,6 +20,39 @@ def test_manifest_lists_https_urls_and_pins_every_pdf():
     for d in m.docs:
         assert d.url.startswith("https://") and len(d.sha256) == 64 and d.pages >= 1
     assert len(m.annotations.sha256) == 64 and m.annotations.url.startswith("https://")
+
+
+def test_manifest_sha256_pins_locked_against_fixture():
+    """Re-pin ``evals/politax.json`` and this fixture when corpus PDF bytes change."""
+    pins = json.loads(POLITAX_SHA256_PINS.read_text())
+    m = politax.load_manifest()
+    assert m.annotations.sha256 == pins["annotations"]
+    assert len(pins["pdfs"]) == len(m.docs)
+    for d in m.docs:
+        assert d.sha256 == pins["pdfs"][d.file_name]
+
+
+def test_fetch_rejects_cached_pdf_when_bytes_differ_from_manifest_pin(tmp_path):
+    m = politax.load_manifest()
+    pins = json.loads(POLITAX_SHA256_PINS.read_text())
+    doc = m.docs[0]
+    assert doc.sha256 == pins["pdfs"][doc.file_name]
+    wrong = write_text_pdf(tmp_path / "wrong.pdf", [["not the pinned tax return bytes"]])
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / doc.file).write_bytes(wrong.read_bytes())
+    with pytest.raises(politax.FetchError, match="sha256 mismatch"):
+        politax.fetch(m, cache=cache, opener=lambda url: b"", pause=0)
+
+
+def test_corpus_gold_label_totals_match_frozen_counts():
+    m = politax.load_manifest()
+    boundaries, sub_documents = politax.corpus_gold_label_totals(m)
+    assert boundaries == 1122
+    assert sub_documents == 1152
+    assert politax.format_gold_label_totals(boundaries, sub_documents) == (
+        "gold labels: 1122 boundaries, 1152 sub-documents"
+    )
 
 
 def _fake_manifest(
@@ -38,6 +73,7 @@ def _fake_manifest(
                 pages,
                 hashlib.sha256(p.read_bytes()).hexdigest(),
                 "test",
+                1,
             )
         )
     ann = politax.AnnotationsRef(
@@ -134,6 +170,7 @@ def test_build_fixtures_pairs_pdf_with_gold(tmp_path):
         assert fx.pdf.exists()
         assert fx.gold.origin.page_count == d.pages
         assert fx.gold.document_count() == 1
+        assert fx.condition == politax.POLITAX_FIXTURE_CONDITION
 
 
 def test_cli_eval_politax_is_report_only(tmp_path, monkeypatch, capsys):
@@ -164,4 +201,5 @@ def test_cli_eval_politax_is_report_only(tmp_path, monkeypatch, capsys):
     assert out["gate"]["min_f1"] == 0.0 and out["gate"]["min_macro_f1"] == 0.0
     assert out["gate"]["passed"] is True
     assert "micro_boundary_f1" in out
+    assert out["gold_label_totals"] == {"boundaries": 0, "sub_documents": len(m.docs)}
     assert rc == 0

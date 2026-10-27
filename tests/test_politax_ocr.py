@@ -20,7 +20,7 @@ def _doc(path: Path, subject: str = "trump") -> politax.PoliTaxDoc:
     with PdfPageSource(path) as src:
         n = src.page_count
     sha = hashlib.sha256(path.read_bytes()).hexdigest()
-    return politax.PoliTaxDoc(subject, path.name, path.name, "https://x.invalid", n, sha, "t")
+    return politax.PoliTaxDoc(subject, path.name, path.name, "https://x.invalid", n, sha, "t", 1)
 
 
 @pytest.fixture()
