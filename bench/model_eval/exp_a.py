@@ -22,6 +22,16 @@ from packet.ocr_parse import parse_lighton_grounding
 from packet.pipeline import Pipeline
 from packet.types import PageClass, PageRef
 
+LIGHTON_CACHE = (Path.home() / ".cache/packet/politax").resolve()
+
+
+def candidate_dir(p: Path) -> Path:
+    """Destination for candidate OCR records; refuses the LightOn cache itself."""
+    if p.resolve() == LIGHTON_CACHE:
+        sys.exit(f"refusing to write the LightOn OCR cache {LIGHTON_CACHE}; use a separate candidate dir")
+    return p
+
+
 OCR_CLASSES = {PageClass.SCAN, PageClass.MIXED, PageClass.SUSPECT_ENCODING}
 
 
@@ -58,7 +68,9 @@ def builtin(run: Path) -> dict:
 
 def md_f1(run: Path) -> dict:
     blk = json.loads((run / "_blocks.json").read_text())
-    pred = {b["new_doc_at"] for b in (blk.get("boundary_signals") or [])}; gold = {2, 5}
+    if blk.get("boundary_signals") is None:
+        sys.exit(f"{run}: md-00..05 page text missing; no boundary score")
+    pred = {b["new_doc_at"] for b in blk["boundary_signals"]}; gold = {2, 5}
     tp = len(pred & gold); p = tp / len(pred) if pred else 0.0; r = tp / len(gold)
     out = {"pred": sorted(pred), "gold": sorted(gold), "p": p, "r": r, "f1": 2 * p * r / (p + r) if p + r else 0.0}
     (run / "_md_f1.json").write_text(json.dumps(out)); return out
@@ -106,7 +118,8 @@ def politax_ocr_lfm(dst: Path) -> None:
         raw = lx.render(d) if ok else r.text
         stop = "length" if r.generation_tokens >= maxtok else "eos"
         return po.PageResult(raw=raw, tokens=r.generation_tokens, prompt_tokens=r.prompt_tokens,
-                             prefill_s=r.prompt_tokens / max(r.prompt_tps, 1e-9), decode_s=r.generation_tokens / max(r.generation_tps, 1e-9),
+                             prefill_s=r.prompt_tokens / r.prompt_tps if r.prompt_tps else 0.0,
+                             decode_s=r.generation_tokens / r.generation_tps if r.generation_tps else 0.0,
                              stop=stop, render_s=rs)
     vers = {"packet": "harness", "mlx_vlm": md.version("mlx-vlm")}
     s = po.run(plans, recognize, dst, engine, versions=vers)
@@ -127,14 +140,15 @@ def politax_ocr_lfm3(dst: Path) -> None:
     from packet.source import PdfPageSource
     sys.path.insert(0, str(Path(__file__).parent))
     import run_lfm3_mps as l3
+    l3.require_sandbox()
     from huggingface_hub import snapshot_download
     maxtok, px = int(os.environ.get("MAXTOK", "4096")), 1540
     m = politax.load_manifest(); plans = []
     for subj in sorted(POLITAX_HOLDOUT_SUBJECTS):
         plans += po.plan_pages(m.docs, dst, subject=subj)[0]
     engine = po.EngineId("lfm3-mps", l3.REPO, l3.REV, "markdown-nothink", maxtok, px)
-    snap = snapshot_download(l3.REPO, revision=l3.REV)
-    model = AutoModelForImageTextToText.from_pretrained(snap, dtype=torch.bfloat16, trust_remote_code=True).to("mps").eval()
+    snap = snapshot_download(l3.REPO, revision=l3.REV, local_files_only=True)
+    model = AutoModelForImageTextToText.from_pretrained(snap, local_files_only=True, dtype=torch.bfloat16, trust_remote_code=True).to("mps").eval()
     proc = AutoProcessor.from_pretrained(snap, trust_remote_code=True); sources = {}; peak = [0]
 
     def recognize(plan):
@@ -184,11 +198,16 @@ def politax_eval(data: Path) -> dict:
     m, fixtures = prepare_politax(data)
     hold = holdout_file_names(m)
     fx = [f for f in fixtures if (f.notes or f.pdf.name) in hold]
+    from packet.eval.run import OCR_CACHE_FLOORS, evaluate_gate
     results, stats = run_with_ocr_cache(m, fx, data)
+    lo, macro_floor = OCR_CACHE_FLOORS["politax"]
+    gate = evaluate_gate(results, min_f1=lo, min_macro_f1=macro_floor)  # pool = these holdout rows
     rows = [{"name": r.name, "f1": r.boundary.f1, "pages": r.pages, "gold_docs": r.gold_docs, "pred_docs": r.pred_docs,
              "false_ocr_pages": r.false_ocr_pages} for r in results]
     out = {"data_dir": str(data), "holdout_macro_f1": sum(r["f1"] for r in rows) / len(rows), "fixtures": rows,
-           "false_ocr_pages_total": sum(len(r["false_ocr_pages"]) for r in rows), "ocr_cache": stats.as_dict()}
+           "false_ocr_pages_total": sum(len(r["false_ocr_pages"]) for r in rows), "ocr_cache": stats.as_dict(),
+           "gate_holdout_only": {"passed": gate.passed, "failures": gate.failures, "macro_f1": gate.macro_f1,
+                                 "floors": [lo, macro_floor], "note": "holdout fixtures only; not the full-set CLI gate"}}
     return out
 
 
@@ -196,9 +215,9 @@ if __name__ == "__main__":
     cmd, *a = sys.argv[1:]
     if cmd == "builtin": print(json.dumps(builtin(Path(a[0])), default=str))
     elif cmd == "md-f1": print(json.dumps(md_f1(Path(a[0]))))
-    elif cmd == "politax-link": politax_link(Path(a[0]).expanduser(), Path(a[1]).expanduser())
-    elif cmd == "politax-ocr-lfm": politax_ocr_lfm(Path(a[0]).expanduser())
-    elif cmd == "politax-ocr-lfm3": politax_ocr_lfm3(Path(a[0]).expanduser())
-    elif cmd == "politax-untag": print(politax_untag(Path(a[0]).expanduser(), Path(a[1]).expanduser()))
+    elif cmd == "politax-link": politax_link(Path(a[0]).expanduser(), candidate_dir(Path(a[1]).expanduser()))
+    elif cmd == "politax-ocr-lfm": politax_ocr_lfm(candidate_dir(Path(a[0]).expanduser()))
+    elif cmd == "politax-ocr-lfm3": politax_ocr_lfm3(candidate_dir(Path(a[0]).expanduser()))
+    elif cmd == "politax-untag": print(politax_untag(Path(a[0]).expanduser(), candidate_dir(Path(a[1]).expanduser())))
     elif cmd == "politax-eval": print(json.dumps(politax_eval(Path(a[0]).expanduser()), default=str))
     else: sys.exit(__doc__)

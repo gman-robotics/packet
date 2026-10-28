@@ -20,23 +20,33 @@ REPO, REV = "openbmb/MiniCPM-OCR-1.0", "6796197bb3a8e224b2f64ae462bfbb3f8a15ac4b
 PROMPT = "Text Recognition:"
 
 
+SANDBOX = "/Users/Shared/gman-sandbox/lfm3-mps/venv"
+
+
+def require_sandbox():
+    """Refuse to run outside the sandbox venv or with hub network on (trust_remote_code safety)."""
+    if not sys.prefix.startswith(SANDBOX) or os.environ.get("HF_HUB_OFFLINE") != "1":
+        sys.exit(f"run from {SANDBOX} with HF_HUB_OFFLINE=1 (sys.prefix={sys.prefix})")
+
+
 def main():
+    require_sandbox()
     src, out, imgs = sys.argv[1], Path(sys.argv[2]), sys.argv[3:]
     out.mkdir(parents=True, exist_ok=True); maxtok = int(os.environ.get("MAXTOK", "2048"))
     if not Path(src).exists():
         from huggingface_hub import snapshot_download
-        src = snapshot_download(REPO, revision=REV)
+        src = snapshot_download(REPO, revision=REV, local_files_only=True)
     T1 = time.time()
-    model = AutoModelForImageTextToText.from_pretrained(src, dtype=torch.bfloat16).to("mps").eval()
+    model = AutoModelForImageTextToText.from_pretrained(src, local_files_only=True, dtype=torch.bfloat16).to("mps").eval()
     proc = AutoProcessor.from_pretrained(src); torch.mps.synchronize(); T2 = time.time()
     me = psutil.Process(); peak_rss = me.memory_info().rss; peak_drv = torch.mps.driver_allocated_memory()
     recs = []
     for p in imgs:
         name = Path(p).stem
         msgs = [{"role": "user", "content": [{"type": "image", "image": Image.open(p).convert("RGB")}, {"type": "text", "text": PROMPT}]}]
+        t = time.time()
         inp = proc.apply_chat_template(msgs, add_generation_prompt=True, tokenize=True, return_dict=True,
                                        return_tensors="pt").to("mps")
-        t = time.time()
         with torch.inference_mode():
             ids = model.generate(**inp, do_sample=False, max_new_tokens=maxtok)
         torch.mps.synchronize(); dt = time.time() - t

@@ -31,13 +31,14 @@ def start_server(gguf: Path, log: Path):
            "--host", "127.0.0.1", "--port", str(PORT), "--ctx-size", "40960", "--n-gpu-layers", "999", "--jinja", "--temp", "0"]
     with open(log, "w") as fh:
         proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT)
-    while True:
+    while time.time() - t0 < 300:
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/health", timeout=2) as r:
                 if r.status == 200: return proc, time.time() - t0
         except OSError:
             if proc.poll() is not None: sys.exit(f"llama-server exited; see {log}")
             time.sleep(0.2)
+    proc.kill(); sys.exit(f"llama-server not healthy after 300 s; see {log}")
 
 
 def main():
