@@ -18,10 +18,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
-from packet.boundary import _FURNITURE  # noqa: E402
-from packet.eval.run import (DEFAULT_POLITAX_CACHE, DEFAULT_WHOLEDOC_CACHE, OCR_CACHE_FLOORS, evaluate_gate,  # noqa: E402
-                             run_fixture)
-from packet.pipeline import Pipeline, PipelineConfig  # noqa: E402
+from packet.boundary import _FURNITURE
+from packet.eval.run import (
+    DEFAULT_POLITAX_CACHE,
+    DEFAULT_WHOLEDOC_CACHE,
+    OCR_CACHE_FLOORS,
+    evaluate_gate,
+    run_fixture,
+)
+from packet.pipeline import Pipeline, PipelineConfig
 
 P3 = Path(os.environ.get("P3", Path.home() / ".cache/packet/model-eval/p3"))
 SETS = ["builtin", "dlnet-whole", "politax-train", "politax-holdout"]
@@ -99,8 +104,10 @@ def _metrics(ranked_rel, n_rel):
 
 
 def retrieval():
-    import numpy as np
     from collections import Counter
+
+    import numpy as np
+
     from packet.topic import topic_similarity
     rows = [json.loads(l) for l in (P3 / "pages.jsonl").read_text().splitlines()]
     keys = json.loads((P3 / "emb_keys.json").read_text()); ix = {k: i for i, k in enumerate(keys)}
@@ -110,7 +117,7 @@ def retrieval():
         for r in rows:
             if r["set"] == s and r["key"] and r["doc"] is not None: by.setdefault(r["fixture"], []).append(r)
         m = {"emb": [], "lex": []}
-        for fx, pages in by.items():
+        for pages in by.values():
             words = [Counter(w for w in p["text"].lower().split() if len(w) > 2) for p in pages]
             for qi, q in enumerate(pages):
                 cand = [j for j in range(len(pages)) if j != qi]
@@ -122,9 +129,9 @@ def retrieval():
                     order = sorted(range(len(cand)), key=lambda k: -sc[k])
                     m[nm].append(_metrics([pages[cand[k]]["doc"] == q["doc"] for k in order], n_rel))
         out[s] = {"queries": len(m["emb"]), "fixtures": len(by)}
-        for nm in m:
-            if m[nm]:
-                out[s][nm] = {k: round(sum(x[i] for x in m[nm]) / len(m[nm]), 4) for i, k in enumerate(("ndcg@5", "mrr", "r@10"))}
+        for nm, vals in m.items():
+            if vals:
+                out[s][nm] = {k: round(sum(x[i] for x in vals) / len(vals), 4) for i, k in enumerate(("ndcg@5", "mrr", "r@10"))}
     (P3 / "retrieval.json").write_text(json.dumps(out, indent=1)); return out
 
 
