@@ -29,7 +29,7 @@ so its pages are not resident. A fresh process loads it (cold), then a second fr
 |---|---|---|---|---|
 | LightOn-1B | 1.65 + 0.41 = 2.06 | 1.96 | 6.22 / 6.05 | 3.73 (cold), 3.69 (warm) |
 | LFM2.5-Extract | 2.63 + 0.39 = 3.02 | 1.93 | 5.57 / 4.49 | 2.1 |
-| LFM3-VL-2B | 1.39 + 1.56 = 2.95 | not in artifact | 6.55 / 5.98 | 3.2 |
+| LFM3-VL-2B | 1.39 + 1.56 = 2.95 | 2.36 | 6.55 / 5.98 | 3.2 |
 | MiniCPM-OCR 1.0 | 1.41 + 1.44 = 2.85 | 2.21 | 7.66 / 7.08 | 4.4 |
 | MiniCPM-OCR-Jev | not measured | load 4.96 (snapshot in page cache) | not measured | n/a |
 
