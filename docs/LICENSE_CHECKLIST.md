@@ -114,6 +114,22 @@ Checked 2026-10-13 by Bo (bench eng, for Thomas Ginter).
 | Runtime code license (`mlx-vlm`, `mlx`) | ☑ | `mlx-vlm 0.7.6` (MIT) and `mlx 0.32.3` (MIT); optional, user-installed. Scanned every distribution in a venv with `packet` + `mlx-vlm 0.7.6` (incl. `transformers 5.19.0`) on 2026-10-13: no GPL/AGPL/LGPL. Base-model ancestry (Pixtral vision + Qwen3 LM, per the card: LightOnOCR-2 architecture) is covered by the Apache-2.0 grant on the released weights. |
 | Attribution/NOTICE requirements captured | ☑ | No redistribution, so nothing to ship. If bundled later: Apache-2.0 text plus the LightOn citation from the card, and first ask LightOn to add a LICENSE file to the weights repos. |
 
+## 7. Experimental model candidates (PROVISIONAL)
+
+These are bench candidates from GMA-441, GMA-445 and GMA-443 only. **None of them is wired into Packet, and none is a default.** Every
+row is **PROVISIONAL**: it records what the Hugging Face card, the API metadata and the repo file list said on 2026-10-28
+for the pinned revision. Before any integration it needs a full section-style check (runtime code licenses, NOTICE,
+ancestry). Weights stay user-downloaded into the user's own HF cache and are never bundled.
+
+| Model @ revision | License (as read) | LICENSE file in weights repo | Status | Notes |
+|---|---|---|---|---|
+| `lightonai/LightOnOCR-3-1B` @ `23d544085c886bbdace647bcfab91203299417e2` | Apache-2.0 (card + metadata `license: apache-2.0`) | No | PROVISIONAL (already ☑/⚠ as the default in section 6) | Same revision as section 6; re-listed here so the candidate set is complete. |
+| `LiquidAI/LFM3-VL-2B` @ `f83d2b0a2296aaa277f394990a9b8b949ddf9691` | **LFM Open License v1.0** (metadata `license: other`, `license_name: lfm1.0`) — <https://huggingface.co/LiquidAI/LFM3-VL-2B/blob/main/LICENSE> | Yes | PROVISIONAL | **Not Apache.** §5 Commercial Use Limitation: commercial use is licensed only for entities under the $10M annual-revenue "Threshold". Needs owner sign-off before any non-research use. Runs only in the sandbox venv (`trust_remote_code`). |
+| `LiquidAI/LFM2.5-VL-1.6B-Extract` @ `21073aa65b326c125ceb07d80fa08900bc2eb0d9` | **LFM Open License v1.0** (metadata `license: other`, `license_name: lfm1.0`) — <https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B-Extract/blob/main/LICENSE> | Yes | PROVISIONAL | Same revenue-threshold caveat. Its LICENSE text has a different md5 from the LFM3 file; the two were not diffed. Read this file on its own before relying on it. |
+| `openbmb/MiniCPM-OCR-1.0` @ `6796197bb3a8e224b2f64ae462bfbb3f8a15ac4b` | Apache-2.0 (metadata `license: apache-2.0`) — <https://huggingface.co/openbmb/MiniCPM-OCR-1.0> | No | PROVISIONAL | License appears only on the card, the same caveat as LightOn. Base-model ancestry has not been checked. |
+| `openbmb/MiniCPM-OCR-Jev` @ `90bc4c4768c082f769f5352479fa0df84da42c1a` | Apache-2.0 (metadata `license: apache-2.0`) — <https://huggingface.co/openbmb/MiniCPM-OCR-Jev> | No | PROVISIONAL | Region checker (GMA-445). Card-only license. Upstream scripts from `OpenBMB/MiniCPM-OCR` @ `458718f8` were read for parity only and not vendored. |
+| `google/embeddinggemma-2` @ `26711154b641697c443124e316f3d21587f9ff5d` | Apache-2.0 (metadata `license: apache-2.0`; the card links <https://ai.google.dev/gemma/docs/gemma_4_license> labelled "Apache 2.0") — <https://huggingface.co/google/embeddinggemma-2> | No | PROVISIONAL | Not gated (API `gated: false`), checked 2026-10-28. Card-only license. Before use, read the linked Gemma page to confirm it is plain Apache-2.0 with no added use policy. GMA-443 candidate. |
+
 ## Sign-off
 
 Packet's own code stays MIT. Model weights are always downloaded by the
