@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench" / "hunch_b2"))
 import b2
 
@@ -72,7 +74,7 @@ def test_page_recorder_sees_page_zero_and_never_embeds():
 
 
 def test_feats_use_page_index_not_row_position():
-    import numpy as np
+    np = pytest.importorskip("numpy")  # CI's verify venv has no numpy; the bench venv does
     E = np.eye(4); ix = {"a": 0, "b": 1, "c": 2}
     rows = [{"page": 0, "key": "a"}, {"page": 2, "key": "c"}]  # page 1 missing
     X = b2._feats(rows, E, ix)
