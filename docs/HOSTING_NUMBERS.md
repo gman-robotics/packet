@@ -50,7 +50,7 @@ Jev load comes from the Exp A2 parity run log (`load_s`).
 
 Sources: testset numbers from `P1/runs/*/_summary.json` (`pages_per_min`, `mlx_peak_gb`, `mps_driver_peak_gb`, `peak_rss_gb`).
 PoliTax OCR numbers from the Exp A run summaries (`pages_per_min_wall`) as reported in PR #61. Jev numbers from
-`P1/a2/dev.json` and `P1/a2/holdout.json` (`jev_pages_per_min`). PoliTax pages are dense tax forms, so throughput is much lower there than on the testset.
+`P1/a2/dev.json` and `P1/a2/holdout.json` (`jev_pages_per_min`). PoliTax pages are dense tax forms. LightOn, LFM3 and Jev per-region run much slower there than on the testset. LFM2.5-Extract and Jev whole-page on LFM2.5x output do not, because LFM2.5x emits short, truncated or garbage output on many of those pages (Exp A).
 
 ## Thermals
 

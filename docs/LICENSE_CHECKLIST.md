@@ -116,7 +116,7 @@ Checked 2026-10-13 by Bo (bench eng, for Thomas Ginter).
 
 ## 7. Experimental model candidates (PROVISIONAL)
 
-These are bench candidates from GMA-441, GMA-445 and GMA-443 only. **None of them is wired into Packet, and none is a default.** Every
+These are bench candidates from GMA-441, GMA-445 and GMA-443 only. **Apart from LightOnOCR-3-1B, which is already the default (section 6), none of them is wired into Packet or is a default.** Every
 row is **PROVISIONAL**: it records what the Hugging Face card, the API metadata and the repo file list said on 2026-10-28
 for the pinned revision. Before any integration it needs a full section-style check (runtime code licenses, NOTICE,
 ancestry). Weights stay user-downloaded into the user's own HF cache and are never bundled.
