@@ -101,8 +101,8 @@ def fixtures(set_name, backend="lighton"):
     want = (lambda f: f in hold) if set_name == "politax-holdout" else (lambda f: f not in hold)
     sha = {d.file_name: d.sha256 for d in m.docs}; stats = CacheStats()
     fx = [f for f in fxs if want(f.notes or f.pdf.name)]
-    only = os.environ.get("ONLY_FILES")  # MiniCPM subset: whole docs only
-    if only and backend == "minicpm1":
+    only = os.environ.get("ONLY_FILES")  # MiniCPM subset (whole docs); SUBSET_ALL=1 applies it to every backend
+    if only and set_name == "politax-holdout" and (backend == "minicpm1" or os.environ.get("SUBSET_ALL")):
         keep = set(only.split(",")); fx = [f for f in fx if (f.notes or f.pdf.name) in keep]
     return fx, lambda f, cfg: run_fixture(f, ocr_cache_pipeline(data, sha[f.notes or f.pdf.name], stats, cfg))
 
