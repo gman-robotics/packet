@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from packet.assemble import Assembler
@@ -16,7 +17,7 @@ from packet.extract import Extractor, NativeTextExtractor, Router
 from packet.furniture import FurnitureTagger
 from packet.lookahead import Decision, LookaheadSplitter, PageObs
 from packet.source import PdfPageSource
-from packet.types import Block, LogicalDocument, Packet
+from packet.types import Block, LogicalDocument, Packet, PageRef
 
 
 @dataclass
@@ -30,6 +31,9 @@ class PipelineConfig:
     domain_adapters: list[DomainAdapter] = field(default_factory=list)
     scorer: BoundaryScorer | None = None
     decision_backend: DecisionBackend | None = None
+    # GMA-443 experiment hook: page embedder for the low-weight ``embed_shift`` signal. Off by default.
+    embedder: Callable[[PageRef, list[Block]], Any] | None = None
+    embed_shift_max: float | None = None
 
 
 class Pipeline:
@@ -53,7 +57,9 @@ class Pipeline:
 
     def stream(self, path: str | Path) -> Iterator[Event]:
         self._packet = None
-        detector = BoundaryDetector()
+        detector = BoundaryDetector(embedder=self.config.embedder)
+        if self.config.embed_shift_max is not None:
+            detector.embed_shift_max = self.config.embed_shift_max
         splitter = LookaheadSplitter(
             window=self.config.lookahead_window,
             commit=self.config.boundary_commit_confidence,
