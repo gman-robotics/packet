@@ -39,7 +39,7 @@ def main():
         by_file.setdefault(p.file, []).append(p)
     ordered = []
     for f in sorted(by_file, key=lambda f: len(by_file[f])):
-        if cap and ordered and len(ordered) + len(by_file[f]) > cap:
+        if cap and len(ordered) + len(by_file[f]) > cap:
             continue
         ordered += by_file[f]
     print(json.dumps({"files": {f: len(v) for f, v in by_file.items()}, "planned": len(ordered)}), flush=True)

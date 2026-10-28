@@ -59,7 +59,7 @@ def main():
         s = {"device": "cpu fp32", "threads": torch.get_num_threads(), "max_len": MAX_LEN, "n": len(lat),
              "p50_ms": round(lat[len(lat) // 2], 1), "p95_ms": round(lat[int(len(lat) * 0.95)], 1), "max_ms": round(lat[-1], 1),
              "bulk_pages": len(new), "bulk_ms_per_page": round(1000 * bulk / max(len(new), 1), 1),
-             "note": "single page, batch 1, embed + classify; measured while MiniCPM-OCR ran on MPS"}
+             "note": os.environ.get("LATENCY_NOTE", "single page, batch 1: embed + a dot product/sigmoid of the student's input size (stand-in for the logistic regression)")}
         (B2 / "latency.json").write_text(json.dumps(s, indent=1)); print(json.dumps(s))
     print("done", len(keys), "keys")
 

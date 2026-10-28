@@ -53,6 +53,33 @@ def test_heuristics_off_restores_weights():
     assert (B.W_TITLE_TOP, B.W_PAGE_RESET, B.COMBINED) == before
 
 
+def test_heuristics_off_silences_a_heuristic_signal_and_restores_it():
+    def title_run():
+        d = BoundaryDetector()
+        d.observe(_ref(0), _blocks(0, "body text one"))
+        return d.observe(_ref(1), _blocks(1, "Schedule K-1", BlockKind.TITLE) + _blocks(1, "body text two"))
+    assert title_run() is not None
+    with b2.heuristics_off():
+        assert title_run() is None
+    assert title_run() is not None
+
+
+def test_page_recorder_sees_page_zero_and_never_embeds():
+    rec = b2.PageRecorder(); rec.fixture = "fx"; d = BoundaryDetector(embedder=rec)
+    for i in range(2):
+        d.observe(_ref(i), _blocks(i, f"page {i}"))
+    assert [p for _, p, _ in rec.seen] == [0, 1] and d.last_embed_cosine is None
+
+
+def test_feats_use_page_index_not_row_position():
+    import numpy as np
+    E = np.eye(4); ix = {"a": 0, "b": 1, "c": 2}
+    rows = [{"page": 0, "key": "a"}, {"page": 2, "key": "c"}]  # page 1 missing
+    X = b2._feats(rows, E, ix)
+    assert X[0][-1] == 1.0 and X[1][-1] == 0.0
+    assert list(X[1][4:8]) == [0.0, 0.0, 1.0, 0.0]  # e_2 - e_1, with e_1 missing -> zero vector
+
+
 def test_page_text_keeps_every_kind_and_truncates():
     blocks = _blocks(0, "Header", BlockKind.HEADER) + _blocks(0, "x" * 5000)
     t = b2.page_text(blocks)

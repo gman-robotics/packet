@@ -51,19 +51,28 @@ class Capabilities:
     images = False
 
 
+class PageRecorder:
+    """Embedder-hook recorder: sees every page, including page 0 (observe() returns before the decision backend
+    there). Returns None, so the embed_shift signal never fires."""
+
+    def __init__(self):
+        self.fixture, self.seen = None, []
+
+    def __call__(self, ref, blocks):
+        self.seen.append((self.fixture, ref.index, page_text(blocks)))
+
+
 class StudentBackend:
-    """Bench-only DecisionBackend. mode: record | oracle | student. Called once per page, in order."""
+    """Bench-only DecisionBackend. mode: oracle | student. Called once per page from page 1 on, in order.
+    Only ``decide`` is implemented: Pipeline calls nothing else (CLI helpers that need backend_label etc. are not used)."""
     capabilities = Capabilities()
     send_images = False
 
     def __init__(self, mode, probs=None, threshold=None, gold=None):
         self.mode, self.probs, self.t, self.gold = mode, probs or {}, threshold, gold or {}
-        self.fixture, self.seen = None, []
+        self.fixture = None
 
     def decide(self, req, render=None):
-        t = page_text(req.blocks)
-        if self.mode == "record":
-            self.seen.append((self.fixture, req.page_index, t)); return DecisionResult(probability=None)
         if self.mode == "oracle":
             return DecisionResult(probability=CAP if req.page_index in self.gold.get(self.fixture, ()) else 0.0)
         p = self.probs.get((self.fixture, req.page_index))
@@ -152,6 +161,7 @@ def labels():
                   "boundaries": sum(len(gold_starts(f)) for f in fxs), "files": sorted(f.notes or f.pdf.name for f in fxs)}
     overlap = set(out["politax-train"]["files"]) & set(out["politax-holdout"]["files"])
     assert not overlap, overlap
+    assert (out["politax-train"]["boundaries"], out["politax-holdout"]["boundaries"]) == (920, 202), out
     out["overlap"] = []
     (B2 / "labels.json").write_text(json.dumps(out, indent=1)); return {k: {kk: vv for kk, vv in v.items() if kk != "files"} if isinstance(v, dict) else v for k, v in out.items()}
 
@@ -164,9 +174,9 @@ def dump():
     rows = [r for r in rows if r["backend"] not in only or r["set"] != "politax-holdout"]
     for s, b in SETS:
         if only and not (s == "politax-holdout" and b in only): continue
-        be = StudentBackend("record"); fxs, runner = fixtures(s, b)
+        be = PageRecorder(); fxs, runner = fixtures(s, b)
         for fx in fxs:
-            be.fixture = fx.name; runner(fx, PipelineConfig(decision_backend=be))
+            be.fixture = fx.name; runner(fx, PipelineConfig(embedder=be))
         gold = {fx.name: gold_starts(fx) for fx in fxs}
         for fxn, idx, t in be.seen:
             rows.append({"set": s, "backend": b, "fixture": fxn, "page": idx, "y": int(idx in gold[fxn]), "key": key(t), "text": t})
@@ -176,22 +186,27 @@ def dump():
 
 def ceiling():
     out = {}
-    for s in ["politax-train", "politax-holdout"]:
-        out[s] = {"heuristic": run(s, "lighton", None),
-                  "oracle_alone": run(s, "lighton", StudentBackend("oracle"), alone=True),
-                  "oracle+heuristic": run(s, "lighton", StudentBackend("oracle"))}
-        print(s, {k: (v["macro_f1"], v["false_splits"], v["missed"]) for k, v in out[s].items()}, flush=True)
+    for s, b in [("politax-train", "lighton"), ("politax-holdout", "lighton"), ("politax-holdout", "lighton-untagged")]:
+        k = f"{s}/{b}"
+        out[k] = {"heuristic": run(s, b, None),
+                  "oracle_alone": run(s, b, StudentBackend("oracle"), alone=True),
+                  "oracle+heuristic": run(s, b, StudentBackend("oracle"))}
+        print(k, {a: (v["macro_f1"], v["false_splits"], v["missed"]) for a, v in out[k].items()}, flush=True)
     (B2 / "ceiling.json").write_text(json.dumps(out, indent=1)); return out
 
 
 def _feats(rows, E, ix):
-    """Per page: [e_i, e_i - e_{i-1}, cos(e_i, e_{i-1}), cos(e_i, mean(e_{i-1}, e_{i-2}))] within one fixture."""
+    """Per page: [e_i, e_i - e_{i-1}, cos(e_i, e_{i-1}), cos(e_i, mean(e_{i-1}, e_{i-2})), first-page flag] within
+    one fixture. Neighbours are looked up by page index (not row position); a missing page is a zero vector."""
     import numpy as np
-    X = []; d = E.shape[1]
-    for i, r in enumerate(rows):
-        e = E[ix[r["key"]]] if r["key"] in ix else np.zeros(d)
-        p1 = E[ix[rows[i - 1]["key"]]] if i > 0 and rows[i - 1]["key"] in ix else np.zeros(d)
-        p2 = E[ix[rows[i - 2]["key"]]] if i > 1 and rows[i - 2]["key"] in ix else p1
+    X = []; d = E.shape[1]; by = {r["page"]: r for r in rows}
+
+    def vec(i):
+        r = by.get(i)
+        return E[ix[r["key"]]] if r is not None and r["key"] in ix else np.zeros(d)
+    for r in rows:
+        e, p1 = vec(r["page"]), vec(r["page"] - 1)
+        p2 = vec(r["page"] - 2) if r["page"] > 1 else p1
         m = (p1 + p2) / 2; mn = np.linalg.norm(m)
         X.append(np.concatenate([e, e - p1, [float(e @ p1), float(e @ m) / mn if mn else 0.0, float(r["page"] == 0)]]))
     return X
