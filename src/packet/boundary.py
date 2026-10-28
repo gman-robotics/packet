@@ -99,6 +99,11 @@ COMBINED = 0.6
 # Without a page-number reset, no combination may reach the splitter's immediate
 # commit level (0.75): look-ahead numbering must always get a chance to veto.
 CAP_WITHOUT_RESET = 0.74
+# Optional embedding evidence (GMA-443, off unless an embedder is passed): low cosine between
+# this page's embedding and the mean of the previous two. Weak like topic_shift: never proposes
+# alone, and content evidence (topic, language, embedding) casts one independent vote at most.
+W_EMBED_SHIFT = 0.15
+EMBED_SHIFT_MAX = 0.5
 
 
 @dataclass
@@ -113,6 +118,10 @@ class BoundaryDetector:
     """Generic, domain-free boundary hints."""
 
     lookback: int = 3
+    # embedder(ref, blocks) -> unit-norm vector or None (GMA-443). None keeps v0 behaviour.
+    embedder: Callable[[PageRef, list[Block]], Any] | None = None
+    embed_shift_max: float = EMBED_SHIFT_MAX
+    w_embed_shift: float = W_EMBED_SHIFT
     last_page_number: int | None = None
     last_page_total: int | None = None
     _page_nums: list[tuple[int, int | None]] = field(default_factory=list)
@@ -124,6 +133,8 @@ class BoundaryDetector:
     _words: list = field(default_factory=list)
     _langs: list[str | None] = field(default_factory=list)
     _page_facts: list[dict] = field(default_factory=list)
+    _embeds: list = field(default_factory=list)
+    last_embed_cosine: float | None = None
 
     def observe(
         self,
@@ -148,6 +159,7 @@ class BoundaryDetector:
         self._sizes.append((ref.width, ref.height, ref.rotation))
         words = content_words(blocks)
         self._words.append(words)
+        self._embeds.append(self.embedder(ref, blocks) if self.embedder is not None else None)
         self._langs.append(detect_language(" ".join(
             b.text for b in blocks if b.kind not in _FURNITURE and b.text)))
         from packet.boundary_model import page_fact_row
@@ -212,6 +224,10 @@ class BoundaryDetector:
         if not same_language(prev_lang, lang):
             reasons.append("language_changed")
             score += W_LANGUAGE
+        self.last_embed_cosine = self._embed_cosine()
+        if self.last_embed_cosine is not None and self.last_embed_cosine <= self.embed_shift_max:
+            reasons.append("embed_shift")
+            score += self.w_embed_shift
 
         # "sequence_completed" refines the reset, it is not independent evidence, and a
         # title lower on the page is too common inside documents (OCR labels table and
@@ -222,6 +238,9 @@ class BoundaryDetector:
         if "topic_shift" in independent and "language_changed" in independent:
             independent.remove("topic_shift")
             score -= W_TOPIC_SHIFT
+        # The embedding sees the same content change: it adds weight but no extra vote.
+        if "embed_shift" in independent and ({"topic_shift", "language_changed"} & set(independent)):
+            independent.remove("embed_shift")
         if len(independent) >= 2:
             score = max(score, COMBINED)
         heur_conf = score if score >= PROPOSE else None
@@ -270,6 +289,16 @@ class BoundaryDetector:
             reason=reason or "boundary",
         )
 
+
+    def _embed_cosine(self) -> float | None:
+        """Cosine of this page's embedding with the mean of the previous two (None if missing)."""
+        cur = self._embeds[-1]
+        prev = [e for e in self._embeds[-3:-1] if e is not None]
+        if cur is None or not prev:
+            return None
+        mean = [sum(v) / len(prev) for v in zip(*prev)]
+        norm = sum(v * v for v in mean) ** 0.5 * sum(v * v for v in cur) ** 0.5
+        return sum(a * b for a, b in zip(cur, mean)) / norm if norm else None
 
     def _topic_shift(self) -> bool:
         cur, prev = self._words[-1], self._words[-2]
