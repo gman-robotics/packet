@@ -45,7 +45,7 @@ def test_embed_shift_alone_never_proposes():
 
 
 def test_embed_shift_with_title_combines_under_cap():
-    d, sig = _run([_pg(0, "a"), _pg(1, "a"), _pg(2, "b", title=True)], _emb)
+    _, sig = _run([_pg(0, "a"), _pg(1, "a"), _pg(2, "b", title=True)], _emb)
     assert sig[2] is not None and "embed_shift" in sig[2].reason
     assert sig[2].confidence <= CAP_WITHOUT_RESET
 
