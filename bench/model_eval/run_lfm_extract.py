@@ -59,10 +59,11 @@ def render(d: dict) -> str:
 def main():
     src, out, imgs = sys.argv[1], Path(sys.argv[2]), sys.argv[3:]
     out.mkdir(parents=True, exist_ok=True); maxtok = int(os.environ.get("MAXTOK", "2048"))
+    T1 = time.time()  # imports done; snapshot resolve counts toward load
     if not Path(src).exists():
         from huggingface_hub import snapshot_download
         src = snapshot_download(REPO, revision=REV)
-    T1 = time.time(); model, proc = load(src); mx.eval(model.parameters()); T2 = time.time()
+    model, proc = load(src); mx.eval(model.parameters()); T2 = time.time()
     conv = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": ""}]  # user turn = image only (card)
     prompt = apply_chat_template(proc, model.config, conv, num_images=1)
     recs, labels = [], {}

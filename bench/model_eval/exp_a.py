@@ -149,7 +149,7 @@ def politax_ocr_lfm3(dst: Path) -> None:
     engine = po.EngineId("lfm3-mps", l3.REPO, l3.REV, "markdown-nothink", maxtok, px)
     snap = snapshot_download(l3.REPO, revision=l3.REV, local_files_only=True)
     model = AutoModelForImageTextToText.from_pretrained(snap, local_files_only=True, dtype=torch.bfloat16, trust_remote_code=True).to("mps").eval()
-    proc = AutoProcessor.from_pretrained(snap, trust_remote_code=True); sources = {}; peak = [0]
+    proc = AutoProcessor.from_pretrained(snap, local_files_only=True, trust_remote_code=True); sources = {}; peak = [0]
 
     def recognize(plan):
         t0 = time.perf_counter(); src = sources.get(plan.file)

@@ -25,7 +25,7 @@ SANDBOX = "/Users/Shared/gman-sandbox/lfm3-mps/venv"
 
 def require_sandbox():
     """Refuse to run outside the sandbox venv or with hub network on (trust_remote_code safety)."""
-    if not sys.prefix.startswith(SANDBOX) or os.environ.get("HF_HUB_OFFLINE") != "1":
+    if os.path.realpath(sys.prefix) != os.path.realpath(SANDBOX) or os.environ.get("HF_HUB_OFFLINE") != "1":
         sys.exit(f"run from {SANDBOX} with HF_HUB_OFFLINE=1 (sys.prefix={sys.prefix})")
 
 
@@ -33,12 +33,12 @@ def main():
     require_sandbox()
     src, out, imgs = sys.argv[1], Path(sys.argv[2]), sys.argv[3:]
     out.mkdir(parents=True, exist_ok=True); maxtok = int(os.environ.get("MAXTOK", "2048"))
+    T1 = time.time()  # imports done; snapshot resolve counts toward load
     if not Path(src).exists():
         from huggingface_hub import snapshot_download
         src = snapshot_download(REPO, revision=REV, local_files_only=True)
-    T1 = time.time()
     model = AutoModelForImageTextToText.from_pretrained(src, local_files_only=True, dtype=torch.bfloat16).to("mps").eval()
-    proc = AutoProcessor.from_pretrained(src); torch.mps.synchronize(); T2 = time.time()
+    proc = AutoProcessor.from_pretrained(src, local_files_only=True); torch.mps.synchronize(); T2 = time.time()
     me = psutil.Process(); peak_rss = me.memory_info().rss; peak_drv = torch.mps.driver_allocated_memory()
     recs = []
     for p in imgs:
