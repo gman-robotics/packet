@@ -7,6 +7,8 @@ Plan: Linear GMA-439 / GMA-441, "Packet Model Evaluation Plan" (Tom, 2026-10-27)
 |---|---|
 | `run_lfm_extract.py` | LiquidAI/LFM2.5-VL-1.6B-Extract @21073aa6 on mlx-vlm. Card prompt (system: "Extract the following from the image" + YAML fields + "Respond with only a JSON object"; user turn: image only), greedy. JSON fields render to markdown. |
 | `run_lfm3_mps.py` | LiquidAI/LFM3-VL-2B @f83d2b0a on transformers + torch MPS, `trust_remote_code`, no-think, greedy. **Run only from the sandbox venv** `/Users/Shared/gman-sandbox/lfm3-mps/venv` with `HF_HUB_OFFLINE=1`. |
+| `run_minicpm_tf.py` | openbmb/MiniCPM-OCR-1.0 @6796197b on transformers (native `minicpm_ocr`, no remote code) + MPS, page prompt `Text Recognition:`. Sandbox venv. |
+| `run_minicpm_llamacpp.py` | Same model as GGUF on llama.cpp `llama-server`. Kept for when a llama.cpp release loads projector type `minicpm_ocr_1_0` (Homebrew 0.7.0 build 11669 cannot; `--HEAD` fails to build). |
 | `exp_a.py` | Feeds saved page text through `packet.ocr_parse.parse_lighton_grounding`, `BoundaryDetector` and the eval gate: builtin fixtures (false-OCR gate on), synth md-00..05 boundary F1 at tolerance 0, PoliTax holdout `--ocr-cache`-style eval on a candidate data dir (PDF symlinks; the LightOn cache is never written). |
 | `summarize.py` | Per-slice table (born-digital, blank, synth clean/degraded, hard-scan) from `bench/ocr_compare/score.py` output. |
 | `cold_start.sh` | Cold load without `sudo purge`: `ditto --nocache` copy of each snapshot, then a fresh process (cold) and a second fresh process (warm). |

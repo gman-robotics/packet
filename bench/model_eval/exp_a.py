@@ -5,6 +5,7 @@ Nothing here changes Packet defaults; engines are swapped in harness-side only.
   exp_a.py politax-link SRC DST        candidate PoliTax data dir: symlink PDFs + annotations (never writes SRC)
   exp_a.py politax-ocr-lfm DST         OCR holdout scan pages into DST/ocr with LFM2.5-VL-1.6B-Extract (MLX)
   exp_a.py politax-ocr-lfm3 DST        same with LFM3-VL-2B on transformers MPS (sandbox venv only; trust_remote_code)
+  exp_a.py politax-untag SRC DST       control: copy SRC holdout OCR records into DST with grounding tags stripped
   exp_a.py politax-eval DATA_DIR       holdout-only --ocr-cache eval (macro over holdout; per-fixture F1; cache stats)
   exp_a.py md-f1 RUN_DIR               boundary P/R/F1 (tolerance 0) on synth md-00..05 vs gold new docs at [2,5]
 Raw OCR text is always parsed by packet.ocr_parse.parse_lighton_grounding (markdown fallback when untagged)."""
@@ -159,6 +160,23 @@ def politax_ocr_lfm3(dst: Path) -> None:
                       "mps_driver_peak_gb": round(peak[0] / 1e9, 2)}))
 
 
+def politax_untag(src: Path, dst: Path) -> int:
+    """Label-dependency control: same LightOn text, ``![label](bbox)`` tags removed (markdown fallback path)."""
+    import re
+
+    from packet.eval import politax
+    from packet.eval.politax_split import holdout_file_names
+    tag = re.compile(r"!\[[a-z_]+\+?\]\(\d+,\d+,\d+,\d+\)\s*")
+    m = politax.load_manifest(); hold = holdout_file_names(m); n = 0
+    for d in m.docs:
+        if d.file_name not in hold: continue
+        for f in sorted((src / "ocr" / d.sha256).glob("p*.json")):
+            rec = json.loads(f.read_text()); rec["raw"] = tag.sub("", rec["raw"])
+            out = dst / "ocr" / d.sha256 / f.name; out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(rec)); n += 1
+    return n
+
+
 def politax_eval(data: Path) -> dict:
     from packet.eval.politax_ocr_eval import run_with_ocr_cache
     from packet.eval.politax_split import holdout_file_names
@@ -181,5 +199,6 @@ if __name__ == "__main__":
     elif cmd == "politax-link": politax_link(Path(a[0]).expanduser(), Path(a[1]).expanduser())
     elif cmd == "politax-ocr-lfm": politax_ocr_lfm(Path(a[0]).expanduser())
     elif cmd == "politax-ocr-lfm3": politax_ocr_lfm3(Path(a[0]).expanduser())
+    elif cmd == "politax-untag": print(politax_untag(Path(a[0]).expanduser(), Path(a[1]).expanduser()))
     elif cmd == "politax-eval": print(json.dumps(politax_eval(Path(a[0]).expanduser()), default=str))
     else: sys.exit(__doc__)
