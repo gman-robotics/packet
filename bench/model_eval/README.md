@@ -24,3 +24,27 @@ bench/model_eval/exp_a.py md-f1 OUT; bench/model_eval/exp_a.py builtin OUT
 bench/model_eval/exp_a.py politax-link ~/.cache/packet/politax DST && bench/model_eval/exp_a.py politax-ocr-lfm DST
 bench/model_eval/exp_a.py politax-eval DST
 ```
+
+## Exp A2 (GMA-445): MiniCPM-OCR-Jev region checker
+
+`openbmb/MiniCPM-OCR-Jev` @90bc4c47 (Apache-2.0) is a 2-class verifier: it sees the original crop, the candidate OCR text,
+and a render of that text, and returns prob_yes ("consistent"). It runs on transformers + torch MPS in the sandbox venv
+(native `qwen3_5`, no remote code, `HF_HUB_OFFLINE=1`). Packet defaults are not changed.
+
+| File | What it does |
+|---|---|
+| `jev_score.py` | Model wrapper and scorer. The prompt bytes are checked against the upstream md5. The `score.weight` head runs on the last token. A PIL renderer stands in for upstream Chromium/KaTeX. `parity` scores the upstream examples; `testset` writes `RUN/_jev.json`; `politax` writes resumable jsonl for the holdout. |
+| `jev_a2.py` | Analysis only (repo venv). `dev` computes labels, AUROC and the tuned thresholds on the testset (dev split). `drop-testset` / `drop-politax` remove blocks below the threshold into new run or candidate dirs. `holdout` reports flag fractions and a spot-check. The holdout is never used to tune. |
+
+```
+PY=/Users/Shared/gman-sandbox/lfm3-mps/venv/bin/python; export HF_HUB_OFFLINE=1
+$PY bench/model_eval/jev_score.py parity <upstream>/examples
+$PY bench/model_eval/jev_score.py testset ~/.cache/packet/model-eval/p1/runs/{lighton-1b-grounding,lfm25x,lfm3-mps,minicpm-mps}
+.venv/bin/python bench/model_eval/jev_a2.py dev                    # thresholds from dev only
+STRIDE=2 PAGE_LEVEL=0 $PY bench/model_eval/jev_score.py politax ~/.cache/packet/politax P1/a2/politax-lighton.jsonl   # read-only source
+.venv/bin/python bench/model_eval/jev_a2.py drop-testset T; .venv/bin/python bench/model_eval/jev_a2.py drop-politax T
+.venv/bin/python bench/model_eval/exp_a.py politax-eval P1/politax-lighton-jevdrop
+```
+Regions: LightOn grounding output is scored per `![label](bbox)` block, cropped from the page image. Untagged engines
+(LFM2.5-Extract, LFM3, MiniCPM-OCR) have no bboxes, so each page is scored as one region. That input is outside
+Jev's training distribution of block crops.
