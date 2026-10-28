@@ -10,10 +10,12 @@ Method: poteto-mode architecture review. `/architect` sketches the types. `blast
 - Boundary signal: `BoundarySignal(after_page, confidence, reason)` at `src/packet/boundary.py:110-114`. Cap without a page-number reset is `CAP_WITHOUT_RESET = 0.74` at `src/packet/boundary.py:101`.
 - Look-ahead decision: `Decision(page, split, reason)` at `src/packet/lookahead.py:37-41`. Reasons are made in `_drain` (`:76-104`) and `_decide_mid` (`:150-167`). **Gap:** `Pipeline._apply` (`src/packet/pipeline.py:129-150`) consumes `decision.split` and drops `decision.reason`. No event and no output field records why a page split or did not split.
 - Output schema: `LogicalDocument.extras: dict[str, Any]` at `src/packet/types.py:95`. `Block.extra` at `:74`. No key in `extras` is reserved or typed today.
-- Assembler: `_nest` (`src/packet/assemble.py:54-102`) is a plain level stack. **Gap:** DESIGN.md (Assembler section, "What v0 implements") says the tree "can be repaired: reparent when a later heading clarifies rank". No reparent pass exists in `assemble.py`. A wrong `heading_level` is final and silent.
-- Citations: `citation_integrity` exists only in eval (`src/packet/eval/metrics.py:77`). The pipeline never reports an unresolved citation.
+- Assembler: `_nest` (`src/packet/assemble.py:54-102`) is a plain level stack. It does not apply numbering grammar, and native layout gives every `HEADING` level 1 (`src/packet/layout.py:181`). **Gap:** three docs claim a repair that does not exist: DESIGN.md:246 (Assembler, "reparent when a later heading clarifies rank"), DESIGN.md:311 ("What v0 implements", "intra-document heading repair") and README.md:49 ("may reparent earlier blocks"). DESIGN.md:244 also says numbering grammar sets level, which `_nest` does not do. A wrong `heading_level` is final and silent.
+- Citations: `citation_integrity` exists only in eval (`src/packet/eval/metrics.py:77-100`). It returns one ratio, and 1.0 when no `extras` value holds citation ids. It does not list which ids are unresolved. The pipeline never reports an unresolved citation.
 - Domain adapters: `DomainAdapter` protocol at `src/packet/domain.py:8`. Only `NoOpDomain` (`:20`) ships.
 - Eval: `packet eval` (`src/packet/cli.py:78`, `_cmd_eval` at `:471`) and `run_fixture` (`src/packet/eval/run.py:96`) emit numbers only (`boundary_score`, `false_ocr_hard_fail` in `metrics.py:57`, `:117`). No artifact shows a reviewer what went wrong.
+- Page 0 never gets a signal (`src/packet/boundary.py:171-172`), so the splitter decides it `no_signal` with `split=False` (`src/packet/lookahead.py:84-85`). The first document is opened by `Pipeline.stream`, not by a split. `_apply` closes a document only when `decision.split and state.blocks` (`src/packet/pipeline.py:137`). The open tail is always closed at `src/packet/pipeline.py:120-125`.
+- Eval floors: the 0.41 PoliTax floor is `OCR_CACHE_FLOORS` for `packet eval --set politax --ocr-cache` (`src/packet/eval/run.py:24`). Plain native-text PoliTax floors are `(0.0, 0.0)` (`run.py:19`). No CLI output prints a false-split count. It can be derived as `len(predicted) - matched` from `BoundaryScore` (`src/packet/eval/metrics.py:9-17`).
 - Fail modes: DESIGN.md "Remaining fail modes": false split on a mid-document title, false merge when signals under-fire, flush-at-EOF with no confidence check, no undo.
 - Mid-band VLM confirm window: DESIGN.md "Next" item 4. Not built.
 
@@ -33,10 +35,10 @@ The visualizer and the review path need data the pipeline throws away today. Do 
   def boundary_decided(cls, d: Decision, signal: BoundarySignal | None,
                        page_num: int | None, page_total: int | None) -> Event: ...
   ```
-  `Pipeline._apply` yields it before acting on the decision. `packet parse --trace out.jsonl` writes the event stream as JSON lines. Off by default.
-- **Blast radius:** consumers that switch on `EventKind` exhaustively (grep `EventKind.` in `tests/`). Event order tests in `tests/` that count events. Default `packet parse` JSON is unchanged.
-- **Done when:** every page in a parse has exactly one `boundary_decided`, and the reason set equals the reasons in `lookahead.py`.
-- **Proof:** a test on the `shared-header` and `multi-doc` built-in fixtures asserts one decision per page and that split decisions match `packet.documents` starts. `packet eval` numbers are byte-identical before and after.
+  `Pipeline._apply` yields it before acting on the decision. It carries the page confidence too, because `Decision` has no confidence field (`lookahead.py:37-41`). The splitter exposes it through a new `Decision.confidence: float` set from `_conf(o)`. `packet parse --trace out.jsonl` writes the event stream as JSON lines. Off by default.
+- **Blast radius:** no test switches on `EventKind`. `tests/test_lookahead.py:93-96` counts kinds by string value and still passes when a kind is added. Downstream subscribers that reject unknown kinds would see a new one. Default `packet parse` JSON is unchanged.
+- **Done when:** every page in a parse has exactly one `boundary_decided`, page 0 included (reason `no_signal`). Document starts other than page 0 equal the pages whose decision has `split=True`.
+- **Proof:** a test on the `multi-doc` and `shared-header` built-ins asserts one decision per page and that `{d.page for d if d.split} == {doc.page_start for doc in documents} - {0}` (page 2 on both). Reason coverage is a separate unit test on `LookaheadSplitter` with synthetic `PageObs` that hits every reason, including `eager` and `below_threshold` (`window=0` only, `lookahead.py:81-83`). `packet eval` numbers are byte-identical before and after.
 - **Size:** S.
 
 ## Item 2: uncertainty as first-class signals in `extras` (lesson 2)
@@ -55,10 +57,14 @@ The visualizer and the review path need data the pipeline throws away today. Do 
   # reserved key, written by core only
   LogicalDocument.extras["packet.flags"]: list[Flag]  (serialized as dicts)
   ```
-  Rules: `weak_boundary` when the opening decision had confidence below `boundary_commit_confidence` (0.75). `fallback_decision` for `fallback_eager` and `fallback_below`. `eof_flush` when the last document opened with no signal. `unresolved_citation` reuses the matcher behind `citation_integrity`, moved out of `eval/` into a core helper.
+  Rules:
+  - `weak_boundary`: the split had no page-number evidence. That means reason `fallback_eager`, or `high_confidence` with no `page_number_reset` in the signal reasons. Confidence alone is not used: without a reset, confidence is capped at 0.74 (`boundary.py:101`), so a correct `lookahead_numbering` split such as `shared-header` (0.65) would always look weak.
+  - `fallback_decision`: a `fallback_below` decision on a page that had a signal, so the reviewer sees near-misses that did not split. `fallback_eager` is covered by `weak_boundary` and is not flagged twice.
+  - `eof_flush`: only for the final document of a multi-document packet when its tail after the last split has no page-number support (no numbered page in it continues a sequence started in that document). A one-document packet never gets it.
+  - `unresolved_citation`: a new core helper `unresolved_citation_ids(doc) -> list[str]` that walks the same `extras` values as `_as_citation_ids` (`metrics.py:109`) and returns the ids not found. `citation_integrity` is rewritten on top of it, with the same return value.
 - **Blast radius:** JSON output grows one key under `extras`. Domain adapters must not overwrite `packet.flags` (document it in `domain.py` and DESIGN.md). Eval readers that compare whole trees (grep `extras` in `tests/` and `evals/`).
 - **Done when:** each flag kind has a fixture that raises it and a fixture that does not. No flag changes a split or a section.
-- **Proof:** tests per kind; `packet eval --set dlnet-whole` and the PoliTax gate give the same F1 and false-split count as `main`. Show the flag counts on PoliTax holdout in the PR.
+- **Proof:** tests per kind, including a one-document packet with no `eof_flush`. `packet eval --set builtin`, `--set dlnet-whole` and `--set politax --ocr-cache` give the same F1, and the same false-split count (`len(predicted) - matched` per fixture) as `main`. Show the flag counts on the PoliTax holdout in the PR.
 - **Size:** M. Depends on item 1 (decision data) and item 4b for `heading_rank_repaired`.
 
 ## Item 3: few-shot, schema-constrained domain adapters (lesson 3)
@@ -90,7 +96,7 @@ The visualizer and the review path need data the pipeline throws away today. Do 
 
 ### 4a. Mid-band VLM confirm pass
 
-- **Current state:** `_decide_mid` (`lookahead.py:150-167`) only reads page numbers. With no evidence it falls back to the eager rule at 0.55. DESIGN.md "Next" item 4 plans a 3-page VLM confirm window.
+- **Current state:** `_decide_mid` (`lookahead.py:150-167`) first reads page-number evidence. With none in the window it compares confidence to `fallback` (`lookahead.py:166-167`), which `Pipeline` sets from `boundary_min_confidence` = 0.55 (`pipeline.py:26`). DESIGN.md "Next" item 4 plans a 3-page VLM confirm window.
 - **Shape:**
   ```python
   class Confirmer(Protocol):
@@ -100,17 +106,17 @@ The visualizer and the review path need data the pipeline throws away today. Do 
   Called only where `_decide_mid` would return `fallback_eager` or `fallback_below`. `None` keeps today's rule. New reasons: `confirmed_split`, `confirmed_continue`.
 - **Blast radius:** `lookahead.py` reasons (item 1 tests); latency per mid-band page; the 0.74 cap stays upstream and is untouched.
 - **Done when:** with `confirmer=None`, decisions are identical to `main` on all eval sets. With a stub confirmer, only fallback pages change.
-- **Proof:** replay test over the `boundary_decided` trace. PoliTax holdout F1 at or above 0.41, false splits not higher than `main`, before any default change. Wiki results first.
+- **Proof:** replay test over the `boundary_decided` trace. `packet eval --set politax --ocr-cache` holdout macro F1 at or above the 0.41 `OCR_CACHE_FLOORS` floor (`run.py:24`), and false splits (`len(predicted) - matched`, summed) not higher than `main`, before any default change. Wiki results first.
 - **Size:** M. Depends on item 1 and a decision backend that passes images.
 
 ### 4b. Section-assembly repair pass
 
-- **Current state:** `_nest` has no repair (see Ground truth). DESIGN.md claims repair exists. That is a doc bug to fix in the same ticket.
+- **Current state:** `_nest` has no repair and no numbering grammar (see Ground truth). DESIGN.md:244, :246, :311 and README.md:49 claim otherwise. Fix those docs in the same ticket.
 - **Shape:** `def repair_ranks(sections: list[Section]) -> tuple[list[Section], list[Flag]]` as a second pass in `Assembler.build_document` (`assemble.py:8-28`). Rule: numbering grammar (`1.`, `1.1`, `Article IV`) wins over `heading_level` when they disagree. Every reparent emits `heading_rank_repaired`.
 - **Blast radius:** section trees in every output; tests that assert tree shape (grep `sections` in `tests/`). Boundary F1 unaffected (repair is intra-document only).
-- **Done when:** a fixture with a mislabeled `1.1` under a wrong level is repaired and flagged; trees with consistent numbering are byte-identical to `main`.
-- **Proof:** golden-tree tests plus a count of changed trees on dlnet-whole, each listed in the PR.
-- **Size:** S-M.
+- **Done when:** a fixture with numbered headings `1`, `1.1`, `2` nests `1.1` under `1`, and each changed parent raises one `heading_rank_repaired`. Trees with no numbered headings are byte-identical to `main`. Numbered outlines are expected to change, because native layout puts every heading at level 1 (`layout.py:181`).
+- **Proof:** golden-tree tests plus a list of changed trees on dlnet-whole in the PR, each with its flag count. Boundary F1 identical on all sets.
+- **Size:** S-M. Depends on item 2 for `Flag`. It does not read `boundary_decided`.
 
 Skip: cross-document re-merge after commit. DESIGN.md "No undo" is a streaming contract. Reopening a closed document would break `document_closed` consumers. Out of scope.
 
@@ -129,7 +135,7 @@ One tool serves both lessons. Lesson 5 is the visualizer run in batch next to `p
   Review checks (computed, also shown): section `page_start/page_end` outside its document; `HEADER/FOOTER/PAGE_NUMBER` text found in body blocks; title equal to a furniture string.
 - **Blast radius:** new module and two opt-in CLI flags. Eval JSON unchanged. Report files can contain document text: write under `.packet-eval/` (already ignored), never commit PoliTax holdout renders.
 - **Done when:** the HTML opens offline, with no external requests, and shows each DESIGN.md fail mode on a fixture made for it.
-- **Proof:** tests assert the HTML has no `http` URLs and contains one stepper entry per `document_closed`. Screenshot of the `shared-header` false-merge in the PR. The three review checks each have a positive and a negative fixture.
+- **Proof:** tests assert the HTML has no `http` URLs and contains one stepper entry per `document_closed`. A new built-in fixture `stripped-numbers` (two documents, same header, no `N of M` footers) reproduces the DESIGN.md false-merge fail mode; the PR shows a screenshot of it. `shared-header` is not that case: it splits correctly by `lookahead_numbering` (0.45 + 0.2 = 0.65, `docs/EVAL.md:229-232`) with F1 1.0, and the screenshot shows it as the passing contrast. The three review checks each have a positive and a negative fixture.
 - **Size:** M (renderer) + S (eval hook and checks).
 
 ## Sequencing as verifiable units
@@ -140,22 +146,22 @@ Each unit merges alone and keeps every eval number identical to `main` unless it
 2. **U2 flags in extras** (item 2, without `heading_rank_repaired`). Proof: per-kind tests; eval identical.
 3. **U3 visualizer** (item 5 renderer). Proof: offline HTML test; screenshot of fail modes.
 4. **U4 eval review path** (item 5 hook and checks). Proof: checks fire only on their fixtures.
-5. **U5 heading repair + DESIGN.md fix** (item 4b, adds `heading_rank_repaired`). Proof: golden trees; changed-tree list.
+5. **U5 heading repair + DESIGN.md/README fix** (item 4b, adds `heading_rank_repaired`). Proof: golden trees; changed-tree list. Needs U2 for `Flag`.
 6. **U6 mid-band confirm seam** (item 4a, `confirmer=None`). Proof: identical decisions on all sets.
 7. **U7 confirm experiment** (item 4a with a real model). Proof: PoliTax holdout ≥ 0.41, no more false splits, wiki results, Tom's OK before any default.
 8. **U8 few-shot adapter** (item 3). Proof: tree-hash contract; grounding 100 percent on stub.
 
-U3 can start after U1, in parallel with U2. U5 and U6 depend only on U1.
+U3 can start after U1, in parallel with U2. U5 depends on U2. U6 depends only on U1.
 
 ## Recommended tickets (for Piper)
 
 | # | Title | Scope | Size | Depends on |
 |---|---|---|---|---|
-| T1 | Packet: emit `boundary_decided` events and `--trace` JSONL | events.py, pipeline.py `_apply`, cli parse flag, tests | S | none |
+| T1 | Packet: emit `boundary_decided` events and `--trace` JSONL | events.py, lookahead.py `Decision.confidence`, pipeline.py `_apply`, cli parse flag, tests | S | none |
 | T2 | Packet: `packet.flags` in `LogicalDocument.extras` | types.py `Flag`, pipeline flags, core citation helper, DESIGN.md | M | T1 |
 | T3 | Packet: self-contained HTML visualizer (`packet viz`) | viz.py, cli, offline tests | M | T1 |
-| T4 | Packet: `packet eval --viz-dir` + metric-blind review checks | eval/run.py hook, three checks, fixtures | S | T3 |
-| T5 | Packet: heading rank repair pass + DESIGN.md correction | assemble.py `repair_ranks`, flag, golden trees | S-M | T1 (T2 for flag) |
+| T4 | Packet: `packet eval --viz-dir` + metric-blind review checks + `stripped-numbers` fixture | eval/run.py hook, three checks, fixtures | S | T3 |
+| T5 | Packet: heading rank repair pass + DESIGN.md/README correction | assemble.py `repair_ranks`, flag, golden trees | S-M | T2 |
 | T6 | Packet: mid-band `Confirmer` seam in look-ahead (off) | lookahead.py, PipelineConfig, replay test | M | T1 |
 | T7 | Packet: mid-band VLM confirm experiment | bench run, PoliTax train/dev, holdout once, wiki page | M | T6, decision backend images |
 | T8 | Packet: few-shot schema-constrained domain adapter (opt-in) | domain_fewshot.py, contract test, stub backend | M | decision backend structured output |
