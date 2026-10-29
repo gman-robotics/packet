@@ -85,8 +85,15 @@ def _assert_decisions(base, got, verdict):
     """Flipping a fallback split updates the numbering anchor in ``LookaheadSplitter._record``.
 
     A later numbered page can then decide differently. Rows before the first
-    fallback still match the base. The confirmer rewrites only fallback rows,
-    so no other row may carry a ``fallback_*`` or ``confirmed_*`` reason.
+    fallback still match the base. A later row whose reason did not change must
+    match the base too, so a ``split`` flip under the same reason fails. The
+    confirmer rewrites only base fallback rows, so no other row may carry a
+    ``fallback_*`` or ``confirmed_*`` reason.
+
+    Caveat: a later mid-band page can reach ``confirm()`` only after an earlier
+    flip moves the anchor; its reason would be ``confirmed_*`` and fail here.
+    No ``_streams()`` entry has a numbered page after an unnumbered fallback,
+    so this check does not cover that case.
     """
     if verdict is None:
         assert got == base
@@ -102,7 +109,7 @@ def _assert_decisions(base, got, verdict):
             assert after.reason == confirmed
             seen_fallback = True
             continue
-        if not seen_fallback:
+        if not seen_fallback or after.reason == before.reason:
             assert after == before
             continue
         assert not after.reason.startswith("fallback_")
@@ -191,7 +198,8 @@ def test_fixed_scorer_builtin_replay_calls_confirmer(tmp_path, verdict):
     assert any(row["reason"] in FALLBACK for row in base)
     stub = StubConfirmer(verdict)
     got = _decided(fixture.pdf, PipelineConfig(scorer=scorer, confirmer=stub))
-    assert stub.calls
+    fallback_pages = [row["page"] for row in base if row["reason"] in FALLBACK]
+    assert [page.index for _before, page, _after in stub.calls] == fallback_pages
     _assert_payloads(base, got, verdict)
 
 

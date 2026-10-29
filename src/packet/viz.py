@@ -142,6 +142,20 @@ def _furniture_in_body_findings(doc: LogicalDocument, furniture: set[str]) -> li
                     doc.id,
                     f"block {block.id} text equals furniture {text}",
                 ))
+                continue
+            # A longer block can carry the furniture as one of its own lines.
+            # Match whole lines only: a substring test would fire on a bare
+            # page number inside any sentence.
+            line = next(
+                (norm for raw in block.text.splitlines() if (norm := _norm_line(raw)) in furniture),
+                None,
+            )
+            if line is not None:
+                findings.append(ReviewFinding(
+                    CHECK_FURNITURE_IN_BODY,
+                    doc.id,
+                    f"block {block.id} has a line equal to furniture {line}",
+                ))
     return findings
 
 

@@ -303,13 +303,20 @@ def _cmd_parse(args) -> int:
         return _parse_paths(args, paths, pipe, config, extractors, out_dir, None)
 
     target = Path(args.trace)
-    partial = target.with_name(target.name + ".partial")
-    if target.is_dir():
+    try:
+        # Check before ``with_name``: '.' and '/' have no name and would raise
+        # ValueError there. An unsearchable parent raises PermissionError here.
+        is_dir = target.is_dir()
+    except OSError as exc:
+        print(f"packet parse: cannot write trace {target}: {exc.strerror}", file=sys.stderr)
+        return 2
+    if is_dir:
         print(
             f"packet parse: cannot write trace {target}: {os.strerror(errno.EISDIR)}",
             file=sys.stderr,
         )
         return 2
+    partial = target.with_name(target.name + ".partial")
 
     opened = False
     try:
@@ -651,7 +658,7 @@ def _cmd_eval(args) -> int:
     else:
         results = ev.run_named_fixtures(root, pipeline=pipe, **viz_kw)
     if viz_dir is not None:
-        ev.write_fail_mode_viz(root, viz_dir, pipe)
+        ev.write_fail_mode_viz(root, viz_dir)
     gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=min_macro,
                             macro_results=macro_results)
     if args.json:
