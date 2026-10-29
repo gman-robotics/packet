@@ -136,7 +136,7 @@ def test_repair_recomputes_page_end_for_old_and_new_parents():
     assert one.page_end == 4
     assert [child.heading for child in two.children] == ["2.1"]
     assert [child.heading for child in two.children[0].children] == ["2.1.1"]
-    assert two.children[0].page_end == 7
+    assert two.children[0].page_end == 9
     assert two.page_end == 9
     assert eight.children == []
     assert eight.page_end == 6
@@ -293,3 +293,19 @@ def test_repair_keeps_cover_when_later_move_recomputes_parent():
     assert [child.heading for child in one.children] == ["1.1"]
     assert one.children[0].children[0].children[0].heading == "1.1.1.1"
     assert one.page_end == 15
+
+
+def test_parent_page_end_covers_open_children_at_end_of_stream():
+    blocks = [
+        _b(0, BlockKind.TITLE, "Annual Report", page=0),
+        _b(1, BlockKind.HEADING, "Overview", 1, page=1),
+        _b(2, BlockKind.HEADING, "Markets", 2, page=2),
+        _b(3, BlockKind.PARAGRAPH, "Markets body", page=5),
+    ]
+    roots = _nest(blocks)
+    title = roots[0]
+    overview = title.children[0]
+    markets = overview.children[0]
+    assert markets.page_end == 5
+    assert overview.page_end == 5
+    assert title.page_end == 5
