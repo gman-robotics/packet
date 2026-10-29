@@ -130,16 +130,15 @@ def _write_viz(viz_dir: Path, fixture: NamedFixture, packet: Packet, events: lis
     (viz_dir / f"{fixture.name}.html").write_text(report, encoding="utf-8")
 
 
-def write_fail_mode_viz(
-    root: Path | None, viz_dir: Path, pipeline: Pipeline | None = None
-) -> None:
-    """Write HTML for ``build_fail_modes``.
+def write_fail_mode_viz(root: Path | None, viz_dir: Path) -> None:
+    """Write HTML for ``build_fail_modes`` with the default pipeline.
 
-    Scores for these fixtures are not returned, so they cannot change the rows,
-    gate, or macro F1 of the set that actually ran.
+    These reports show known failures of the default pipeline, so they ignore
+    ``--boundary-weights``. Scores for these fixtures are not returned, so they
+    cannot change the rows, gate, or macro F1 of the set that actually ran.
     """
     for fixture in build_fail_modes(root):
-        run_fixture(fixture, pipeline, viz_dir=viz_dir)
+        run_fixture(fixture, None, viz_dir=viz_dir)
 
 
 def run_named_fixtures(

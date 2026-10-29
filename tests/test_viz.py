@@ -11,7 +11,7 @@ from packet import cli
 from packet.eval.fixtures import build_builtin
 from packet.events import EventKind
 from packet.pipeline import Pipeline
-from packet.viz import IMAGE_SKIP_NOTE, _walk_sections, load_trace, render_html
+from packet.viz import IMAGE_SKIP_NOTE, load_trace, render_html
 
 
 def _fixture(tmp_path, name):
@@ -163,6 +163,15 @@ def _page_chunks(html: str) -> dict[int, str]:
     return chunks
 
 
+def _all_sections(sections):
+    """Own walk of the section tree, so the test does not trust viz's walker."""
+    out = []
+    for section in sections:
+        out.append(section)
+        out.extend(_all_sections(section.children))
+    return out
+
+
 def _step_chunks(html: str) -> list[str]:
     return re.findall(r'<article class="step" data-step="\d+">(.*?)</article>', html, re.DOTALL)
 
@@ -177,9 +186,10 @@ def test_section_tree_rendered_per_document(tmp_path, name):
     seen_section = False
     for event, chunk in zip(closed, steps):
         doc = next(d for d in packet.documents if d.id == event.payload["document_id"])
-        for section in _walk_sections(doc.sections):
+        sections = _all_sections(doc.sections)
+        assert chunk.count('<li class="section">') == len(sections)
+        for section in sections:
             seen_section = True
-            assert 'class="section"' in chunk
             if section.heading:
                 assert html_escape(section.heading) in chunk
             assert f'<span class="pages">{section.page_start}-{section.page_end}</span>' in chunk
@@ -233,10 +243,10 @@ def test_escapes_hostile_attribute_values(tmp_path):
 
 def test_gold_start_past_last_page_is_fn(tmp_path):
     _fx, packet, events = _collect(tmp_path, "multi-doc")
-    last = packet.origin.page_count
-    html = render_html(packet, events, gold=[0, 2, last + 3])
-    assert f'data-page="{last + 3}" data-mark="FN"' in html
-    assert f'data-page="{last}" data-mark=' not in html
+    page_count = packet.origin.page_count
+    html = render_html(packet, events, gold=[0, 2, page_count])
+    assert f'data-page="{page_count}" data-mark="FN"' in html
+    assert f'data-page="{page_count + 1}" data-mark=' not in html
     assert 'data-page="0" data-mark="TP"' in html
 
 
@@ -261,12 +271,15 @@ def test_pdf_inlines_png_with_renderer(tmp_path, monkeypatch):
             return False
 
         def render(self, index, longest_px):
+            sizes.append(longest_px)
             return FakeImage()
 
+    sizes: list[int] = []
     monkeypatch.setattr(source, "PdfPageSource", FakeSource)
     fx, packet, events = _collect(tmp_path, "multi-doc")
     html = render_html(packet, events, pdf=fx.pdf)
     assert html.count('src="data:image/png;base64,iVBOR2Zha2U="') == 2
+    assert sizes == [800, 800]
     assert IMAGE_SKIP_NOTE not in html
     _assert_offline(html)
 

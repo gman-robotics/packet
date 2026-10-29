@@ -80,40 +80,59 @@ class _Stub:
         return self._verdict
 
 
-CASES = {
-    "eager": ([_obs(0, 0.6)], {"window": 0}, 0),
-    "below_threshold": ([_obs(0, 0.5)], {"window": 0}, 0),
-    "no_signal": ([_obs(0, num=1, total=2)], {}, 0),
-    "implied_page_one": ([_obs(0), _obs(1, num=2, total=3)], {}, 0),
-    "high_confidence": ([_obs(0, num=1, total=2), _obs(1, 0.9)], {}, 1),
-    "continues_sequence": ([_obs(0, num=1, total=3), _obs(1, 0.5, 2, 3)], {}, 1),
-    "lookahead_numbering": (
-        [_obs(0, num=1, total=2), _obs(1, num=2, total=2), _obs(2, 0.5, 1, 2), _obs(3, num=2, total=2)],
-        {}, 2,
-    ),
-    "old_sequence_continues": ([_obs(0, num=1, total=3), _obs(1, 0.5), _obs(2, num=2, total=3)], {}, 1),
-    "fallback_eager": ([_obs(0, num=1, total=3), _obs(1, 0.6)], {}, 1),
-    "fallback_below": ([_obs(0, num=1, total=3), _obs(1, 0.45)], {}, 1),
-    "confirmed_split": (
-        [_obs(0, num=1, total=3), _obs(1, 0.6)],
-        {"confirmer": _Stub(True)},
-        1,
-    ),
-    "confirmed_continue": (
-        [_obs(0, num=1, total=3), _obs(1, 0.45)],
-        {"confirmer": _Stub(False)},
-        1,
-    ),
+def _cases():
+    """Fresh ``_Stub`` instances per call, so no stub state is shared between tests."""
+    return {
+        "eager": ([_obs(0, 0.6)], {"window": 0}, 0),
+        "below_threshold": ([_obs(0, 0.5)], {"window": 0}, 0),
+        "no_signal": ([_obs(0, num=1, total=2)], {}, 0),
+        "implied_page_one": ([_obs(0), _obs(1, num=2, total=3)], {}, 0),
+        "high_confidence": ([_obs(0, num=1, total=2), _obs(1, 0.9)], {}, 1),
+        "continues_sequence": ([_obs(0, num=1, total=3), _obs(1, 0.5, 2, 3)], {}, 1),
+        "lookahead_numbering": (
+            [_obs(0, num=1, total=2), _obs(1, num=2, total=2), _obs(2, 0.5, 1, 2), _obs(3, num=2, total=2)],
+            {}, 2,
+        ),
+        "old_sequence_continues": ([_obs(0, num=1, total=3), _obs(1, 0.5), _obs(2, num=2, total=3)], {}, 1),
+        "fallback_eager": ([_obs(0, num=1, total=3), _obs(1, 0.6)], {}, 1),
+        "fallback_below": ([_obs(0, num=1, total=3), _obs(1, 0.45)], {}, 1),
+        "confirmed_split": (
+            [_obs(0, num=1, total=3), _obs(1, 0.6)],
+            {"confirmer": _Stub(True)},
+            1,
+        ),
+        "confirmed_continue": (
+            [_obs(0, num=1, total=3), _obs(1, 0.45)],
+            {"confirmer": _Stub(False)},
+            1,
+        ),
+    }
+
+
+SPLIT_FOR = {
+    "eager": True,
+    "below_threshold": False,
+    "no_signal": False,
+    "implied_page_one": True,
+    "high_confidence": True,
+    "continues_sequence": False,
+    "lookahead_numbering": True,
+    "old_sequence_continues": False,
+    "fallback_eager": True,
+    "fallback_below": False,
+    "confirmed_split": True,
+    "confirmed_continue": False,
 }
 
 
-@pytest.mark.parametrize("reason", sorted(CASES))
+@pytest.mark.parametrize("reason", sorted(_cases()))
 def test_every_reason_and_confidence(reason):
-    obs, kw, page = CASES[reason]
+    obs, kw, page = _cases()[reason]
     decisions = _run(obs, **kw)
     assert [d.page for d in decisions] == [o.index for o in obs]
     d = decisions[page]
     assert d.reason == reason
+    assert d.split is SPLIT_FOR[reason]
     expected = obs[page].signal.confidence if obs[page].signal else 0.0
     assert d.confidence == expected
 
@@ -161,6 +180,38 @@ def test_parse_trace_directory_exits_2(tmp_path, capsys):
     assert "Traceback" not in err
     assert trace.is_dir()
     assert not trace.with_name(trace.name + ".partial").exists()
+
+
+@pytest.mark.parametrize("path", [".", "/"])
+def test_parse_trace_nameless_path_exits_2(tmp_path, monkeypatch, capsys, path):
+    fx = _fixture(tmp_path, "multi-doc")
+    monkeypatch.chdir(tmp_path)
+    before = sorted(p.name for p in tmp_path.iterdir())
+    code = cli.main(["parse", str(fx.pdf), "-o", str(tmp_path / "out.json"), "--trace", path])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert f"packet parse: cannot write trace {path}: Is a directory" in err
+    assert "Traceback" not in err
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+
+
+def test_parse_trace_unsearchable_parent_exits_2(tmp_path, capsys):
+    fx = _fixture(tmp_path, "multi-doc")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    trace = locked / "trace.jsonl"
+    locked.chmod(0)
+    try:
+        code = cli.main(
+            ["parse", str(fx.pdf), "-o", str(tmp_path / "out.json"), "--trace", str(trace)]
+        )
+    finally:
+        locked.chmod(0o755)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert f"packet parse: cannot write trace {trace}: Permission denied" in err
+    assert "Traceback" not in err
+    assert list(locked.iterdir()) == []
 
 
 def test_parse_trace_keeps_target_on_failure_and_replaces_on_success(tmp_path, monkeypatch, capsys):
