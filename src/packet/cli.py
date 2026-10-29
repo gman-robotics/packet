@@ -176,7 +176,8 @@ def main(argv: list[str] | None = None) -> int:
     ps.add_argument(
         "--weights",
         default=None,
-        help="existing JSON weights; if omitted, trains trump weights to --train-output",
+        help="existing JSON weights (load errors exit 2); if omitted, trains trump weights "
+             "to --train-output",
     )
     ps.add_argument(
         "--train-output",
