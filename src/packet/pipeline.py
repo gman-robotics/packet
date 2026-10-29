@@ -16,7 +16,7 @@ from packet.domain import DomainAdapter, apply_domains
 from packet.events import Event
 from packet.extract import Extractor, NativeTextExtractor, Router
 from packet.furniture import FurnitureTagger
-from packet.lookahead import Decision, LookaheadSplitter, PageObs
+from packet.lookahead import Confirmer, Decision, LookaheadSplitter, PageObs
 from packet.source import PdfPageSource
 from packet.types import PACKET_FLAGS_KEY, Block, Flag, LogicalDocument, Packet, PageRef
 
@@ -35,6 +35,8 @@ class PipelineConfig:
     # GMA-443 experiment hook: page embedder for the low-weight ``embed_shift`` signal. Off by default.
     embedder: Callable[[PageRef, list[Block]], Any] | None = None
     embed_shift_max: float | None = None
+    # GMA-461 mid-band confirm seam. Off by default; None keeps the eager fallback.
+    confirmer: Confirmer | None = None
 
 
 class Pipeline:
@@ -69,6 +71,7 @@ class Pipeline:
             window=self.config.lookahead_window,
             commit=self.config.boundary_commit_confidence,
             fallback=self.config.boundary_min_confidence,
+            confirmer=self.config.confirmer,
         )
         state = _DocState()
         pending: dict[int, tuple[list[Block], PageObs]] = {}
