@@ -82,18 +82,31 @@ def _streams():
 
 
 def _assert_decisions(base, got, verdict):
+    """Flipping a fallback split updates the numbering anchor in ``LookaheadSplitter._record``.
+
+    A later numbered page can then decide differently. Rows before the first
+    fallback still match the base. The confirmer rewrites only fallback rows,
+    so no other row may carry a ``fallback_*`` or ``confirmed_*`` reason.
+    """
     if verdict is None:
         assert got == base
         return
     assert len(got) == len(base)
+    seen_fallback = False
+    confirmed = "confirmed_split" if verdict else "confirmed_continue"
     for before, after in zip(base, got):
         assert after.page == before.page
         assert after.confidence == before.confidence
         if before.reason in FALLBACK:
             assert after.split is verdict
-            assert after.reason == ("confirmed_split" if verdict else "confirmed_continue")
-        else:
+            assert after.reason == confirmed
+            seen_fallback = True
+            continue
+        if not seen_fallback:
             assert after == before
+            continue
+        assert not after.reason.startswith("fallback_")
+        assert not after.reason.startswith("confirmed_")
 
 
 def _assert_payloads(base, got, verdict):
@@ -168,6 +181,18 @@ def test_stub_changes_only_fallback_on_builtin_fixtures(tmp_path, verdict):
         got = _decided(fixture.pdf, PipelineConfig(confirmer=stub))
         _assert_payloads(base, got, verdict)
         assert stub.calls == []
+
+
+@pytest.mark.parametrize("verdict", [True, False, None])
+def test_fixed_scorer_builtin_replay_calls_confirmer(tmp_path, verdict):
+    fixture = next(item for item in build_builtin(tmp_path) if item.name == "scan")
+    scorer = _FixedScorer(0.6)
+    base = _decided(fixture.pdf, PipelineConfig(scorer=scorer))
+    assert any(row["reason"] in FALLBACK for row in base)
+    stub = StubConfirmer(verdict)
+    got = _decided(fixture.pdf, PipelineConfig(scorer=scorer, confirmer=stub))
+    assert stub.calls
+    _assert_payloads(base, got, verdict)
 
 
 def test_pipeline_passes_confirmer_only_into_midband_fallback(tmp_path):
