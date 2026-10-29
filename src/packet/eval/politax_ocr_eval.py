@@ -80,7 +80,10 @@ def ocr_cache_pipeline(data_dir: Path, pdf_sha256: str, stats: CacheStats,
     return Pipeline(extractors=[EscalatingExtractor(NativeTextExtractor(), ocr)], config=config)
 
 
-def run_with_ocr_cache(m, fixtures, data_dir: Path, config: PipelineConfig | None = None):
+def run_with_ocr_cache(
+    m, fixtures, data_dir: Path, config: PipelineConfig | None = None,
+    viz_dir: Path | None = None,
+):
     """One eval row per fixture, scan pages fed from the OCR cache. Returns (results, stats)."""
     from packet.eval.run import run_fixture
 
@@ -89,5 +92,7 @@ def run_with_ocr_cache(m, fixtures, data_dir: Path, config: PipelineConfig | Non
     results = []
     for fx in fixtures:
         sha = sha_by_file[fx.notes or fx.pdf.name]
-        results.append(run_fixture(fx, ocr_cache_pipeline(data_dir, sha, stats, config)))
+        results.append(run_fixture(
+            fx, ocr_cache_pipeline(data_dir, sha, stats, config), viz_dir=viz_dir,
+        ))
     return results, stats
