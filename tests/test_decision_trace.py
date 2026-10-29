@@ -71,6 +71,14 @@ def _run(obs, **kw):
     return out + sp.flush()
 
 
+class _Stub:
+    def __init__(self, verdict: bool):
+        self._verdict = verdict
+
+    def confirm(self, before, page, after):
+        return self._verdict
+
+
 CASES = {
     "eager": ([_obs(0, 0.6)], {"window": 0}, 0),
     "below_threshold": ([_obs(0, 0.5)], {"window": 0}, 0),
@@ -85,6 +93,16 @@ CASES = {
     "old_sequence_continues": ([_obs(0, num=1, total=3), _obs(1, 0.5), _obs(2, num=2, total=3)], {}, 1),
     "fallback_eager": ([_obs(0, num=1, total=3), _obs(1, 0.6)], {}, 1),
     "fallback_below": ([_obs(0, num=1, total=3), _obs(1, 0.45)], {}, 1),
+    "confirmed_split": (
+        [_obs(0, num=1, total=3), _obs(1, 0.6)],
+        {"confirmer": _Stub(True)},
+        1,
+    ),
+    "confirmed_continue": (
+        [_obs(0, num=1, total=3), _obs(1, 0.45)],
+        {"confirmer": _Stub(False)},
+        1,
+    ),
 }
 
 
