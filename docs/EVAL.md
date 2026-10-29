@@ -279,3 +279,12 @@ Read-only check (does not write the cache and does not load MLX):
 
     python scripts/replay_ocr_loop_stop.py
     python scripts/replay_ocr_loop_stop.py --data-dir ~/.cache/packet/politax/ocr
+
+## HTML reports (`--viz-dir`)
+
+`packet eval --viz-dir DIR` writes one HTML report per fixture, plus reports for
+the known fail modes. Fail-mode reports always use the default pipeline, even
+with `--boundary-weights`. The screenshot shows `stripped-numbers` (a false
+merge: page 2 is marked FN) next to `shared-header` (page 2 is a correct TP).
+
+![stripped-numbers vs shared-header](img/stripped-numbers-vs-shared-header.png)
