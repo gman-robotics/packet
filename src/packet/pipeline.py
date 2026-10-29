@@ -274,26 +274,31 @@ def _signal_reasons(obs: PageObs) -> list[str]:
 def _has_page_number_support(pages: list[PageObs]) -> bool:
     """True when a numbered page continues a sequence started in this document.
 
-    A one-page document is supported when that page's number starts a sequence
-    (``1``, including ``1 of 1``, or a ``page_number_reset``).
+    Every earlier numbered page is an anchor, and so is the unnumbered opening
+    page. A later number that continues any of those anchors is support, so a
+    numbered insert does not hide the earlier run (``1 of 3``, ``1 of 1``,
+    ``2 of 3``).
+
+    A one-page document is supported only when ``page_num`` is 1, with or
+    without a ``page_number_reset``. A reset reason with no page number is not.
     """
     if not pages:
         return False
     if len(pages) == 1:
         return _starts_sequence(pages[0])
-    anchor = pages[0]
-    for obs in pages[1:]:
-        if _continues_page(anchor, obs):
-            return True
-        if obs.page_num is not None:
-            anchor = obs
+    for index, obs in enumerate(pages[1:], start=1):
+        if obs.page_num is None:
+            continue
+        for anchor_index, anchor in enumerate(pages[:index]):
+            if anchor.page_num is None and anchor_index != 0:
+                continue
+            if _continues_page(anchor, obs):
+                return True
     return False
 
 
 def _starts_sequence(obs: PageObs) -> bool:
-    if obs.page_num == 1:
-        return True
-    return "page_number_reset" in _signal_reasons(obs)
+    return obs.page_num == 1
 
 
 def _continues_page(anchor: PageObs, obs: PageObs) -> bool:

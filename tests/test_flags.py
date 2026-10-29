@@ -4,6 +4,8 @@ Flags describe uncertainty. They do not move a split or a section.
 """
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from packet.boundary import BoundarySignal
 from packet.citations import citation_id_counts, unresolved_citation_ids
 from packet.domain import apply_domains
@@ -47,15 +49,35 @@ def _kinds(doc: LogicalDocument) -> list[str]:
     return [flag["kind"] for flag in flags]
 
 
-def _parse(pdf):
+def _parse(pdf, config: PipelineConfig | None = None):
     events = []
-    packet = Pipeline().parse(pdf, on_event=events.append)
+    packet = Pipeline(config=config).parse(pdf, on_event=events.append)
     decided = [event.payload for event in events if event.kind == EventKind.BOUNDARY_DECIDED]
     return packet, decided
 
 
 def _ranges(packet: Packet) -> list[tuple[int, int]]:
     return [(doc.page_start, doc.page_end) for doc in packet.documents]
+
+
+def _section_tree(packet: Packet) -> list:
+    def walk(section: Section) -> dict:
+        return {
+            "id": section.id,
+            "heading": section.heading,
+            "children": [walk(child) for child in section.children],
+        }
+
+    return [[walk(section) for section in doc.sections] for doc in packet.documents]
+
+
+def _assert_sections_match_without_flags(
+    pdf, packet: Packet, config: PipelineConfig | None = None,
+) -> None:
+    """Section ids and headings match a parse that computes no flags."""
+    with patch("packet.pipeline.flags_for_document", return_value=[]):
+        plain, _decided = _parse(pdf, config)
+    assert _section_tree(packet) == _section_tree(plain)
 
 
 def _lines(header: str, body: str, page_label: str | None) -> list[str]:
@@ -129,6 +151,7 @@ def test_weak_boundary_raised_on_fallback_eager(tmp_path):
     ])
     packet, decided = _parse(pdf)
     assert _ranges(packet) == [(0, 1), (2, 2)], decided
+    _assert_sections_match_without_flags(pdf, packet)
     assert decided[2]["reason"] == "fallback_eager"
     assert _kinds(packet.documents[0]) == []
     assert _kinds(packet.documents[1]) == ["weak_boundary"]
@@ -142,6 +165,7 @@ def test_weak_boundary_not_raised_on_lookahead_numbering(tmp_path):
     fx = next(item for item in build_builtin(tmp_path) if item.name == "shared-header")
     packet, decided = _parse(fx.pdf)
     assert _ranges(packet) == [(0, 1), (2, 3)]
+    _assert_sections_match_without_flags(fx.pdf, packet)
     assert decided[2]["reason"] == "lookahead_numbering"
     assert decided[2]["confidence"] == 0.65
     assert all("weak_boundary" not in _kinds(doc) for doc in packet.documents)
@@ -182,6 +206,7 @@ def test_fallback_decision_raised_when_a_signalled_page_does_not_split(tmp_path)
     ])
     packet, decided = _parse(pdf)
     assert _ranges(packet) == [(0, 2)], decided
+    _assert_sections_match_without_flags(pdf, packet)
     assert decided[2]["reason"] == "fallback_below"
     assert decided[2]["signal"] is not None
     assert _kinds(packet.documents[0]) == ["fallback_decision"]
@@ -201,6 +226,7 @@ def test_fallback_decision_not_raised_without_a_near_miss(tmp_path):
     ])
     packet, decided = _parse(pdf)
     assert _ranges(packet) == [(0, 1), (2, 4)]
+    _assert_sections_match_without_flags(pdf, packet)
     assert all(row["reason"] != "fallback_below" for row in decided)
     assert all("fallback_decision" not in _kinds(doc) for doc in packet.documents)
 
@@ -224,6 +250,7 @@ def test_eof_flush_raised_on_unnumbered_final_page(tmp_path):
     ])
     packet, decided = _parse(pdf)
     assert _ranges(packet) == [(0, 1), (2, 2)], decided
+    _assert_sections_match_without_flags(pdf, packet)
     assert decided[2]["reason"] == "fallback_eager"
     assert _kinds(packet.documents[1]) == ["weak_boundary", "eof_flush"]
     flush = packet.documents[1].extras[PACKET_FLAGS_KEY][1]
@@ -256,6 +283,7 @@ def test_eof_flush_absent_on_one_page_1_of_1_final_doc(tmp_path):
     ])
     packet, decided = _parse(pdf)
     assert _ranges(packet) == [(0, 1), (2, 2)], decided
+    _assert_sections_match_without_flags(pdf, packet)
     assert "eof_flush" not in _kinds(packet.documents[1])
 
 
@@ -269,9 +297,12 @@ def test_eof_flush_page_number_support_rules():
     assert "eof_flush" in _flag_kinds(pages((4, None, None)), eof_eligible=True)
     assert "eof_flush" in _flag_kinds(pages((4, 5, 9)), eof_eligible=True)
 
-    reset = [(_dec(4, True, "high_confidence", 0.9),
-              _obs(4, 0.9, "page_number_reset", num=None))]
-    assert "eof_flush" not in _flag_kinds(reset, eof_eligible=True)
+    bare_reset = [(_dec(4, True, "high_confidence", 0.9),
+                   _obs(4, 0.9, "page_number_reset", num=None))]
+    assert "eof_flush" in _flag_kinds(bare_reset, eof_eligible=True)
+    reset_to_one = [(_dec(4, True, "high_confidence", 0.9),
+                     _obs(4, 0.9, "page_number_reset", num=1))]
+    assert "eof_flush" not in _flag_kinds(reset_to_one, eof_eligible=True)
 
     continued = pages((5, 1, 3), (6, 2, 3), (7, 3, 3))
     assert "eof_flush" not in _flag_kinds(continued, eof_eligible=True)
@@ -280,6 +311,9 @@ def test_eof_flush_page_number_support_rules():
     assert "eof_flush" in _flag_kinds(pages((5, 1, 2), (6, None, None)), eof_eligible=True)
     restarted = pages((5, 9, 9), (6, 1, 2), (7, 2, 2))
     assert "eof_flush" not in _flag_kinds(restarted, eof_eligible=True)
+    # 2 of 3 continues the earlier 1 of 3, not the inserted 1 of 1.
+    inserted = pages((5, 1, 3), (6, 1, 1), (7, 2, 3))
+    assert "eof_flush" not in _flag_kinds(inserted, eof_eligible=True)
     # A one-document packet never carries eof_flush, even with no page numbers.
     assert "eof_flush" not in _flag_kinds(pages((0, None, None), (1, None, None)), eof_eligible=False)
 
@@ -310,8 +344,10 @@ def test_unresolved_citation_raised_and_repeats_kept(tmp_path):
         ["Alpha report finishes those results.", "Page 2 of 2"],
         ["Beta memo stands alone.", "Page 1 of 1"],
     ])
-    packet = Pipeline(config=PipelineConfig(domain_adapters=[Cite()])).parse(pdf)
+    config = PipelineConfig(domain_adapters=[Cite()])
+    packet = Pipeline(config=config).parse(pdf)
     assert _ranges(packet) == [(0, 1), (2, 2)]
+    _assert_sections_match_without_flags(pdf, packet, config)
     assert "unresolved_citation" not in _kinds(packet.documents[0])
     refs = [flag["ref"] for flag in packet.documents[1].extras[PACKET_FLAGS_KEY]
             if flag["kind"] == "unresolved_citation"]

@@ -261,19 +261,25 @@ nothing emits it yet.
   `weak_boundary` and is not flagged again.
 - **`eof_flush`** — only the final document of a multi-document packet,
   and only when no numbered page in it continues a sequence started in
-  that document. A one-document packet never gets it. A one-page final
-  document does not get it when that page's number starts a sequence
-  (`1 of 1`, or a `page_number_reset` to 1): that page is its own
-  page-number support. Only an unnumbered or otherwise unsupported final
-  page gets the flag.
+  that document. A sequence start is any earlier numbered page, or the
+  unnumbered opening page. Each later numbered page is checked against
+  every one of those anchors, so a numbered insert does not hide an
+  earlier run (`1 of 3`, `1 of 1`, `2 of 3` has support). A one-document
+  packet never gets it. A one-page final document does not get it when
+  `page_num` is 1 (`1 of 1`, with or without a `page_number_reset`). A
+  `page_number_reset` reason with no page number is not support. Only an
+  unnumbered or otherwise unsupported final page gets the flag.
 - **`unresolved_citation`** — a citation id in `extras` that is not a
-  block id known to the packet. `citation_id_counts`
+  block id known when this document closes. The pipeline's known ids are
+  the blocks of this document and of earlier documents (streaming), so a
+  forward reference to a later document is flagged. `citation_id_counts`
   (`src/packet/citations.py`) returns the total cited ids, counting
   repeats, and the unresolved ids with repeats kept.
-  `unresolved_citation_ids` is that second list. `citation_integrity`
-  is rewritten on top of the same helper: known ids are still gathered
-  from every document, `citation_keys` still filters extras keys, and
-  the ratio is unchanged (`1.0` when nothing is cited).
+  `unresolved_citation_ids` is that second list. Eval
+  `citation_integrity` uses the same helper over the whole packet, so
+  that forward reference counts as resolved there. `citation_keys` still
+  filters extras keys, and the ratio is unchanged (`1.0` when nothing
+  is cited).
 
 ## Assembler
 
