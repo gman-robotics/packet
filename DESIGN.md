@@ -210,9 +210,9 @@ never re-merged, so these remain:
   `+0.6`) is enough on its own unless look-ahead numbering vetoes it, so
   OCR engines that label chapter openers as TITLE are the main exposure
   (native text only labels page 0 as TITLE today). There is no repair pass that can re-merge documents once
-  split — `Assembler` repair (reparenting headings) only applies inside
-  a single already-open document's section tree, never across a boundary
-  commit.
+  split. `repair_ranks` reparents numbered headings only while that one
+  document is built, never across a boundary commit and never inside a
+  document already emitted.
 - **False merge when signals under-fire.** If a new physical document in
   the stream restarts its own page numbering as `1 of N` but shares a
   near-identical header/footer with the previous document (or the PDF
@@ -242,11 +242,13 @@ which is useful as an escape hatch while boundary quality is unproven.
 Core writes `LogicalDocument.extras["packet.flags"]`, a list of `Flag`
 dicts (`src/packet/types.py`). The key is reserved. Domain adapters must
 not overwrite it; `apply_domains` restores a value that was already there
-and drops one an adapter inserts when the key was absent. The pipeline
-writes the key after adapters run, so citation extras are visible and the
-core list is what survives. A flag never changes a split or a section.
-`heading_rank_repaired` is in the kind list for a later repair pass;
-nothing emits it yet.
+and drops one an adapter inserts when the key was absent. The assembler
+writes `heading_rank_repaired` into that key when it reparents a section,
+and it does not add the key when it has no such flags. `apply_domains`
+keeps that list. The pipeline appends its own flags after adapters run,
+so assembler flags come first and citation extras are visible when the
+later flags are chosen. A flag never changes a split or a section. The
+repair moves the section; the flag only records it.
 
 - **`weak_boundary`** — the split that opened this document had no
   page-number evidence. That is decision reason `fallback_eager`, or
@@ -280,16 +282,38 @@ nothing emits it yet.
   that forward reference counts as resolved there. `citation_keys` still
   filters extras keys, and the ratio is unchanged (`1.0` when nothing
   is cited).
+- **`heading_rank_repaired`** — `repair_ranks` changed this section's
+  parent while building its document. `page` is the section's
+  `page_start`, `ref` is the section id, and `detail` holds `from_parent`
+  (id or null), `to_parent`, and `numbering` (the outline token, such as
+  `1.1`). One flag per reparent. A level correction that does not change
+  the parent does not emit a flag. The repair stays inside the document
+  being built. It does not cross a boundary and does not reopen a
+  document already emitted.
 
 ## Assembler
 
 Detect → order → construct.
 
 - Furniture (headers, footers, page numbers) is stripped from the body.
-- Title / heading blocks open sections.
-- Numbering grammar (`1.`, `1.1`, `Article IV`, `Appendix`) sets level.
+- Title / heading blocks open sections. The first pass is a heading-level
+  stack (`TITLE` is level 0).
+- `repair_ranks` then reads numbering on the heading's first line.
+  Decimal outlines are `1`, `1.`, `1.1`, and `1.1.2` (depth is the
+  component count). A bare integer above 99 with no dot, such as `2024`
+  or `100`, is not an outline. `Section 1.2` is that same decimal.
+  `Article IV` and `ARTICLE 4` are depth 1 (roman or arabic) and are not
+  decimal prefixes.
+- Where that grammar and `heading_level` disagree, grammar sets the
+  level. Level 0 sections stay as they are. A numbered title can still
+  be a decimal prefix parent.
+- A numbered section of depth d is reparented under the nearest preceding
+  decimal section of depth d-1 whose number is a prefix, inside this
+  document only. With no such parent, it stays. Unnumbered sections stay.
+  Each reparent emits one `heading_rank_repaired` and extends the new
+  parent's `page_end` to cover the child. There is no cross-document
+  repair and no streaming reparent of a document already emitted.
 - Captions bind to the nearest table or figure, including across a page break.
-- The tree can be repaired: reparent when a later heading clarifies rank.
 
 ## Domain adapters
 
@@ -300,10 +324,12 @@ class DomainAdapter(Protocol):
     def enrich(self, doc: LogicalDocument) -> LogicalDocument: ...
 ```
 
-Adapters run only on `document_closed`, before `packet.flags` is written.
-They must not delete sections or blocks, and they must not overwrite
-`extras["packet.flags"]` (core restores an existing value and drops one an
-adapter inserts). Add `type_hint` and other `extras`. Examples that do
+Adapters run only on `document_closed`. The assembler may already have
+written `packet.flags` (`heading_rank_repaired`). Adapters must not delete
+sections or blocks, and they must not overwrite `extras["packet.flags"]`
+(`apply_domains` restores an existing value and drops one an adapter
+inserts). The pipeline appends its flags after that, so assembler flags
+come first. Add `type_hint` and other `extras`. Examples that do
 *not* belong in core:
 
 - estate packet field extraction
@@ -357,7 +383,9 @@ The hard checklist lives in
 - `BoundaryDetector` scoring (page numbers, headers, media box, titles)
   feeding a **look-ahead commit** split in `Pipeline` (see Boundary policy
   above; `lookahead_window=0` = eager)
-- Section assembler with intra-document heading repair
+- Section assembler: heading stack, then rank repair from numbering
+  grammar while that document is built (no cross-document repair, no
+  reparent of a document already emitted)
 - Domain adapter protocol
 - CLI: `packet inspect`, `packet parse` (`--no-split`, `-o/--output`,
   `--force-inspect`)

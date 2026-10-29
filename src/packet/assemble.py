@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from packet.types import Block, BlockKind, LogicalDocument, Packet, Section
+import re
+from dataclasses import dataclass
+
+from packet.types import PACKET_FLAGS_KEY, Block, BlockKind, Flag, LogicalDocument, Packet, Section
 
 
 class Assembler:
@@ -17,7 +20,8 @@ class Assembler:
             title = _guess_title(body)
         pages = [b.page for b in blocks] or [0]
         root_sections = _nest(body)
-        return LogicalDocument(
+        root_sections, rank_flags = repair_ranks(root_sections)
+        document = LogicalDocument(
             id=doc_id,
             title=title,
             page_start=min(pages),
@@ -25,6 +29,9 @@ class Assembler:
             sections=root_sections,
             furniture=furniture,
         )
+        if rank_flags:
+            document.extras[PACKET_FLAGS_KEY] = [flag.model_dump() for flag in rank_flags]
+        return document
 
     def attach(self, packet: Packet, doc: LogicalDocument) -> Packet:
         packet.documents.append(doc)
@@ -100,3 +107,184 @@ def _nest(blocks: list[Block]) -> list[Section]:
         stack[-1].page_end = max(stack[-1].page_end, block.page)
 
     return roots
+
+
+# Bare integers above this, with no dot, are years and amounts ("2024 Budget", "100").
+_BARE_INTEGER_MAX = 99
+_DECIMAL = re.compile(r"^(\d{1,3}(?:\.\d{1,3})*)(\.)?(?:\s+|$)")
+_SECTION = re.compile(r"^section\s+(\d{1,3}(?:\.\d{1,3})*)(\.)?(?:\s+|$)", re.IGNORECASE)
+_ARTICLE = re.compile(r"^(article\s+)([IVXLCDM]+|\d{1,3})\.?(?:\s+|$)", re.IGNORECASE)
+_ROMAN = re.compile(r"^M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$")
+_ROMAN_VALUE = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+
+
+@dataclass(frozen=True)
+class _Numbering:
+    depth: int
+    components: tuple[int, ...] | None
+    token: str
+
+
+def repair_ranks(sections: list[Section]) -> tuple[list[Section], list[Flag]]:
+    """Reparent numbered sections when numbering grammar disagrees with heading level.
+
+    Grammar is read from the first line of ``section.heading``. The number token
+    must start that line and be followed by whitespace or the end of the line.
+
+    Decimal outlines are ``1``, ``1.``, ``1.1``, and ``1.1.2``. Depth is the
+    component count. Each component is 1 to 3 digits. A bare integer (no dot)
+    greater than 99 is not an outline, so ``2024 Budget`` and ``100`` are left
+    alone. ``Section 1.2`` is the same decimal outline; the keyword is not part
+    of the number. The flag token is the components joined with dots (``1.1``).
+
+    ``Article IV`` and ``ARTICLE 4`` are depth 1, roman or arabic, value 1..999.
+    They are not decimal prefixes: ``4.1`` does not become a child of
+    ``Article IV``. A level-0 section (a title) is never reparented and its
+    level is not changed. A numbered title can still be a decimal prefix parent.
+
+    A numbered section of depth ``d`` becomes a child of the nearest preceding
+    decimal section of depth ``d - 1`` whose components are a prefix. If no such
+    parent exists, the section stays where ``_nest`` put it. Unnumbered sections
+    are not moved. When grammar and ``heading_level`` disagree, ``level`` is set
+    from depth. A level change without a new parent does not emit a flag.
+
+    Each section whose parent changes emits one ``heading_rank_repaired`` flag.
+    New parents' ``page_end`` is extended to cover that child. A tree with no
+    numbered headings is returned unchanged, with no flags.
+    """
+    flat = _flatten(sections)
+    numbered: list[tuple[Section, Section | None, _Numbering]] = []
+    for section, parent in flat:
+        numbering = _parse_numbering(section.heading)
+        if numbering is not None:
+            numbered.append((section, parent, numbering))
+    if not numbered:
+        return sections, []
+
+    moves: list[tuple[Section, Section | None, Section, _Numbering]] = []
+    level_sets: list[tuple[Section, int]] = []
+    seen: list[tuple[Section, _Numbering]] = []
+    for section, parent, numbering in numbered:
+        if section.level != 0 and section.level != numbering.depth:
+            level_sets.append((section, numbering.depth))
+        desired = None if section.level == 0 else _prefix_parent(seen, numbering)
+        if desired is not None and desired is not parent:
+            moves.append((section, parent, desired, numbering))
+        seen.append((section, numbering))
+    if not moves and not level_sets:
+        return sections, []
+
+    for section, depth in level_sets:
+        section.level = depth
+
+    parent_of = {id(section): parent for section, parent in flat}
+    flags: list[Flag] = []
+    for section, old_parent, new_parent, numbering in moves:
+        _detach(sections, old_parent, section)
+        new_parent.children.append(section)
+        parent_of[id(section)] = new_parent
+        _cover_parents(section, parent_of)
+        flags.append(Flag(
+            kind="heading_rank_repaired",
+            page=section.page_start,
+            ref=section.id,
+            detail={
+                "from_parent": None if old_parent is None else old_parent.id,
+                "to_parent": new_parent.id,
+                "numbering": numbering.token,
+            },
+        ))
+    return sections, flags
+
+
+def _parse_numbering(heading: str | None) -> _Numbering | None:
+    if not heading:
+        return None
+    line = heading.split("\n", 1)[0]
+    article = _ARTICLE.match(line)
+    if article:
+        raw = article.group(2)
+        if raw.isdigit():
+            value = int(raw)
+            if not 1 <= value <= 999:
+                return None
+        elif _roman_to_int(raw) is None:
+            return None
+        word = article.group(1).rstrip()
+        return _Numbering(depth=1, components=None, token=f"{word} {raw}")
+    section = _SECTION.match(line)
+    if section is not None:
+        return _decimal_numbering(section.group(1), section.group(2))
+    decimal = _DECIMAL.match(line)
+    if decimal is not None:
+        return _decimal_numbering(decimal.group(1), decimal.group(2))
+    return None
+
+
+def _decimal_numbering(body: str, trailing_dot: str | None) -> _Numbering | None:
+    parts = body.split(".")
+    if trailing_dot is None and len(parts) == 1 and int(parts[0]) > _BARE_INTEGER_MAX:
+        return None
+    components = tuple(int(part) for part in parts)
+    token = ".".join(str(part) for part in components)
+    return _Numbering(depth=len(components), components=components, token=token)
+
+
+def _roman_to_int(token: str) -> int | None:
+    text = token.upper()
+    if not text or _ROMAN.fullmatch(text) is None:
+        return None
+    total = 0
+    prev = 0
+    for char in reversed(text):
+        value = _ROMAN_VALUE[char]
+        if value < prev:
+            total -= value
+        else:
+            total += value
+            prev = value
+    if not 1 <= total <= 999:
+        return None
+    return total
+
+
+def _prefix_parent(earlier: list[tuple[Section, _Numbering]], child: _Numbering) -> Section | None:
+    if child.components is None or child.depth < 2:
+        return None
+    want = child.depth - 1
+    prefix = child.components[:want]
+    for section, numbering in reversed(earlier):
+        if (
+            numbering.components is not None
+            and numbering.depth == want
+            and numbering.components == prefix
+        ):
+            return section
+    return None
+
+
+def _flatten(
+    sections: list[Section], parent: Section | None = None,
+) -> list[tuple[Section, Section | None]]:
+    ordered: list[tuple[Section, Section | None]] = []
+    for section in sections:
+        ordered.append((section, parent))
+        ordered.extend(_flatten(section.children, section))
+    return ordered
+
+
+def _detach(roots: list[Section], parent: Section | None, section: Section) -> None:
+    container = roots if parent is None else parent.children
+    for index, item in enumerate(container):
+        if item is section:
+            del container[index]
+            return
+    raise ValueError(f"section {section.id} was not attached to its parent")
+
+
+def _cover_parents(section: Section, parent_of: dict[int, Section | None]) -> None:
+    cover = section.page_end
+    node = parent_of.get(id(section))
+    while node is not None:
+        node.page_end = max(node.page_end, cover)
+        node = parent_of.get(id(node))
