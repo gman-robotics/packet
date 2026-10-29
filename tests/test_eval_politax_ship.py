@@ -110,3 +110,103 @@ def test_ship_check_exit_code_follows_gate(monkeypatch, tmp_path):
     for ship, code in ((False, 1), (True, 0)):
         monkeypatch.setattr(ps, "evaluate_politax_ship", lambda *a, _s=ship, **k: _stub_report(_s))
         assert cli.main(["politax-ship-check", "--weights", str(tmp_path / "w.json")]) == code
+
+
+# GMA-476 follow-ups
+
+
+def test_item5_counts_politax_only_false_ocr():
+    from packet.eval.politax_ship import _item5_false_ocr
+
+    assert _item5_false_ocr(politax=[_r("pt", [1])], builtin=[], dlnet=[]) == (False, ["pt"])
+
+
+def _stub_gate(monkeypatch, tmp_path, *, politax=(), builtin=(), dlnet=(), dlnet_f1=1.0):
+    import types
+
+    import packet.eval.politax_ship as ps
+    from packet.eval.politax_train import HoldoutScorecard
+
+    m = types.SimpleNamespace(license_note="CC0 public domain")
+    fx = types.SimpleNamespace(notes="a.pdf", pdf=Path("a.pdf"))
+    pt = iter([_r("pt", politax), _r("pt", ())])
+    monkeypatch.setattr(ps, "prepare_politax", lambda cache: (m, [fx]))
+    monkeypatch.setattr(ps, "collect_trump_training_rows", lambda m, by: [])
+    monkeypatch.setattr(ps, "assert_frozen_split", lambda m: None)
+    monkeypatch.setattr(ps, "assert_training_set_clean", lambda rows, m: None)
+    monkeypatch.setattr(ps, "load_logistic_scorer", lambda p: None)
+    monkeypatch.setattr(ps, "run_fixture", lambda fx, pipe: next(pt))
+    monkeypatch.setattr(ps, "holdout_scorecard",
+                        lambda m, f, r: HoldoutScorecard(0.0, 0.0, 0.0, 0.0, {}))
+    monkeypatch.setattr(ps, "run_named_fixtures", lambda root, pipeline: [_r("bi", builtin)])
+    dl = _r("dlw", dlnet)
+    dl.boundary = dl.boundary.__class__(dlnet_f1, dlnet_f1, dlnet_f1, [], [], 0)
+    monkeypatch.setattr(ps, "run_dlnet_whole", lambda cache, root, pipeline: [dl])
+    monkeypatch.setattr(ps, "max_holdout_model_probability", lambda w, c: 0.0)
+    monkeypatch.setattr(ps, "holdout_max_native_text_blocks", lambda m, f: 0)
+    w = tmp_path / "w.json"
+    w.write_text('{"schema_version": 1, "training_packets": []}')
+    return ps, w
+
+
+def _item(report, n):
+    return next(i for i in report.items if i.number == n)
+
+
+def test_gate_item5_wiring_runs_through_stubbed_runs(monkeypatch, tmp_path):
+    for kw, name in (({"politax": [0]}, "pt"), ({"builtin": [0]}, "bi"), ({"dlnet": [2]}, "dlw")):
+        ps, w = _stub_gate(monkeypatch, tmp_path, **kw)
+        item5 = _item(ps.evaluate_politax_ship(w, tmp_path, tmp_path), 5)
+        assert not item5.passed
+        assert name in item5.detail
+    ps, w = _stub_gate(monkeypatch, tmp_path)
+    assert _item(ps.evaluate_politax_ship(w, tmp_path, tmp_path), 5).passed
+
+
+def test_gate_calls_item4_dlnet_floor(monkeypatch, tmp_path):
+    ps, w = _stub_gate(monkeypatch, tmp_path, dlnet_f1=DLNET_LOGGED_HEURISTIC_MACRO)
+    calls = []
+    real = ps._item4_dlnet_floor
+    monkeypatch.setattr(ps, "_item4_dlnet_floor", lambda t, m: calls.append((t, m)) or real(t, m))
+    assert _item(ps.evaluate_politax_ship(w, tmp_path, tmp_path), 4).passed
+    assert calls == [([], DLNET_LOGGED_HEURISTIC_MACRO)]
+
+
+def test_ship_check_exit_code_follows_gate_without_weights(monkeypatch, tmp_path):
+    import packet.eval.politax_ship as ps
+    from packet import cli
+
+    out = str(tmp_path / "t.json")
+    for ship, code in ((False, 1), (True, 0)):
+        monkeypatch.setattr(ps, "train_and_evaluate_ship",
+                            lambda *a, _s=ship, **k: _stub_report(_s))
+        assert cli.main(["politax-ship-check", "--train-output", out]) == code
+
+
+def test_ship_check_missing_weights_reports_on_stderr(tmp_path, capsys):
+    from packet.cli import main
+
+    missing = tmp_path / "missing.json"
+    assert main(["politax-ship-check", "--weights", str(missing)]) == 2
+    err = capsys.readouterr().err
+    assert "boundary weights not found" in err
+    assert str(missing) in err
+
+
+def test_ship_check_exits_2_on_wrong_schema_version(tmp_path, capsys):
+    from packet.cli import main
+
+    w = tmp_path / "w.json"
+    w.write_text('{"schema_version": 999}')
+    assert main(["politax-ship-check", "--weights", str(w)]) == 2
+    assert "schema_version" in capsys.readouterr().err
+
+
+def test_ship_check_weights_help_mentions_exit_2(capsys):
+    import pytest
+
+    from packet.cli import main
+
+    with pytest.raises(SystemExit):
+        main(["politax-ship-check", "--help"])
+    assert "load errors exit 2" in " ".join(capsys.readouterr().out.split())
