@@ -38,6 +38,7 @@ class Decision:
     page: int
     split: bool  # a new document starts at ``page``
     reason: str
+    confidence: float = 0.0  # boundary-signal confidence of ``page`` (0.0 if none)
 
 
 @dataclass
@@ -97,6 +98,7 @@ class LookaheadSplitter:
                 d = self._decide_mid(o)
             else:
                 break  # wait for more pages
+            d.confidence = conf
             self._record(o, d)
             out.append(d)
             self._obs.pop(0)

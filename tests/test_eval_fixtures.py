@@ -11,7 +11,7 @@ from packet.source import PdfPageSource
 def test_builtin_pdfs_are_readable(tmp_path: Path):
     fixtures = build_builtin(tmp_path)
     names = {fx.name for fx in fixtures}
-    assert names == {"text-layer", "multi-doc", "shared-header", "scan"}
+    assert names == {"text-layer", "multi-doc", "shared-header", "unnumbered-cover", "scan"}
     for fx in fixtures:
         with PdfPageSource(fx.pdf) as src:
             assert src.page_count == fx.gold.origin.page_count

@@ -48,8 +48,12 @@ class Pipeline:
         self.assembler = Assembler()
         self.config = config or PipelineConfig()
 
-    def parse(self, path: str | Path) -> Packet:
+    def parse(
+        self, path: str | Path, on_event: Callable[[Event], None] | None = None
+    ) -> Packet:
         for event in self.stream(path):
+            if on_event is not None:
+                on_event(event)
             if event.kind.value == "packet_closed":
                 break
         assert self._packet is not None
@@ -66,7 +70,7 @@ class Pipeline:
             fallback=self.config.boundary_min_confidence,
         )
         state = _DocState()
-        pending: dict[int, list[Block]] = {}
+        pending: dict[int, tuple[list[Block], PageObs]] = {}
         tagger = FurnitureTagger()
 
         with PdfPageSource(path) as source:
@@ -108,14 +112,14 @@ class Pipeline:
                     yield Event.boundary_proposed(
                         signal.after_page, signal.confidence, signal.reason
                     )
-                pending[classified.index] = blocks
                 obs = PageObs(classified.index, signal, detector.last_page_number,
                               detector.last_page_total)
+                pending[classified.index] = (blocks, obs)
                 for decision in splitter.push(obs):
-                    yield from self._apply(packet, state, decision, pending.pop(decision.page), tagger)
+                    yield from self._apply(packet, state, decision, *pending.pop(decision.page), tagger)
 
             for decision in splitter.flush():
-                yield from self._apply(packet, state, decision, pending.pop(decision.page), tagger)
+                yield from self._apply(packet, state, decision, *pending.pop(decision.page), tagger)
 
             if state.blocks or not packet.documents:
                 last_page = max(source.page_count - 1, 0)
@@ -132,8 +136,10 @@ class Pipeline:
         state: _DocState,
         decision: Decision,
         blocks: list[Block],
+        obs: PageObs,
         tagger: FurnitureTagger,
     ) -> Iterator[Event]:
+        yield Event.boundary_decided(decision, obs.signal, obs.page_num, obs.page_total)
         if self.config.split_on_boundary and decision.split and state.blocks:
             doc = self._close_document(
                 packet, state.index, tagger.finalize(state.blocks), state.start, decision.page - 1

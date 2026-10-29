@@ -92,7 +92,7 @@ def test_builtin_fixtures_f1_one_with_loaded_weights(tmp_path):
     assert scorer.bias == pytest.approx(w[3])
     assert Pipeline().config.scorer is None
     results = run_named_fixtures(tmp_path, pipeline=pipe)
-    assert len(results) == 4
+    assert len(results) == 5
     assert all(r.boundary.f1 == 1.0 for r in results)
 
 
