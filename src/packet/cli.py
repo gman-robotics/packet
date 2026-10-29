@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -297,12 +299,46 @@ def _cmd_parse(args) -> int:
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)
 
-    trace_fh = open(args.trace, "w", encoding="utf-8") if args.trace else None  # noqa: SIM115
+    if not args.trace:
+        return _parse_paths(args, paths, pipe, config, extractors, out_dir, None)
+
+    target = Path(args.trace)
+    partial = target.with_name(target.name + ".partial")
+    if target.is_dir():
+        print(
+            f"packet parse: cannot write trace {target}: {os.strerror(errno.EISDIR)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    opened = False
     try:
-        return _parse_paths(args, paths, pipe, config, extractors, out_dir, trace_fh)
-    finally:
-        if trace_fh is not None:
-            trace_fh.close()
+        with open(partial, "w", encoding="utf-8", buffering=1) as trace_fh:
+            opened = True
+            try:
+                code = _parse_paths(args, paths, pipe, config, extractors, out_dir, trace_fh)
+            except BaseException:
+                print(
+                    f"packet parse: run failed; partial trace kept at {partial}",
+                    file=sys.stderr,
+                )
+                raise
+            if code != 0:
+                print(
+                    f"packet parse: run failed; partial trace kept at {partial}",
+                    file=sys.stderr,
+                )
+                return code
+    except OSError as exc:
+        if opened:
+            raise
+        print(
+            f"packet parse: cannot write trace {target}: {exc.strerror}",
+            file=sys.stderr,
+        )
+        return 2
+    os.replace(partial, target)
+    return 0
 
 
 def _parse_paths(args, paths, pipe, config, extractors, out_dir, trace_fh) -> int:
