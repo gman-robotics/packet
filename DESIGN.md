@@ -300,8 +300,8 @@ Detect → order → construct.
   stack (`TITLE` is level 0).
 - `repair_ranks` then reads numbering on the heading's first line.
   Decimal outlines are `1`, `1.`, `1.1`, and `1.1.2` (depth is the
-  component count). A bare integer above 99 with no dot, such as `2024`
-  or `100`, is not an outline. `Section 1.2` is that same decimal.
+  component count). A first component above 99, such as `2024`, `100`,
+  or `100.00`, is not an outline. `Section 1.2` is that same decimal.
   `Article IV` and `ARTICLE 4` are depth 1 (roman or arabic) and are not
   decimal prefixes.
 - Where that grammar and `heading_level` disagree, grammar sets the
@@ -310,9 +310,11 @@ Detect → order → construct.
 - A numbered section of depth d is reparented under the nearest preceding
   decimal section of depth d-1 whose number is a prefix, inside this
   document only. With no such parent, it stays. Unnumbered sections stay.
-  Each reparent emits one `heading_rank_repaired` and extends the new
-  parent's `page_end` to cover the child. There is no cross-document
-  repair and no streaming reparent of a document already emitted.
+  Each reparent emits one `heading_rank_repaired`. The old parent's
+  `page_end` is recomputed from the blocks and children that remain, and
+  the new parent's `page_end` covers the moved subtree. There is no
+  cross-document repair and no streaming reparent of a document already
+  emitted.
 - Captions bind to the nearest table or figure, including across a page break.
 
 ## Domain adapters

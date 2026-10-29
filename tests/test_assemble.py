@@ -96,6 +96,54 @@ def test_repair_moves_decimal_off_a_wrong_parent():
     assert detail == {"from_parent": "b1-sec", "to_parent": "b0-sec", "numbering": "1.1"}
 
 
+def test_repair_inserts_reparented_section_in_document_order():
+    blocks = [
+        _b(0, BlockKind.HEADING, "1", 1),
+        _b(1, BlockKind.HEADING, "1.1", 2),
+        _b(2, BlockKind.HEADING, "1.2", 3),
+        _b(3, BlockKind.HEADING, "1.3", 2),
+    ]
+    doc = Assembler().build_document("d0", blocks)
+    one = doc.sections[0]
+    assert [child.heading for child in one.children] == ["1.1", "1.2", "1.3"]
+    assert [child.level for child in one.children] == [2, 2, 2]
+    assert one.children[0].children == []
+    assert doc.extras[PACKET_FLAGS_KEY] == [{
+        "kind": "heading_rank_repaired",
+        "page": 0,
+        "ref": "b2-sec",
+        "detail": {"from_parent": "b1-sec", "to_parent": "b0-sec", "numbering": "1.2"},
+    }]
+
+
+def test_repair_recomputes_page_end_for_old_and_new_parents():
+    blocks = [
+        _b(0, BlockKind.HEADING, "1", 1, page=0),
+        _b(1, BlockKind.HEADING, "1.1", 2, page=1),
+        _b(2, BlockKind.HEADING, "1.2", 3, page=2),
+        _b(3, BlockKind.PARAGRAPH, "detail", page=3),
+        _b(4, BlockKind.HEADING, "1.3", 2, page=4),
+        _b(5, BlockKind.HEADING, "2", 1, page=5),
+        _b(6, BlockKind.HEADING, "8", 1, page=6),
+        _b(7, BlockKind.HEADING, "2.1", 2, page=7),
+        _b(8, BlockKind.HEADING, "2.1.1", 3, page=9),
+    ]
+    doc = Assembler().build_document("d0", blocks)
+    one, two, eight = doc.sections
+    assert [child.heading for child in one.children] == ["1.1", "1.2", "1.3"]
+    assert one.children[0].page_end == 1
+    assert one.children[1].page_end == 3
+    assert one.page_end == 4
+    assert [child.heading for child in two.children] == ["2.1"]
+    assert [child.heading for child in two.children[0].children] == ["2.1.1"]
+    assert two.children[0].page_end == 7
+    assert two.page_end == 9
+    assert eight.children == []
+    assert eight.page_end == 6
+    numbering = [flag["detail"]["numbering"] for flag in doc.extras[PACKET_FLAGS_KEY]]
+    assert numbering == ["1.2", "2.1"]
+
+
 def test_unnumbered_section_is_not_reparented():
     blocks = [
         _b(0, BlockKind.HEADING, "1", 1),
@@ -105,6 +153,12 @@ def test_unnumbered_section_is_not_reparented():
     doc = Assembler().build_document("d0", blocks)
     assert [section.heading for section in doc.sections] == ["1", "Notes"]
     assert [child.heading for child in doc.sections[0].children] == ["1.1"]
+    assert doc.extras[PACKET_FLAGS_KEY] == [{
+        "kind": "heading_rank_repaired",
+        "page": 0,
+        "ref": "b2-sec",
+        "detail": {"from_parent": None, "to_parent": "b0-sec", "numbering": "1.1"},
+    }]
 
 
 def test_unnumbered_tree_is_unchanged_and_omits_flags():
@@ -157,6 +211,46 @@ def test_year_and_bare_amount_are_not_numbering():
         ("100", 2),
     ]
     assert PACKET_FLAGS_KEY not in doc.extras
+
+
+def test_leading_zeros_do_not_match_a_different_component():
+    blocks = [
+        _b(0, BlockKind.HEADING, "1", 1),
+        _b(1, BlockKind.HEADING, "1.01", 1),
+        _b(2, BlockKind.HEADING, "1.1.1", 1),
+    ]
+    doc = Assembler().build_document("d0", blocks)
+    one, other = doc.sections
+    assert one.heading == "1"
+    assert [child.heading for child in one.children] == ["1.01"]
+    assert one.children[0].children == []
+    assert other.heading == "1.1.1" and other.level == 3
+    assert doc.extras[PACKET_FLAGS_KEY] == [{
+        "kind": "heading_rank_repaired",
+        "page": 0,
+        "ref": "b1-sec",
+        "detail": {"from_parent": None, "to_parent": "b0-sec", "numbering": "1.01"},
+    }]
+
+
+def test_first_component_over_99_is_not_an_outline():
+    blocks = [
+        _b(0, BlockKind.HEADING, "10", 1),
+        _b(1, BlockKind.HEADING, "100.00", 1),
+        _b(2, BlockKind.HEADING, "10.31 Meeting", 1),
+    ]
+    doc = Assembler().build_document("d0", blocks)
+    ten, amount = doc.sections
+    assert ten.heading == "10"
+    assert [child.heading for child in ten.children] == ["10.31 Meeting"]
+    assert ten.children[0].level == 2
+    assert amount.heading == "100.00" and amount.level == 1 and amount.children == []
+    assert doc.extras[PACKET_FLAGS_KEY] == [{
+        "kind": "heading_rank_repaired",
+        "page": 0,
+        "ref": "b2-sec",
+        "detail": {"from_parent": None, "to_parent": "b0-sec", "numbering": "10.31"},
+    }]
 
 
 def test_section_keyword_nests_as_decimal():

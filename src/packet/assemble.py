@@ -109,7 +109,7 @@ def _nest(blocks: list[Block]) -> list[Section]:
     return roots
 
 
-# Bare integers above this, with no dot, are years and amounts ("2024 Budget", "100").
+# A first component above this is a year or amount ("2024 Budget", "100", "100.00").
 _BARE_INTEGER_MAX = 99
 _DECIMAL = re.compile(r"^(\d{1,3}(?:\.\d{1,3})*)(\.)?(?:\s+|$)")
 _SECTION = re.compile(r"^section\s+(\d{1,3}(?:\.\d{1,3})*)(\.)?(?:\s+|$)", re.IGNORECASE)
@@ -121,7 +121,7 @@ _ROMAN_VALUE = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
 @dataclass(frozen=True)
 class _Numbering:
     depth: int
-    components: tuple[int, ...] | None
+    components: tuple[str, ...] | None
     token: str
 
 
@@ -132,8 +132,9 @@ def repair_ranks(sections: list[Section]) -> tuple[list[Section], list[Flag]]:
     must start that line and be followed by whitespace or the end of the line.
 
     Decimal outlines are ``1``, ``1.``, ``1.1``, and ``1.1.2``. Depth is the
-    component count. Each component is 1 to 3 digits. A bare integer (no dot)
-    greater than 99 is not an outline, so ``2024 Budget`` and ``100`` are left
+    component count. Each component is 1 to 3 digits and keeps its written
+    digits, so ``1.01`` is not ``1.1``. A first component greater than 99 is
+    not an outline, so ``2024 Budget``, ``100``, and ``100.00`` are left
     alone. ``Section 1.2`` is the same decimal outline; the keyword is not part
     of the number. The flag token is the components joined with dots (``1.1``).
 
@@ -143,14 +144,16 @@ def repair_ranks(sections: list[Section]) -> tuple[list[Section], list[Flag]]:
     level is not changed. A numbered title can still be a decimal prefix parent.
 
     A numbered section of depth ``d`` becomes a child of the nearest preceding
-    decimal section of depth ``d - 1`` whose components are a prefix. If no such
-    parent exists, the section stays where ``_nest`` put it. Unnumbered sections
-    are not moved. When grammar and ``heading_level`` disagree, ``level`` is set
-    from depth. A level change without a new parent does not emit a flag.
+    decimal section of depth ``d - 1`` whose components are a prefix, inserted
+    among that parent's children in document order. If no such parent exists,
+    the section stays where ``_nest`` put it. Unnumbered sections are not
+    moved. When grammar and ``heading_level`` disagree, ``level`` is set from
+    depth. A level change without a new parent does not emit a flag.
 
     Each section whose parent changes emits one ``heading_rank_repaired`` flag.
-    New parents' ``page_end`` is extended to cover that child. A tree with no
-    numbered headings is returned unchanged, with no flags.
+    Old ancestors' ``page_end`` is recomputed from the blocks and children that
+    remain. New ancestors' ``page_end`` covers the moved subtree. A tree with
+    no numbered headings is returned unchanged, with no flags.
     """
     flat = _flatten(sections)
     numbered: list[tuple[Section, Section | None, _Numbering]] = []
@@ -178,10 +181,12 @@ def repair_ranks(sections: list[Section]) -> tuple[list[Section], list[Flag]]:
         section.level = depth
 
     parent_of = {id(section): parent for section, parent in flat}
+    order = {id(section): index for index, (section, _parent) in enumerate(flat)}
     flags: list[Flag] = []
     for section, old_parent, new_parent, numbering in moves:
         _detach(sections, old_parent, section)
-        new_parent.children.append(section)
+        _recompute_page_ends(old_parent, parent_of)
+        _insert_in_order(new_parent, section, order)
         parent_of[id(section)] = new_parent
         _cover_parents(section, parent_of)
         flags.append(Flag(
@@ -214,19 +219,19 @@ def _parse_numbering(heading: str | None) -> _Numbering | None:
         return _Numbering(depth=1, components=None, token=f"{word} {raw}")
     section = _SECTION.match(line)
     if section is not None:
-        return _decimal_numbering(section.group(1), section.group(2))
+        return _decimal_numbering(section.group(1))
     decimal = _DECIMAL.match(line)
     if decimal is not None:
-        return _decimal_numbering(decimal.group(1), decimal.group(2))
+        return _decimal_numbering(decimal.group(1))
     return None
 
 
-def _decimal_numbering(body: str, trailing_dot: str | None) -> _Numbering | None:
+def _decimal_numbering(body: str) -> _Numbering | None:
     parts = body.split(".")
-    if trailing_dot is None and len(parts) == 1 and int(parts[0]) > _BARE_INTEGER_MAX:
+    if int(parts[0]) > _BARE_INTEGER_MAX:
         return None
-    components = tuple(int(part) for part in parts)
-    token = ".".join(str(part) for part in components)
+    components = tuple(parts)
+    token = ".".join(components)
     return _Numbering(depth=len(components), components=components, token=token)
 
 
@@ -282,8 +287,37 @@ def _detach(roots: list[Section], parent: Section | None, section: Section) -> N
     raise ValueError(f"section {section.id} was not attached to its parent")
 
 
+def _subtree_page_end(section: Section) -> int:
+    end = section.page_end
+    for child in section.children:
+        end = max(end, _subtree_page_end(child))
+    return end
+
+
+def _recompute_page_ends(node: Section | None, parent_of: dict[int, Section | None]) -> None:
+    while node is not None:
+        end = node.page_start
+        for block in node.blocks:
+            end = max(end, block.page)
+        for child in node.children:
+            end = max(end, child.page_end)
+        node.page_end = end
+        node = parent_of.get(id(node))
+
+
+def _insert_in_order(parent: Section, section: Section, order: dict[int, int]) -> None:
+    rank = order[id(section)]
+    children = parent.children
+    index = len(children)
+    for cursor, child in enumerate(children):
+        if order[id(child)] > rank:
+            index = cursor
+            break
+    children.insert(index, section)
+
+
 def _cover_parents(section: Section, parent_of: dict[int, Section | None]) -> None:
-    cover = section.page_end
+    cover = _subtree_page_end(section)
     node = parent_of.get(id(section))
     while node is not None:
         node.page_end = max(node.page_end, cover)
