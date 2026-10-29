@@ -118,6 +118,14 @@ def main(argv: list[str] | None = None) -> int:
              "politax-ocr text under <data-dir>/ocr; no OCR runs; off by default; "
              "gates holdout macro F1 >= 0.41 (GMA-274 Q7)",
     )
+    ev.add_argument(
+        "--viz-dir",
+        default=None,
+        help="after the run, write one self-contained HTML review per fixture into DIR "
+             "(off by default). Reports can contain document text; put DIR under "
+             ".packet-eval/ (already gitignored). Also writes known fail-mode fixtures, "
+             "which are not part of the gated set.",
+    )
 
     pt = sub.add_parser(
         "politax-train-weights",
@@ -554,6 +562,8 @@ def _cmd_eval(args) -> int:
     from packet.eval import run as ev
 
     root = Path(args.dir) if args.dir else None
+    viz_dir = Path(args.viz_dir) if args.viz_dir else None
+    viz_kw = {"viz_dir": viz_dir} if viz_dir is not None else {}
     floors = (ev.OCR_CACHE_FLOORS if args.ocr_cache else ev.SET_FLOORS).get(
         args.set, ev.SET_FLOORS[args.set])
     min_f1 = floors[0] if args.min_f1 is None else args.min_f1
@@ -575,7 +585,7 @@ def _cmd_eval(args) -> int:
         return 2
     if args.set == "dlnet-whole":
         data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_WHOLEDOC_CACHE
-        results = ev.run_dlnet_whole(data, root, pipeline=pipe)
+        results = ev.run_dlnet_whole(data, root, pipeline=pipe, **viz_kw)
     elif args.set == "politax":
         from packet.eval import politax
         from packet.eval.politax_split import compute_holdout_baseline
@@ -586,23 +596,26 @@ def _cmd_eval(args) -> int:
         subjects = {d.file_name: d.subject for d in m.docs}
         politax_gold_totals = politax.corpus_gold_label_totals(m)
         politax_census = politax.text_layer_census(fixtures, subjects=subjects)
-        native_heur_results = [ev.run_fixture(fx, Pipeline()) for fx in fixtures]
+        native_viz = viz_kw if not args.ocr_cache and not args.boundary_weights else {}
+        native_heur_results = [ev.run_fixture(fx, Pipeline(), **native_viz) for fx in fixtures]
         politax_holdout_baseline = compute_holdout_baseline(m, fixtures, native_heur_results)
         if args.ocr_cache:
             from packet.eval.politax_ocr_eval import run_with_ocr_cache
             from packet.eval.politax_split import holdout_results
 
-            results_heur, ocr_stats = run_with_ocr_cache(m, fixtures, data)
+            results_heur, ocr_stats = run_with_ocr_cache(m, fixtures, data, **viz_kw)
             macro_results = holdout_results(m, fixtures, results_heur)
             results = results_heur
         elif args.boundary_weights:
-            results = [ev.run_fixture(fx, pipe) for fx in fixtures]
+            results = [ev.run_fixture(fx, pipe, **viz_kw) for fx in fixtures]
             politax_holdout_scorer = holdout_scorecard(m, fixtures, results)
             results_heur = native_heur_results
         else:
             results = results_heur = native_heur_results
     else:
-        results = ev.run_named_fixtures(root, pipeline=pipe)
+        results = ev.run_named_fixtures(root, pipeline=pipe, **viz_kw)
+    if viz_dir is not None:
+        ev.write_fail_mode_viz(root, viz_dir, pipe)
     gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=min_macro,
                             macro_results=macro_results)
     if args.json:
