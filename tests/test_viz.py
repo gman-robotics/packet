@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from html import escape as html_escape
 
 import pytest
 
@@ -10,7 +11,7 @@ from packet import cli
 from packet.eval.fixtures import build_builtin
 from packet.events import EventKind
 from packet.pipeline import Pipeline
-from packet.viz import IMAGE_SKIP_NOTE, load_trace, render_html
+from packet.viz import IMAGE_SKIP_NOTE, _walk_sections, load_trace, render_html
 
 
 def _fixture(tmp_path, name):
@@ -153,3 +154,132 @@ def test_cli_viz_bad_input(tmp_path):
         "viz", str(trace), "-o", str(tmp_path / "out.html"), "--tree", str(good_tree),
         "--pdf", str(tmp_path / "nope.pdf"),
     ]) == 2
+
+
+def _page_chunks(html: str) -> dict[int, str]:
+    chunks: dict[int, str] = {}
+    for match in re.finditer(r'<section class="page[^"]*" data-page="(\d+)"(.*?)</section>', html, re.DOTALL):
+        chunks[int(match.group(1))] = match.group(2)
+    return chunks
+
+
+def _step_chunks(html: str) -> list[str]:
+    return re.findall(r'<article class="step" data-step="\d+">(.*?)</article>', html, re.DOTALL)
+
+
+@pytest.mark.parametrize("name", ["multi-doc", "shared-header", "unnumbered-cover"])
+def test_section_tree_rendered_per_document(tmp_path, name):
+    _fx, packet, events = _collect(tmp_path, name)
+    html = render_html(packet, events)
+    steps = _step_chunks(html)
+    closed = [event for event in events if event.kind == EventKind.DOCUMENT_CLOSED]
+    assert len(steps) == len(closed)
+    seen_section = False
+    for event, chunk in zip(closed, steps):
+        doc = next(d for d in packet.documents if d.id == event.payload["document_id"])
+        for section in _walk_sections(doc.sections):
+            seen_section = True
+            assert 'class="section"' in chunk
+            if section.heading:
+                assert html_escape(section.heading) in chunk
+            assert f'<span class="pages">{section.page_start}-{section.page_end}</span>' in chunk
+            for block in section.blocks:
+                if block.text.strip():
+                    assert html_escape(block.text) in chunk
+    assert seen_section
+
+
+@pytest.mark.parametrize("name", ["multi-doc", "shared-header", "unnumbered-cover"])
+def test_decided_and_proposed_on_their_own_page(tmp_path, name):
+    _fx, packet, events = _collect(tmp_path, name)
+    html = render_html(packet, events)
+    chunks = _page_chunks(html)
+    decided = [e for e in events if e.kind == EventKind.BOUNDARY_DECIDED]
+    assert decided
+    for page, chunk in chunks.items():
+        assert "boundary proposed" in chunk
+        reasons = [e.payload["reason"] for e in decided if e.page == page]
+        assert chunk.count("boundary decided") == max(len(reasons), 1)
+        for reason in reasons:
+            assert f"reason {html_escape(reason)} " in chunk
+    for event in events:
+        if event.kind != EventKind.BOUNDARY_PROPOSED:
+            continue
+        after = event.payload["after_page"]
+        chunk = chunks[after + 1]
+        assert f"boundary proposed after page {after} " in chunk
+        assert f"reason {html_escape(str(event.payload.get('reason')))}</p>" in chunk
+
+
+def test_escapes_hostile_attribute_values(tmp_path):
+    _fx, packet, events = _collect(tmp_path, "multi-doc")
+    hostile = '"><img src=x onerror=alert(1)>'
+    changed = 0
+    for event in events:
+        if event.kind == EventKind.BLOCK_EMITTED and changed < 2:
+            event.payload = dict(event.payload)
+            event.payload["kind"] = hostile
+            if changed == 1:
+                event.payload["bbox"] = {"x0": "0;background:url(x)", "y0": 0, "x1": 1, "y1": 1}
+            changed += 1
+    assert changed == 2
+    html = render_html(packet, events)
+    assert "<img src=x" not in html
+    assert "onerror=alert(1)>" not in html
+    assert 'class="block kind-img-src-x-onerror-alert-1' in html
+    assert "url(" not in html
+    _assert_offline(html)
+
+
+def test_gold_start_past_last_page_is_fn(tmp_path):
+    _fx, packet, events = _collect(tmp_path, "multi-doc")
+    last = packet.origin.page_count
+    html = render_html(packet, events, gold=[0, 2, last + 3])
+    assert f'data-page="{last + 3}" data-mark="FN"' in html
+    assert f'data-page="{last}" data-mark=' not in html
+    assert 'data-page="0" data-mark="TP"' in html
+
+
+def test_pdf_inlines_png_with_renderer(tmp_path, monkeypatch):
+    from packet import source
+
+    class FakeImage:
+        def save(self, buf, format):
+            assert format == "PNG"
+            buf.write(b"\x89PNGfake")
+
+    class FakeSource:
+        page_count = 2
+
+        def __init__(self, path):
+            self.path = path
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def render(self, index, longest_px):
+            return FakeImage()
+
+    monkeypatch.setattr(source, "PdfPageSource", FakeSource)
+    fx, packet, events = _collect(tmp_path, "multi-doc")
+    html = render_html(packet, events, pdf=fx.pdf)
+    assert html.count('src="data:image/png;base64,iVBOR2Zha2U="') == 2
+    assert IMAGE_SKIP_NOTE not in html
+    _assert_offline(html)
+
+
+def test_cli_viz_more_bad_input(tmp_path):
+    fx = _fixture(tmp_path, "shared-header")
+    trace = tmp_path / "trace.jsonl"
+    tree = tmp_path / "good.json"
+    out = tmp_path / "out.html"
+    assert cli.main(["parse", str(fx.pdf), "-o", str(tree), "--trace", str(trace)]) == 0
+    assert cli.main(["viz", str(trace), "-o", str(out), "--tree", str(tmp_path / "none.json")]) == 2
+    assert cli.main(["viz", str(trace), "-o", str(out), "--tree", str(tree), "--gold", "0,-1"]) == 2
+    bad_trace = tmp_path / "bad.jsonl"
+    bad_trace.write_text(trace.read_text(encoding="utf-8") + "{not json\n", encoding="utf-8")
+    assert cli.main(["viz", str(bad_trace), "-o", str(out), "--tree", str(tree)]) == 2
+    assert not out.exists()
