@@ -16,11 +16,21 @@ current document (inserted pages that were rejected do not count):
   confidence >= ``fallback``.
 
 ``window=0`` is exactly v0 eager commit: split iff confidence >= ``fallback``.
+
+A ``Confirmer``, off unless one is passed in, runs only on that eager-rule
+line (``fallback_eager`` / ``fallback_below``). It sees the previous decided
+page (``None`` for page 0), the page being decided, and the buffered look-ahead
+(at most ``window``). ``True`` is ``confirmed_split``, ``False`` is
+``confirmed_continue``, and ``None`` keeps the fallback. ``window=0``,
+``no_signal``, ``implied_page_one``, ``high_confidence``, and the numbering
+reasons above do not call it. ``PipelineConfig.confirmer`` forwards the same
+hook and defaults to ``None``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 from packet.boundary import BoundarySignal
 
@@ -31,6 +41,12 @@ class PageObs:
     signal: BoundarySignal | None = None
     page_num: int | None = None
     page_total: int | None = None
+
+
+class Confirmer(Protocol):
+    def confirm(
+        self, before: PageObs | None, page: PageObs, after: list[PageObs]
+    ) -> bool | None: ...
 
 
 @dataclass
@@ -54,13 +70,15 @@ def _same_total(a: int | None, b: int | None) -> bool:
 
 class LookaheadSplitter:
     def __init__(self, window: int = 2, commit: float = 0.75, propose: float = 0.4,
-                 fallback: float = 0.55):
+                 fallback: float = 0.55, confirmer: Confirmer | None = None):
         self.window = max(0, window)
         self.fallback = fallback
         self.commit = max(commit, fallback)  # never split more eagerly than v0
         self.propose = propose
+        self.confirmer = confirmer
         self._obs: list[PageObs] = []  # undecided pages + lookahead only
         self._seq: _Seq | None = None  # numbering anchor of the current document
+        self._prev: PageObs | None = None  # last page already decided
 
     def push(self, obs: PageObs) -> list[Decision]:
         self._obs.append(obs)
@@ -100,6 +118,7 @@ class LookaheadSplitter:
                 break  # wait for more pages
             d.confidence = conf
             self._record(o, d)
+            self._prev = o
             out.append(d)
             self._obs.pop(0)
         return out
@@ -166,4 +185,10 @@ class LookaheadSplitter:
             if self._continues(q.page_num, q.page_total, q.index):
                 return Decision(o.index, False, "old_sequence_continues")
         split = self._conf(o) >= self.fallback
+        if self.confirmer is not None:
+            verdict = self.confirmer.confirm(self._prev, o, self._obs[1:self.window + 1])
+            if verdict is True:
+                return Decision(o.index, True, "confirmed_split")
+            if verdict is False:
+                return Decision(o.index, False, "confirmed_continue")
         return Decision(o.index, split, "fallback_eager" if split else "fallback_below")
