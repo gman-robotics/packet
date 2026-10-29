@@ -277,3 +277,19 @@ def test_title_level_zero_is_not_rewritten():
     assert [child.heading for child in title.children] == ["1.1 Scope"]
     assert title.children[0].level == 2
     assert PACKET_FLAGS_KEY not in doc.extras
+
+
+def test_repair_keeps_cover_when_later_move_recomputes_parent():
+    blocks = [
+        _b(0, BlockKind.HEADING, "1", 1, page=0),
+        _b(1, BlockKind.HEADING, "9", 1, page=1),
+        _b(2, BlockKind.HEADING, "1.1", 1, page=2),
+        _b(3, BlockKind.HEADING, "9.1", 2, page=3),
+        _b(4, BlockKind.HEADING, "1.1.1", 2, page=4),
+        _b(5, BlockKind.HEADING, "1.1.1.1", 3, page=15),
+    ]
+    doc = Assembler().build_document("d0", blocks)
+    one = doc.sections[0]
+    assert [child.heading for child in one.children] == ["1.1"]
+    assert one.children[0].children[0].children[0].heading == "1.1.1.1"
+    assert one.page_end == 15

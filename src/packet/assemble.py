@@ -300,7 +300,7 @@ def _recompute_page_ends(node: Section | None, parent_of: dict[int, Section | No
         for block in node.blocks:
             end = max(end, block.page)
         for child in node.children:
-            end = max(end, child.page_end)
+            end = max(end, _subtree_page_end(child))
         node.page_end = end
         node = parent_of.get(id(node))
 
