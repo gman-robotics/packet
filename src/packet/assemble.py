@@ -106,6 +106,11 @@ def _nest(blocks: list[Block]) -> list[Section]:
         stack[-1].blocks.append(block)
         stack[-1].page_end = max(stack[-1].page_end, block.page)
 
+    # Close the sections still open at the end so each parent covers its last child.
+    while len(stack) > 1:
+        closed = stack.pop()
+        stack[-1].page_end = max(stack[-1].page_end, closed.page_end)
+
     return roots
 
 
