@@ -45,8 +45,10 @@ DocumentClosed
 PacketClosed
 ```
 
-The tree is a materialized view over an append-only event log. Later pages
-may reparent earlier blocks when heading levels or boundaries become clear.
+The tree is a materialized view over an append-only event log. When a
+document is built, numbering grammar may reparent sections inside that
+document. A document already emitted is not reopened, and a later boundary
+does not reparent blocks in another document.
 
 ## Pipeline
 
@@ -62,7 +64,7 @@ backends      native text (+ layout) or OCR  ->  PageIR (the page's blocks)
 furniture     HEADER / FOOTER / PAGE_NUMBER tagging from repeats across pages
 boundary      weighted signals -> one proposal per page
 splitter      look-ahead commit: split now, wait for page numbers, or keep
-assembler     blocks -> heading-driven Section tree -> LogicalDocument
+assembler     blocks -> section tree; numbering may reparent inside that document
 domain        optional adapters on DocumentClosed
 ```
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from packet.assemble import Assembler
 from packet.boundary import BoundarySignal
 from packet.citations import citation_id_counts, unresolved_citation_ids
 from packet.domain import apply_domains
@@ -171,6 +172,35 @@ def test_weak_boundary_not_raised_on_lookahead_numbering(tmp_path):
     assert all("weak_boundary" not in _kinds(doc) for doc in packet.documents)
     assert all(flag.kind != "heading_rank_repaired" for doc in packet.documents
                for flag in _models(doc))
+
+
+def test_assembler_heading_rank_flag_precedes_pipeline_flags(tmp_path):
+    class _NumberedHeadings(Assembler):
+        def build_document(self, doc_id, blocks, title=None):
+            page = blocks[0].page if blocks else 0
+            numbered = [
+                Block(
+                    id=f"{doc_id}-h1", page=page, kind=BlockKind.HEADING,
+                    text="1", heading_level=1,
+                ),
+                Block(
+                    id=f"{doc_id}-h11", page=page, kind=BlockKind.HEADING,
+                    text="1.1", heading_level=1,
+                ),
+            ]
+            return super().build_document(doc_id, numbered, title=title)
+
+    pdf = write_text_pdf(tmp_path / "rank.pdf", [
+        ["Alpha report begins with the results.", "Page 1 of 2"],
+        ["Alpha report finishes those results.", "Page 2 of 2"],
+        ["Beta memo stands alone.", "Page 1 of 1"],
+    ])
+    pipeline = Pipeline()
+    pipeline.assembler = _NumberedHeadings()
+    packet = pipeline.parse(pdf)
+    assert _ranges(packet) == [(0, 1), (2, 2)]
+    assert _kinds(packet.documents[0]) == ["heading_rank_repaired"]
+    assert _kinds(packet.documents[1]) == ["heading_rank_repaired", "weak_boundary"]
 
 
 def test_high_confidence_without_reset_is_weak_and_with_reset_is_not():
