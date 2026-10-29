@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+# Reserved extras key. Core writes it; domain adapters must not.
+PACKET_FLAGS_KEY = "packet.flags"
 
 
 class PageClass(str, Enum):
@@ -82,6 +85,21 @@ class Section(BaseModel):
     page_end: int
     blocks: list[Block] = Field(default_factory=list)
     children: list[Section] = Field(default_factory=list)
+
+
+class Flag(BaseModel):
+    """Reviewer-visible uncertainty. Core writes these; they never move a split or a section."""
+
+    kind: Literal[
+        "weak_boundary",
+        "fallback_decision",
+        "eof_flush",
+        "heading_rank_repaired",
+        "unresolved_citation",
+    ]
+    page: int | None = None
+    ref: str | None = None  # block or section id
+    detail: dict[str, Any] = Field(default_factory=dict)
 
 
 class LogicalDocument(BaseModel):
