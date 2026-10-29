@@ -242,6 +242,14 @@ def render_html(
             images.get(index),
             mark,
         ))
+    if gold_set is not None:
+        # A gold start past the last page has no page card; still mark it FN.
+        for index in sorted(page for page in gold_set if page >= page_count):
+            parts.append(
+                f"<section class=\"page beyond\" data-page=\"{index}\" data-mark=\"FN\">"
+                f"<h2>Page {index}</h2><p class=\"mark mark-FN\">FN</p>"
+                "<p class=\"note\">gold start past the last page</p></section>"
+            )
     parts.append("</div>")
     parts.append("<section class=\"stepper\">")
     parts.append("<h2>Documents</h2>")
