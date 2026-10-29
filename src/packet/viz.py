@@ -6,17 +6,22 @@ import base64
 import html
 import io
 import json
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from packet.events import Event, EventKind
-from packet.types import LogicalDocument, Packet, Section
+from packet.types import Block, BlockKind, LogicalDocument, Packet, Section
 
 IMAGE_SKIP_NOTE = "Page images skipped: rendering failed."
 _LONGEST_PX = 800
 _FURNITURE = frozenset({"header", "footer", "page_number"})
+_FURNITURE_KINDS = frozenset({BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER})
+CHECK_SECTION_OUTSIDE = "section_outside_document"
+CHECK_FURNITURE_IN_BODY = "furniture_in_body"
+CHECK_TITLE_EQUALS_FURNITURE = "title_equals_furniture"
 
 _CSS = """
 body { margin: 0; padding: 1.5rem; font: 15px/1.4 system-ui, sans-serif;
@@ -58,7 +63,111 @@ p { margin: 0.25rem 0; }
 .mark-FN { color: #9f1239; font-weight: 700; }
 .stepper { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1.5rem; }
 .decision { margin-top: 0.5rem; font-family: ui-monospace, monospace; font-size: 13px; }
+.checks { margin-top: 1.5rem; }
+.check-hit { background: #fff7ed; border: 1px solid #fdba74; padding: 0.35rem 0.6rem;
+  margin: 0.25rem 0; }
 """
+
+
+@dataclass(frozen=True)
+class ReviewFinding:
+    """One metric-blind review hit. Checks never change a split or a score."""
+
+    check: str
+    document_id: str
+    detail: str
+
+
+def review_checks(packet: Packet) -> list[ReviewFinding]:
+    """Section range, furniture text in body blocks, and title equal to furniture.
+
+    ``render_html`` shows this same list. Callers can use the return value without
+    parsing the HTML.
+    """
+    findings: list[ReviewFinding] = []
+    for doc in packet.documents:
+        findings.extend(_section_range_findings(doc))
+        furniture = _furniture_strings(doc)
+        findings.extend(_furniture_in_body_findings(doc, furniture))
+        findings.extend(_title_findings(doc, furniture))
+    return findings
+
+
+def _walk_sections(sections: list[Section]):
+    for section in sections:
+        yield section
+        yield from _walk_sections(section.children)
+
+
+def _norm_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _section_range_findings(doc: LogicalDocument) -> list[ReviewFinding]:
+    findings: list[ReviewFinding] = []
+    for section in _walk_sections(doc.sections):
+        if section.page_start < doc.page_start or section.page_end > doc.page_end:
+            findings.append(ReviewFinding(
+                CHECK_SECTION_OUTSIDE,
+                doc.id,
+                f"section {section.id} pages {section.page_start}-{section.page_end} "
+                f"outside document pages {doc.page_start}-{doc.page_end}",
+            ))
+    return findings
+
+
+def _furniture_blocks(doc: LogicalDocument) -> list[Block]:
+    blocks = [block for block in doc.furniture if block.kind in _FURNITURE_KINDS]
+    for section in _walk_sections(doc.sections):
+        blocks.extend(block for block in section.blocks if block.kind in _FURNITURE_KINDS)
+    return blocks
+
+
+def _furniture_strings(doc: LogicalDocument) -> set[str]:
+    return {text for block in _furniture_blocks(doc) if (text := _norm_line(block.text))}
+
+
+def _furniture_in_body_findings(doc: LogicalDocument, furniture: set[str]) -> list[ReviewFinding]:
+    if not furniture:
+        return []
+    findings: list[ReviewFinding] = []
+    for section in _walk_sections(doc.sections):
+        for block in section.blocks:
+            if block.kind in _FURNITURE_KINDS or block.kind == BlockKind.TITLE:
+                continue
+            text = _norm_line(block.text)
+            if text and text in furniture:
+                findings.append(ReviewFinding(
+                    CHECK_FURNITURE_IN_BODY,
+                    doc.id,
+                    f"block {block.id} text equals furniture {text}",
+                ))
+    return findings
+
+
+def _title_findings(doc: LogicalDocument, furniture: set[str]) -> list[ReviewFinding]:
+    if not furniture:
+        return []
+    findings: list[ReviewFinding] = []
+    title = _norm_line(doc.title or "")
+    if title and title in furniture:
+        findings.append(ReviewFinding(
+            CHECK_TITLE_EQUALS_FURNITURE,
+            doc.id,
+            f"title equals furniture {title}",
+        ))
+    for section in _walk_sections(doc.sections):
+        for block in section.blocks:
+            if block.kind != BlockKind.TITLE:
+                continue
+            text = _norm_line(block.text)
+            if text and text in furniture:
+                findings.append(ReviewFinding(
+                    CHECK_TITLE_EQUALS_FURNITURE,
+                    doc.id,
+                    f"title block {block.id} equals furniture {text}",
+                ))
+    return findings
 
 
 def load_trace(path: Path) -> list[Event]:
@@ -119,6 +228,7 @@ def render_html(
             "<p class=\"gold-summary\">"
             f"predicted starts {pred}; gold starts {gold_txt}</p>"
         )
+    parts.append(_checks_html(packet))
     parts.append("<div class=\"strip\">")
     for index in range(page_count):
         mark = _boundary_mark(index, predicted, gold_set)
@@ -144,6 +254,23 @@ def render_html(
     parts.append("</section>")
     parts.append("</body></html>")
     return "\n".join(parts)
+
+
+def _checks_html(packet: Packet) -> str:
+    findings = review_checks(packet)
+    parts = ["<section class=\"checks\">", "<h2>Review checks</h2>"]
+    if not findings:
+        parts.append("<p class=\"checks-clear\">no review findings</p>")
+    else:
+        parts.append("<ul class=\"checks-list\">")
+        for finding in findings:
+            parts.append(
+                f"<li class=\"check-hit\" data-check=\"{_esc(finding.check)}\" "
+                f"data-doc=\"{_esc(finding.document_id)}\">{_esc(finding.detail)}</li>"
+            )
+        parts.append("</ul>")
+    parts.append("</section>")
+    return "".join(parts)
 
 
 def _page_pngs(pdf: Path) -> tuple[dict[int, str], str | None]:

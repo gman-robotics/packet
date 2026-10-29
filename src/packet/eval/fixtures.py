@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from packet.eval.pdfutil import write_blank_scan_pdf, write_text_pdf
+from packet.eval.pdfutil import write_blank_scan_pdf, write_layout_pdf, write_text_pdf
 from packet.types import LogicalDocument, Packet, PacketOrigin
 
 
@@ -32,6 +32,24 @@ def build_builtin(root: Path | None = None) -> list[NamedFixture]:
         _unnumbered_cover(out),
         _scan(out),
     ]
+
+
+def fail_mode_dir(root: Path | None = None) -> Path:
+    base = root or Path(".packet-eval")
+    path = base / "fail-modes"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def build_fail_modes(root: Path | None = None) -> list[NamedFixture]:
+    """Known fail-mode fixtures for tests and ``packet eval --viz-dir``.
+
+    Not part of ``build_builtin`` and not scored by ``packet eval``. Keeping
+    them off the default gated builtin list means a known failure cannot change
+    builtin rows, the gate, or macro F1. ``--viz-dir`` still writes their HTML.
+    ``shared-header`` stays in ``build_builtin`` as the passing contrast.
+    """
+    return [_stripped_numbers(fail_mode_dir(root))]
 
 
 def _packet(name: str, pdf: Path, docs: list[tuple[int, int]], pages: int) -> Packet:
@@ -118,6 +136,36 @@ def _unnumbered_cover(out: Path) -> NamedFixture:
         "born-digital",
         "Unnumbered cover is page 1 (implied_page_one on page 0); one document.",
     )
+
+
+def _stripped_numbers(out: Path) -> NamedFixture:
+    """Two documents, one shared header, no ``N of M`` footers.
+
+    The second document opens on ``title_top`` alone (0.45), below the 0.55
+    fallback, so look-ahead false-merges it into the first document. Intentional
+    known failure; not a gated builtin row. ``shared-header`` still splits.
+    """
+    pdf = write_layout_pdf(out / "stripped-numbers.pdf", [
+        _stripped_page("Chapter A", "Chapter A covers the same binder topic briefly."),
+        _stripped_page(None, "Chapter A continues in the same binder with no new heading."),
+        _stripped_page("Chapter B", "Chapter B covers the same binder topic briefly."),
+        _stripped_page(None, "Chapter B continues in the same binder with no new heading."),
+    ])
+    return NamedFixture(
+        "stripped-numbers",
+        pdf,
+        _packet("stripped-numbers", pdf, [(0, 1), (2, 3)], 4),
+        "born-digital",
+        "Known false merge: same header, no N of M footers, title_top alone below 0.55. Not gated.",
+    )
+
+
+def _stripped_page(title: str | None, body: str) -> list:
+    lines: list = [("Binder Header", 8, 20)]
+    if title:
+        lines.append((title, 22, 90, True))
+    lines.append((body, 11, 150))
+    return lines
 
 
 def _scan(out: Path) -> NamedFixture:

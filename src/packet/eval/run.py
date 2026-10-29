@@ -4,11 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from packet.classify import HeuristicClassifier
-from packet.eval.fixtures import NamedFixture, build_builtin
+from packet.eval.fixtures import NamedFixture, build_builtin, build_fail_modes
 from packet.eval.metrics import BoundaryScore, boundary_score, false_ocr_hard_fail
+from packet.events import Event
 from packet.pipeline import Pipeline
 from packet.source import PdfPageSource
 from packet.types import Packet
+from packet.viz import render_html
 
 DEFAULT_MIN_F1 = 1.0
 # (per-fixture, macro) boundary-F1 floors when the CLI flags are not given.
@@ -93,9 +95,18 @@ def text_layer_pages(pdf: Path, min_chars: int | None = None) -> set[int]:
         }
 
 
-def run_fixture(fixture: NamedFixture, pipeline: Pipeline | None = None) -> EvalResult:
+def run_fixture(
+    fixture: NamedFixture,
+    pipeline: Pipeline | None = None,
+    viz_dir: Path | None = None,
+) -> EvalResult:
     pipe = pipeline or Pipeline()
-    predicted: Packet = pipe.parse(fixture.pdf)
+    events: list[Event] = []
+    predicted: Packet = pipe.parse(
+        fixture.pdf, on_event=events.append if viz_dir is not None else None
+    )
+    if viz_dir is not None:
+        _write_viz(viz_dir, fixture, predicted, events)
     score = boundary_score(fixture.gold, predicted, tolerance=0)
     text_pages = text_layer_pages(fixture.pdf)
     fails = false_ocr_hard_fail(predicted, text_pages)
@@ -111,12 +122,39 @@ def run_fixture(fixture: NamedFixture, pipeline: Pipeline | None = None) -> Eval
     )
 
 
-def run_named_fixtures(root: Path | None = None, pipeline: Pipeline | None = None) -> list[EvalResult]:
-    return [run_fixture(fx, pipeline) for fx in build_builtin(root)]
+def _write_viz(viz_dir: Path, fixture: NamedFixture, packet: Packet, events: list[Event]) -> None:
+    """One self-contained HTML file. Gold values are document start pages (viz marks)."""
+    viz_dir.mkdir(parents=True, exist_ok=True)
+    gold = [doc.page_start for doc in fixture.gold.documents]
+    report = render_html(packet, events, pdf=fixture.pdf, gold=gold)
+    (viz_dir / f"{fixture.name}.html").write_text(report, encoding="utf-8")
+
+
+def write_fail_mode_viz(
+    root: Path | None, viz_dir: Path, pipeline: Pipeline | None = None
+) -> None:
+    """Write HTML for ``build_fail_modes``.
+
+    Scores for these fixtures are not returned, so they cannot change the rows,
+    gate, or macro F1 of the set that actually ran.
+    """
+    for fixture in build_fail_modes(root):
+        run_fixture(fixture, pipeline, viz_dir=viz_dir)
+
+
+def run_named_fixtures(
+    root: Path | None = None,
+    pipeline: Pipeline | None = None,
+    viz_dir: Path | None = None,
+) -> list[EvalResult]:
+    return [run_fixture(fx, pipeline, viz_dir=viz_dir) for fx in build_builtin(root)]
 
 
 def run_dlnet_whole(
-    data_dir: Path, root: Path | None = None, pipeline: Pipeline | None = None
+    data_dir: Path,
+    root: Path | None = None,
+    pipeline: Pipeline | None = None,
+    viz_dir: Path | None = None,
 ) -> list[EvalResult]:
     """``packet-dlnet-whole``: download (sha256-pinned) and join whole docs, then score."""
     from packet.eval import wholedoc
@@ -124,7 +162,8 @@ def run_dlnet_whole(
     m = wholedoc.load_manifest()
     wholedoc.fetch(m, cache=data_dir)
     out = (root or Path(".packet-eval")) / "dlnet-whole"
-    return [run_fixture(fx, pipeline) for fx in wholedoc.build_fixtures(m, data_dir, out)]
+    fixtures = wholedoc.build_fixtures(m, data_dir, out)
+    return [run_fixture(fx, pipeline, viz_dir=viz_dir) for fx in fixtures]
 
 
 def prepare_politax(data_dir: Path):
@@ -137,10 +176,14 @@ def prepare_politax(data_dir: Path):
     return m, fixtures
 
 
-def run_politax(data_dir: Path, pipeline: Pipeline | None = None) -> list[EvalResult]:
+def run_politax(
+    data_dir: Path,
+    pipeline: Pipeline | None = None,
+    viz_dir: Path | None = None,
+) -> list[EvalResult]:
     """``packet-politax``: download PoliTax-Split PDFs and score one fixture per packet."""
     _, fixtures = prepare_politax(data_dir)
-    return [run_fixture(fx, pipeline) for fx in fixtures]
+    return [run_fixture(fx, pipeline, viz_dir=viz_dir) for fx in fixtures]
 
 
 def results_as_dict(results: list[EvalResult], min_f1: float = DEFAULT_MIN_F1) -> list[dict]:
