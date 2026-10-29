@@ -223,9 +223,11 @@ never re-merged, so these remain:
   `current_blocks` when the page stream ends are closed as one final
   `LogicalDocument`, regardless of whether a boundary signal ever fired
   for them (`if current_blocks or not packet.documents:` at the end of
-  `stream()`). There is no minimum-confidence check on this final flush
-  — an under-confident tail is still emitted as a document rather than
-  dropped or flagged.
+  `stream()`). There is no minimum-confidence check on this final flush.
+  An under-confident tail is still emitted as a document. When that tail
+  is the final document of a multi-document packet and it has no
+  page-number support, core records `eof_flush` in `packet.flags`
+  (see Uncertainty flags). It does not drop the document.
 - **No undo.** Once `_close_document` runs, the resulting
   `LogicalDocument` is appended to `packet.documents` and the event is
   yielded. A later page can never cause an already-closed document to be
@@ -234,6 +236,50 @@ never re-merged, so these remain:
 `--no-split` (CLI) / `PipelineConfig.split_on_boundary = False` disables
 all of the above and forces the whole packet into one `LogicalDocument`,
 which is useful as an escape hatch while boundary quality is unproven.
+
+## Uncertainty flags
+
+Core writes `LogicalDocument.extras["packet.flags"]`, a list of `Flag`
+dicts (`src/packet/types.py`). The key is reserved. Domain adapters must
+not overwrite it; `apply_domains` restores a value that was already there
+and drops one an adapter inserts when the key was absent. The pipeline
+writes the key after adapters run, so citation extras are visible and the
+core list is what survives. A flag never changes a split or a section.
+`heading_rank_repaired` is in the kind list for a later repair pass;
+nothing emits it yet.
+
+- **`weak_boundary`** — the split that opened this document had no
+  page-number evidence. That is decision reason `fallback_eager`, or
+  `high_confidence` whose signal reasons do not include
+  `page_number_reset`. Confidence is not a weakness signal: two
+  independent signals are raised to `COMBINED` = 0.6
+  (`src/packet/boundary.py`, about lines 244-245), and without a
+  page-number reset confidence is capped at 0.74. A correct
+  `lookahead_numbering` split such as `shared-header` (0.65) is not weak.
+- **`fallback_decision`** — a `fallback_below` decision on a page that had
+  a boundary signal: a near-miss that did not split. `fallback_eager` is
+  `weak_boundary` and is not flagged again.
+- **`eof_flush`** — only the final document of a multi-document packet,
+  and only when no numbered page in it continues a sequence started in
+  that document. A sequence start is any earlier numbered page, or the
+  unnumbered opening page. Each later numbered page is checked against
+  every one of those anchors, so a numbered insert does not hide an
+  earlier run (`1 of 3`, `1 of 1`, `2 of 3` has support). A one-document
+  packet never gets it. A one-page final document does not get it when
+  `page_num` is 1 (`1 of 1`, with or without a `page_number_reset`). A
+  `page_number_reset` reason with no page number is not support. Only an
+  unnumbered or otherwise unsupported final page gets the flag.
+- **`unresolved_citation`** — a citation id in `extras` that is not a
+  block id known when this document closes. The pipeline's known ids are
+  the blocks of this document and of earlier documents (streaming), so a
+  forward reference to a later document is flagged. `citation_id_counts`
+  (`src/packet/citations.py`) returns the total cited ids, counting
+  repeats, and the unresolved ids with repeats kept.
+  `unresolved_citation_ids` is that second list. Eval
+  `citation_integrity` uses the same helper over the whole packet, so
+  that forward reference counts as resolved there. `citation_keys` still
+  filters extras keys, and the ratio is unchanged (`1.0` when nothing
+  is cited).
 
 ## Assembler
 
@@ -254,8 +300,11 @@ class DomainAdapter(Protocol):
     def enrich(self, doc: LogicalDocument) -> LogicalDocument: ...
 ```
 
-Adapters run only on `document_closed`. They must not delete sections or
-blocks. Add `type_hint` and `extras`. Examples that do *not* belong in core:
+Adapters run only on `document_closed`, before `packet.flags` is written.
+They must not delete sections or blocks, and they must not overwrite
+`extras["packet.flags"]` (core restores an existing value and drops one an
+adapter inserts). Add `type_hint` and other `extras`. Examples that do
+*not* belong in core:
 
 - estate packet field extraction
 - invoice line items

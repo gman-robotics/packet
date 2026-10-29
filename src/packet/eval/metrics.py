@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from packet.citations import block_ids, citation_id_counts
 from packet.types import LogicalDocument, Packet, SourceKind
 
 
@@ -75,43 +76,19 @@ def boundary_score(
 
 
 def citation_integrity(packet: Packet, citation_keys: set[str] | None = None) -> float:
-    keys = citation_keys or set()
     ids: set[str] = set()
     for doc in packet.documents:
-        for section in doc.sections:
-            _collect_block_ids(section, ids)
-        ids.update(b.id for b in doc.furniture)
+        ids.update(block_ids(doc))
 
     total = 0
-    ok = 0
+    unresolved = 0
     for doc in packet.documents:
-        for extra_key, value in doc.extras.items():
-            if keys and extra_key not in keys:
-                continue
-            cited = _as_citation_ids(value)
-            if not cited:
-                continue
-            for cid in cited:
-                total += 1
-                if cid in ids:
-                    ok += 1
+        doc_total, missing = citation_id_counts(doc, ids, citation_keys)
+        total += doc_total
+        unresolved += len(missing)
     if total == 0:
         return 1.0
-    return ok / total
-
-
-def _collect_block_ids(section, ids: set[str]) -> None:
-    ids.update(b.id for b in section.blocks)
-    for child in section.children:
-        _collect_block_ids(child, ids)
-
-
-def _as_citation_ids(value) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list) and all(isinstance(x, str) for x in value):
-        return value
-    return []
+    return (total - unresolved) / total
 
 
 def false_ocr_hard_fail(packet: Packet, pages_with_text: set[int]) -> list[int]:
