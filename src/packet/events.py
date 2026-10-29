@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 from packet.types import Block, LogicalDocument, PageRef
+
+if TYPE_CHECKING:
+    from packet.boundary import BoundarySignal
+    from packet.lookahead import Decision
 
 
 class EventKind(str, Enum):
     PAGE_CLASSIFIED = "page_classified"
     BLOCK_EMITTED = "block_emitted"
     BOUNDARY_PROPOSED = "boundary_proposed"
+    BOUNDARY_DECIDED = "boundary_decided"
     DOCUMENT_OPENED = "document_opened"
     SECTION_OPENED = "section_opened"
     SECTION_CLOSED = "section_closed"
@@ -48,6 +53,33 @@ class Event(BaseModel):
             kind=EventKind.BOUNDARY_PROPOSED,
             page=after_page,
             payload={"after_page": after_page, "confidence": confidence, "reason": reason},
+        )
+
+    @classmethod
+    def boundary_decided(
+        cls,
+        d: Decision,
+        signal: BoundarySignal | None,
+        page_num: int | None,
+        page_total: int | None,
+    ) -> Event:
+        """The look-ahead verdict for page ``d.page`` (one per page, page 0 included)."""
+        return cls(
+            kind=EventKind.BOUNDARY_DECIDED,
+            page=d.page,
+            payload={
+                "page": d.page,
+                "split": d.split,
+                "reason": d.reason,
+                "confidence": d.confidence,
+                "signal": (
+                    None
+                    if signal is None
+                    else {"confidence": signal.confidence, "reason": signal.reason}
+                ),
+                "page_num": page_num,
+                "page_total": page_total,
+            },
         )
 
     @classmethod

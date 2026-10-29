@@ -29,6 +29,7 @@ def build_builtin(root: Path | None = None) -> list[NamedFixture]:
         _text_layer(out),
         _multi_doc(out),
         _shared_header(out),
+        _unnumbered_cover(out),
         _scan(out),
     ]
 
@@ -98,6 +99,24 @@ def _shared_header(out: Path) -> NamedFixture:
         _packet("shared-header", pdf, [(0, 1), (2, 3)], 4),
         "born-digital",
         "Same header fingerprint; boundary must come from page-number reset.",
+    )
+
+
+def _unnumbered_cover(out: Path) -> NamedFixture:
+    pdf = write_text_pdf(
+        out / "unnumbered-cover.pdf",
+        [
+            ["Fabrikam Service Agreement", "Prepared for Contoso"],
+            ["1. Scope", "Services are described here.", "Page 2 of 3"],
+            ["2. Term", "The term is one year.", "Page 3 of 3"],
+        ],
+    )
+    return NamedFixture(
+        "unnumbered-cover",
+        pdf,
+        _packet("unnumbered-cover", pdf, [(0, 2)], 3),
+        "born-digital",
+        "Unnumbered cover is page 1 (implied_page_one on page 0); one document.",
     )
 
 

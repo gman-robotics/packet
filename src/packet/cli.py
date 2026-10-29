@@ -62,6 +62,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="write <name>.json per PDF here (required for several PDFs)")
     parse.add_argument("--timings", default=None,
                        help="append one JSON line per PDF: seconds, pages, OCR page seconds")
+    parse.add_argument("--trace", default=None, metavar="OUT.JSONL",
+                       help="write every pipeline event as one JSON line (off by default)")
     parse.add_argument("--no-split", action="store_true", help="force a single logical document")
     parse.add_argument("--force-inspect", action="store_true", help="OCR every page, even text pages")
     parse.add_argument(
@@ -267,7 +269,6 @@ def _cmd_parse(args) -> int:
     # One pipeline and one set of extractors for the whole run; OCR engines also sit in
     # the process-level cache, so the model loads once however many files there are.
     extractors = _extractors_or_exit(force_inspect=args.force_inspect)
-    from packet.decision import DecisionBackendError
 
     config = _parse_pipeline_config(args)
     if config is None:
@@ -278,6 +279,20 @@ def _cmd_parse(args) -> int:
     out_dir = Path(args.out_dir) if args.out_dir else None
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)
+
+    trace_fh = open(args.trace, "w", encoding="utf-8") if args.trace else None  # noqa: SIM115
+    try:
+        return _parse_paths(args, paths, pipe, config, extractors, out_dir, trace_fh)
+    finally:
+        if trace_fh is not None:
+            trace_fh.close()
+
+
+def _parse_paths(args, paths, pipe, config, extractors, out_dir, trace_fh) -> int:
+    from packet.decision import DecisionBackendError
+
+    def on_event(event) -> None:
+        trace_fh.write(json.dumps(event.model_dump(mode="json")) + "\n")
 
     failed = 0
     for path in paths:
@@ -292,7 +307,7 @@ def _cmd_parse(args) -> int:
         try:
             if not path.exists():
                 raise FileNotFoundError(f"not found: {path}")
-            packet = pipe.parse(path)
+            packet = pipe.parse(path, on_event=on_event if trace_fh is not None else None)
             text = json.dumps(packet.model_dump(), indent=2)
             if out_dir:
                 out = out_dir / f"{path.stem}.json"
