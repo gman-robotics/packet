@@ -77,6 +77,13 @@ def main(argv: list[str] | None = None) -> int:
         help="JSON decision backend config for parse (optional; load errors exit 2)",
     )
 
+    viz = sub.add_parser("viz", help="write a self-contained HTML review of a parse trace")
+    viz.add_argument("trace", help="JSONL from packet parse --trace")
+    viz.add_argument("-o", "--output", required=True, help="HTML report path")
+    viz.add_argument("--tree", required=True, help="Packet JSON from packet parse")
+    viz.add_argument("--pdf", default=None, help="source PDF; page images inlined when render works")
+    viz.add_argument("--gold", default=None, help="comma-separated gold document start pages, e.g. 0,2")
+
     ev = sub.add_parser("eval", help="run built-in packet fixtures")
     ev.add_argument("--json", action="store_true")
     ev.add_argument("--dir", default=None, help="cache dir for generated PDFs")
@@ -196,6 +203,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "parse":
         return _cmd_parse(args)
+    if args.cmd == "viz":
+        return _cmd_viz(args)
 
     path = Path(args.path)
     if not path.exists():
@@ -340,6 +349,64 @@ def _parse_paths(args, paths, pipe, config, extractors, out_dir, trace_fh) -> in
             continue
         _write_timing(args.timings, row, start, extractors)
     return 1 if failed else 0
+
+
+def _gold_pages(raw: str | None) -> list[int] | None:
+    if raw is None:
+        return None
+    parts = [part.strip() for part in raw.split(",")]
+    if not parts or any(part == "" for part in parts):
+        raise ValueError("--gold must be comma-separated page numbers, for example 0,2")
+    pages: list[int] = []
+    for part in parts:
+        try:
+            page = int(part)
+        except ValueError:
+            raise ValueError(f"--gold page is not a whole number: {part!r}") from None
+        if page < 0:
+            raise ValueError(f"--gold page is not a whole number: {part!r}")
+        pages.append(page)
+    return pages
+
+
+def _cmd_viz(args) -> int:
+    from pydantic import ValidationError
+
+    from packet.types import Packet
+    from packet.viz import load_trace, render_html
+
+    trace = Path(args.trace)
+    tree_path = Path(args.tree)
+    out = Path(args.output)
+    if not trace.is_file():
+        print(f"packet viz: trace not found: {trace}", file=sys.stderr)
+        return 2
+    if not tree_path.is_file():
+        print(f"packet viz: packet json not found: {tree_path}", file=sys.stderr)
+        return 2
+    pdf = None
+    if args.pdf:
+        pdf = Path(args.pdf)
+        if not pdf.is_file():
+            print(f"packet viz: pdf not found: {pdf}", file=sys.stderr)
+            return 2
+    try:
+        gold = _gold_pages(args.gold)
+    except ValueError as exc:
+        print(f"packet viz: {exc}", file=sys.stderr)
+        return 2
+    try:
+        events = load_trace(trace)
+        packet = Packet.model_validate(json.loads(tree_path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError, ValidationError, ValueError) as exc:
+        print(f"packet viz: {exc}", file=sys.stderr)
+        return 2
+    try:
+        out.write_text(render_html(packet, events, pdf=pdf, gold=gold), encoding="utf-8")
+    except OSError as exc:
+        print(f"packet viz: {exc}", file=sys.stderr)
+        return 2
+    return 0
 
 
 def _write_timing(path: str | None, row: dict, start: float, extractors) -> None:

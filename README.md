@@ -266,6 +266,7 @@ Docling and pdf-inspector adapters are still stubs.
 pip install -e ".[dev]"
 packet inspect path/to/file.pdf
 packet parse  path/to/file.pdf -o packet.json
+packet viz    trace.jsonl -o report.html --tree packet.json
 packet eval                        # built-in fixtures (boundary P/R, false-OCR gate)
 packet eval --set dlnet-whole      # 13 packets from 35 whole arXiv PDFs (downloads once)
 pytest
