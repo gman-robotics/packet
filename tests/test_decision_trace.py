@@ -7,6 +7,7 @@ import pytest
 
 from packet import cli
 from packet.boundary import BoundarySignal
+from packet.decision import DecisionBackendError
 from packet.eval.fixtures import build_builtin
 from packet.events import EventKind
 from packet.lookahead import LookaheadSplitter, PageObs
@@ -125,6 +126,85 @@ def test_parse_trace_writes_jsonl(tmp_path, capsys):
     kinds = [row["kind"] for row in lines]
     assert kinds.count("boundary_decided") == 4
     assert kinds[-1] == "packet_closed"
+    decided = [row["payload"] for row in lines if row["kind"] == "boundary_decided"]
+    d2 = decided[2]
+    assert d2["split"] is True
+    assert d2["page_num"] == 1
+    assert d2["confidence"] == d2["signal"]["confidence"]
+    assert d2["reason"] == "lookahead_numbering"
+
+
+def test_parse_trace_missing_parent_exits_2(tmp_path, capsys):
+    fx = _fixture(tmp_path, "multi-doc")
+    trace = tmp_path / "no-such-dir" / "trace.jsonl"
+    code = cli.main(
+        ["parse", str(fx.pdf), "-o", str(tmp_path / "out.json"), "--trace", str(trace)]
+    )
+    assert code == 2
+    err = capsys.readouterr().err
+    assert f"packet parse: cannot write trace {trace}: No such file or directory" in err
+    assert "Traceback" not in err
+    assert not trace.exists()
+    assert not trace.parent.exists()
+
+
+def test_parse_trace_directory_exits_2(tmp_path, capsys):
+    fx = _fixture(tmp_path, "multi-doc")
+    trace = tmp_path / "trace-dir"
+    trace.mkdir()
+    code = cli.main(
+        ["parse", str(fx.pdf), "-o", str(tmp_path / "out.json"), "--trace", str(trace)]
+    )
+    assert code == 2
+    err = capsys.readouterr().err
+    assert f"packet parse: cannot write trace {trace}: Is a directory" in err
+    assert "Traceback" not in err
+    assert trace.is_dir()
+    assert not trace.with_name(trace.name + ".partial").exists()
+
+
+def test_parse_trace_keeps_target_on_failure_and_replaces_on_success(tmp_path, monkeypatch, capsys):
+    fx = _fixture(tmp_path, "multi-doc")
+    out = tmp_path / "out.json"
+    trace = tmp_path / "trace.jsonl"
+    partial = trace.with_name(trace.name + ".partial")
+    trace.write_text("PREVIOUS\n")
+    original = cli.Pipeline.parse
+
+    def fail_closed(self, path, on_event=None):
+        raise DecisionBackendError("stopped")
+
+    monkeypatch.setattr(cli.Pipeline, "parse", fail_closed)
+    code = cli.main(["parse", str(fx.pdf), "-o", str(out), "--trace", str(trace)])
+    err = capsys.readouterr().err
+    assert code == 2
+    assert f"packet parse: run failed; partial trace kept at {partial}" in err
+    assert "Traceback" not in err
+    assert trace.read_text() == "PREVIOUS\n"
+    assert partial.is_file()
+
+    def boom(self, path, on_event=None):
+        raise RuntimeError("parse failed")
+
+    monkeypatch.setattr(cli.Pipeline, "parse", boom)
+    with pytest.raises(RuntimeError, match="parse failed"):
+        cli.main(["parse", str(fx.pdf), "-o", str(out), "--trace", str(trace)])
+    err = capsys.readouterr().err
+    assert f"packet parse: run failed; partial trace kept at {partial}" in err
+    assert "Traceback" not in err
+    assert trace.read_text() == "PREVIOUS\n"
+    assert partial.is_file()
+
+    monkeypatch.setattr(cli.Pipeline, "parse", original)
+    assert cli.main(["parse", str(fx.pdf), "-o", str(out), "--trace", str(trace)]) == 0
+    ok = capsys.readouterr()
+    assert "run failed" not in ok.err
+    assert "cannot write trace" not in ok.err
+    assert not partial.exists()
+    text = trace.read_text()
+    assert not text.startswith("PREVIOUS")
+    rows = [json.loads(line) for line in text.splitlines()]
+    assert any(row["kind"] == "boundary_decided" for row in rows)
 
 
 def test_parse_without_trace_unchanged(tmp_path, capsys):
