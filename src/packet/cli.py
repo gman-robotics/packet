@@ -490,6 +490,13 @@ def _cmd_politax_ship_check(args) -> int:
     politax = Path(args.data_dir) if args.data_dir else DEFAULT_POLITAX_CACHE
     dlnet = Path(args.dlnet_cache) if args.dlnet_cache else DEFAULT_WHOLEDOC_CACHE
     if args.weights:
+        from packet.boundary_model import BoundaryWeightsError, load_logistic_scorer
+
+        try:
+            load_logistic_scorer(Path(args.weights))
+        except BoundaryWeightsError as exc:
+            print(f"packet: {exc}", file=sys.stderr)
+            return 2
         report = evaluate_politax_ship(Path(args.weights), politax, dlnet)
     else:
         out = Path(args.train_output or "/tmp/packet-politax-ship-weights.json")
@@ -502,7 +509,7 @@ def _cmd_politax_ship_check(args) -> int:
             mark = "PASS" if item.passed else "FAIL"
             print(f"  {item.number}. [{mark}] {item.title}: {item.detail}")
         print(f"max holdout model p={report.max_holdout_model_p:.4f}")
-    return 0
+    return 0 if report.ship else 1
 
 
 def _cmd_politax_train_weights(args) -> int:

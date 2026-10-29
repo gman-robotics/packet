@@ -41,3 +41,72 @@ def test_dlnet_logged_heuristic_floor_constant():
 
 def test_holdout_logged_max_model_p_constant():
     assert HOLDOUT_LOGGED_MAX_MODEL_P == 0.4989
+
+
+# GMA-383 should-fixes
+
+
+def _r(name, false_ocr=()):
+    from packet.eval.metrics import BoundaryScore
+    from packet.eval.run import EvalResult
+
+    return EvalResult(name=name, condition="born-digital", pages=1, gold_docs=1, pred_docs=1,
+                      boundary=BoundaryScore(1.0, 1.0, 1.0, [], [], 0),
+                      false_ocr_pages=list(false_ocr))
+
+
+def test_item4_passes_at_exact_floor_and_fails_just_below():
+    from packet.eval.politax_ship import _item4_dlnet_floor
+
+    assert _item4_dlnet_floor([], DLNET_LOGGED_HEURISTIC_MACRO)
+    assert not _item4_dlnet_floor([], DLNET_LOGGED_HEURISTIC_MACRO - 1e-9)
+    assert not _item4_dlnet_floor(["dlw-a"], DLNET_LOGGED_HEURISTIC_MACRO)
+
+
+def test_item5_counts_builtin_and_dlnet_false_ocr():
+    from packet.eval.politax_ship import _item5_false_ocr
+
+    clean = [_r("p")]
+    assert _item5_false_ocr(politax=clean, builtin=clean, dlnet=clean) == (True, [])
+    ok, bad = _item5_false_ocr(politax=clean, builtin=[_r("bi", [0])], dlnet=[_r("dlw", [3])])
+    assert not ok
+    assert bad == ["bi", "dlw"]
+
+
+def test_item5_gate_passes_builtin_and_dlnet_results():
+    import inspect
+
+    from packet.eval import politax_ship
+
+    src = inspect.getsource(politax_ship.evaluate_politax_ship)
+    assert "builtin=builtin_scorer" in src
+    assert "dlnet=dlnet_results" in src
+
+
+def test_ship_check_exits_2_on_bad_weights(tmp_path, capsys):
+    from packet.cli import main
+
+    bad = tmp_path / "w.json"
+    bad.write_text("{not json")
+    assert main(["politax-ship-check", "--weights", str(bad)]) == 2
+    assert "boundary weights" in capsys.readouterr().err
+    assert main(["politax-ship-check", "--weights", str(tmp_path / "missing.json")]) == 2
+
+
+def _stub_report(ship):
+    from packet.eval.politax_ship import ShipItem, ShipReport
+
+    return ShipReport(ship=ship, outcome="a" if ship else "b",
+                      items=[ShipItem(1, "t", ship, "d")], holdout_heuristic={},
+                      holdout_scorer={}, max_holdout_model_p=0.0,
+                      dlnet_macro_scorer_on=0.0, builtin_f1={})
+
+
+def test_ship_check_exit_code_follows_gate(monkeypatch, tmp_path):
+    import packet.eval.politax_ship as ps
+    from packet import cli
+
+    monkeypatch.setattr("packet.boundary_model.load_logistic_scorer", lambda p: None)
+    for ship, code in ((False, 1), (True, 0)):
+        monkeypatch.setattr(ps, "evaluate_politax_ship", lambda *a, _s=ship, **k: _stub_report(_s))
+        assert cli.main(["politax-ship-check", "--weights", str(tmp_path / "w.json")]) == code

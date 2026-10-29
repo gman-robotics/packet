@@ -83,6 +83,17 @@ def _item2_holdout_strictly_up(heur, scorer) -> tuple[bool, str]:
     return ok, detail
 
 
+def _item4_dlnet_floor(dlnet_in_train: list, dlnet_macro: float) -> bool:
+    """Item 4: dlnet-whole kept out of training and macro at or above the logged floor."""
+    return not dlnet_in_train and dlnet_macro >= DLNET_LOGGED_HEURISTIC_MACRO
+
+
+def _item5_false_ocr(*, politax: list, builtin: list, dlnet: list) -> tuple[bool, list[str]]:
+    """Item 5: no false-OCR pages in any run (PoliTax, builtin, dlnet-whole)."""
+    bad = [r.name for r in politax + builtin + dlnet if r.false_ocr_pages]
+    return not bad, bad
+
+
 def holdout_max_native_text_blocks(m, fixtures: list) -> int:
     """Largest native text block count on any holdout page (GMA-270 census: 0)."""
     from packet.eval.page_facts import page_facts
@@ -165,7 +176,7 @@ def evaluate_politax_ship(
     dlnet_in_train = [p for p in train_packets if str(p).startswith("dlw-")]
     dlnet_results = run_dlnet_whole(dlnet_cache, eval_root, pipeline=scorer_pipe)
     dlnet_macro = sum(r.boundary.f1 for r in dlnet_results) / len(dlnet_results)
-    ok4 = not dlnet_in_train and dlnet_macro >= DLNET_LOGGED_HEURISTIC_MACRO
+    ok4 = _item4_dlnet_floor(dlnet_in_train, dlnet_macro)
     items.append(
         ShipItem(
             4,
@@ -175,10 +186,9 @@ def evaluate_politax_ship(
         )
     )
 
-    ocr_bad = [
-        r.name for r in results_scorer + results_heur if r.false_ocr_pages
-    ]
-    ok5 = not ocr_bad
+    ok5, ocr_bad = _item5_false_ocr(
+        politax=results_scorer + results_heur, builtin=builtin_scorer, dlnet=dlnet_results
+    )
     items.append(ShipItem(5, "false-OCR pages empty", ok5, f"violations={ocr_bad or 'none'}"))
 
     max_p = max_holdout_model_probability(weights_path, politax_cache)
