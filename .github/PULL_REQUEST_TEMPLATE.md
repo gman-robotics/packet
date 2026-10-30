@@ -34,6 +34,14 @@ Summary:
 
 Gates:
 
+## Blast radius
+
+<!-- What this change can break: callers, eval numbers, CLI/JSON output, CI. `N/A (docs only)` for docs-only diffs. Matches agent-bootstrap's checklist item; skills/blast-radius/SKILL.md lives in the agent-bootstrap repo. -->
+
+Blast radius:
+
+- [ ] Blast radius considered (`skills/blast-radius/SKILL.md` in the agent-bootstrap repo) for non-docs diffs
+
 ## Verification
 
 - [ ] `python -m pip install --upgrade pip` and `python -m pip install -e ".[dev]"` (exit 0)
