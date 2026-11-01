@@ -715,7 +715,7 @@ def _cmd_eval(args) -> int:
                 }
         print(json.dumps(payload, indent=2))
         return 0 if gate.passed else 1
-    print(f"{'fixture':16} {'cond':14} pages gold pred   P     R    F1  ocr  gate")
+    print(f"{'fixture':16} {'cond':14} pages gold pred   P     R    F1 fOCR  gate")
     for r in results:
         mark = "PASS" if r.passed_gate(min_f1) else "FAIL"
         print(

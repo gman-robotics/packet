@@ -276,6 +276,8 @@ pytest
 
 See [`docs/EVAL.md`](docs/EVAL.md) and [`evals/README.md`](evals/README.md)
 for what `packet eval` checks, the dlnet-whole set, and how to point it at DocLayNet.
+In the `packet eval` table, `fOCR` is the false-OCR count: OCR'd pages that already had a
+text layer (a gate hard-fail). It is not a count of OCR pages; scan-only sets show 0 there.
 
 ## Design rules
 
