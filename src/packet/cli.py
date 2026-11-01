@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from packet.backends import OcrConfigError, default_extractors
@@ -609,113 +610,124 @@ def _version_or_dash(md, dist: str) -> str:
         return "-"
 
 
-def _cmd_eval(args) -> int:
-    from packet.eval import run as ev
+@dataclass
+class _EvalRun:
+    results: list
+    macro_results: list | None = None
+    census: dict | None = None
+    gold_totals: tuple | None = None
+    holdout_baseline: object = None
+    holdout_scorer: object = None
+    ocr_stats: object = None
 
-    root = Path(args.dir) if args.dir else None
-    viz_dir = Path(args.viz_dir) if args.viz_dir else None
-    viz_kw = {"viz_dir": viz_dir} if viz_dir is not None else {}
+
+def _eval_arg_error(args) -> str | None:
+    if args.ocr_cache and args.set != "politax":
+        return "packet: --ocr-cache needs --set politax"
+    if args.ocr_cache and args.boundary_weights:
+        return "packet: --ocr-cache cannot be used with --boundary-weights"
+    return None
+
+
+def _eval_thresholds(args, ev) -> tuple[float, float]:
     floors = (ev.OCR_CACHE_FLOORS if args.ocr_cache else ev.SET_FLOORS).get(
         args.set, ev.SET_FLOORS[args.set])
     min_f1 = floors[0] if args.min_f1 is None else args.min_f1
     min_macro = floors[1] if args.min_macro_f1 is None else args.min_macro_f1
-    politax_census = None
-    politax_gold_totals = None
-    politax_holdout_baseline = None
-    politax_holdout_scorer = None
-    ocr_stats = None
-    macro_results = None
-    if args.ocr_cache and args.set != "politax":
-        print("packet: --ocr-cache needs --set politax", file=sys.stderr)
-        return 2
-    if args.ocr_cache and args.boundary_weights:
-        print("packet: --ocr-cache cannot be used with --boundary-weights", file=sys.stderr)
-        return 2
-    pipe = _pipeline_for_boundary_weights(args.boundary_weights)
-    if pipe is None:
-        return 2
+    return min_f1, min_macro
+
+
+def _eval_politax(args, ev, pipe, viz_kw) -> _EvalRun:
+    from packet.eval import politax
+    from packet.eval.politax_split import compute_holdout_baseline
+    from packet.eval.politax_train import holdout_scorecard
+
+    data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_POLITAX_CACHE
+    m, fixtures = ev.prepare_politax(data)
+    subjects = {d.file_name: d.subject for d in m.docs}
+    run = _EvalRun(results=[])
+    run.gold_totals = politax.corpus_gold_label_totals(m)
+    run.census = politax.text_layer_census(fixtures, subjects=subjects)
+    native_viz = viz_kw if not args.ocr_cache and not args.boundary_weights else {}
+    native_heur_results = [ev.run_fixture(fx, Pipeline(), **native_viz) for fx in fixtures]
+    run.holdout_baseline = compute_holdout_baseline(m, fixtures, native_heur_results)
+    if args.ocr_cache:
+        from packet.eval.politax_ocr_eval import run_with_ocr_cache
+        from packet.eval.politax_split import holdout_results
+
+        run.results, run.ocr_stats = run_with_ocr_cache(m, fixtures, data, **viz_kw)
+        run.macro_results = holdout_results(m, fixtures, run.results)
+    elif args.boundary_weights:
+        run.results = [ev.run_fixture(fx, pipe, **viz_kw) for fx in fixtures]
+        run.holdout_scorer = holdout_scorecard(m, fixtures, run.results)
+    else:
+        run.results = native_heur_results
+    return run
+
+
+def _eval_collect(args, ev, pipe, root, viz_kw) -> _EvalRun:
     if args.set == "dlnet-whole":
         data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_WHOLEDOC_CACHE
-        results = ev.run_dlnet_whole(data, root, pipeline=pipe, **viz_kw)
-    elif args.set == "politax":
-        from packet.eval import politax
-        from packet.eval.politax_split import compute_holdout_baseline
-        from packet.eval.politax_train import holdout_scorecard
+        return _EvalRun(results=ev.run_dlnet_whole(data, root, pipeline=pipe, **viz_kw))
+    if args.set == "politax":
+        return _eval_politax(args, ev, pipe, viz_kw)
+    return _EvalRun(results=ev.run_named_fixtures(root, pipeline=pipe, **viz_kw))
 
-        data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_POLITAX_CACHE
-        m, fixtures = ev.prepare_politax(data)
-        subjects = {d.file_name: d.subject for d in m.docs}
-        politax_gold_totals = politax.corpus_gold_label_totals(m)
-        politax_census = politax.text_layer_census(fixtures, subjects=subjects)
-        native_viz = viz_kw if not args.ocr_cache and not args.boundary_weights else {}
-        native_heur_results = [ev.run_fixture(fx, Pipeline(), **native_viz) for fx in fixtures]
-        politax_holdout_baseline = compute_holdout_baseline(m, fixtures, native_heur_results)
-        if args.ocr_cache:
-            from packet.eval.politax_ocr_eval import run_with_ocr_cache
-            from packet.eval.politax_split import holdout_results
 
-            results_heur, ocr_stats = run_with_ocr_cache(m, fixtures, data, **viz_kw)
-            macro_results = holdout_results(m, fixtures, results_heur)
-            results = results_heur
-        elif args.boundary_weights:
-            results = [ev.run_fixture(fx, pipe, **viz_kw) for fx in fixtures]
-            politax_holdout_scorer = holdout_scorecard(m, fixtures, results)
-            results_heur = native_heur_results
-        else:
-            results = results_heur = native_heur_results
-    else:
-        results = ev.run_named_fixtures(root, pipeline=pipe, **viz_kw)
-    if viz_dir is not None:
-        ev.write_fail_mode_viz(root, viz_dir)
-    gate = ev.evaluate_gate(results, min_f1=min_f1, min_macro_f1=min_macro,
-                            macro_results=macro_results)
-    if args.json:
-        payload = {
-            "set": args.set,
-            "fixtures": ev.results_as_dict(results, min_f1),
-            "gate": {
-                "passed": gate.passed,
-                "failures": gate.failures,
-                "macro_f1": gate.macro_f1,
-                "min_f1": gate.min_f1,
-                "min_macro_f1": gate.min_macro_f1,
-                "macro_scope": "holdout" if macro_results is not None else "all",
-            },
-        }
-        if args.set == "politax":
-            from packet.eval.metrics import micro_boundary_prf
+def _holdout_scorer_dict(scorer) -> dict:
+    return {
+        "macro_f1": scorer.macro_f1,
+        "micro_boundary_p": scorer.micro_p,
+        "micro_boundary_r": scorer.micro_r,
+        "micro_boundary_f1": scorer.micro_f1,
+        "per_packet_f1": scorer.per_packet_f1,
+    }
 
-            mp, mr, mf = micro_boundary_prf(results)
-            payload["micro_boundary_p"] = mp
-            payload["micro_boundary_r"] = mr
-            payload["micro_boundary_f1"] = mf
-            if politax_gold_totals is not None:
-                boundaries, sub_documents = politax_gold_totals
-                payload["gold_label_totals"] = {
-                    "boundaries": boundaries,
-                    "sub_documents": sub_documents,
-                }
-            if politax_census is not None:
-                payload["text_layer_census"] = politax_census
-            if ocr_stats is not None:
-                payload["ocr_cache"] = ocr_stats.as_dict()
-            if politax_holdout_baseline is not None:
-                from packet.eval.politax_split import holdout_baseline_as_dict
 
-                holdout_payload = holdout_baseline_as_dict(politax_holdout_baseline)
-                payload["holdout_heuristic"] = holdout_payload
-                payload["holdout_baseline"] = holdout_payload
-            if politax_holdout_scorer is not None:
-                payload["holdout_scorer"] = {
-                    "macro_f1": politax_holdout_scorer.macro_f1,
-                    "micro_boundary_p": politax_holdout_scorer.micro_p,
-                    "micro_boundary_r": politax_holdout_scorer.micro_r,
-                    "micro_boundary_f1": politax_holdout_scorer.micro_f1,
-                    "per_packet_f1": politax_holdout_scorer.per_packet_f1,
-                }
-        print(json.dumps(payload, indent=2))
-        return 0 if gate.passed else 1
-    print(f"{'fixture':16} {'cond':14} pages gold pred   P     R    F1  ocr  gate")
+def _politax_payload(run: _EvalRun) -> dict:
+    from packet.eval.metrics import micro_boundary_prf
+
+    mp, mr, mf = micro_boundary_prf(run.results)
+    extra = {"micro_boundary_p": mp, "micro_boundary_r": mr, "micro_boundary_f1": mf}
+    if run.gold_totals is not None:
+        boundaries, sub_documents = run.gold_totals
+        extra["gold_label_totals"] = {"boundaries": boundaries, "sub_documents": sub_documents}
+    if run.census is not None:
+        extra["text_layer_census"] = run.census
+    if run.ocr_stats is not None:
+        extra["ocr_cache"] = run.ocr_stats.as_dict()
+    if run.holdout_baseline is not None:
+        from packet.eval.politax_split import holdout_baseline_as_dict
+
+        holdout_payload = holdout_baseline_as_dict(run.holdout_baseline)
+        extra["holdout_heuristic"] = holdout_payload
+        extra["holdout_baseline"] = holdout_payload
+    if run.holdout_scorer is not None:
+        extra["holdout_scorer"] = _holdout_scorer_dict(run.holdout_scorer)
+    return extra
+
+
+def _eval_json(args, ev, run: _EvalRun, gate, min_f1) -> int:
+    payload = {
+        "set": args.set,
+        "fixtures": ev.results_as_dict(run.results, min_f1),
+        "gate": {
+            "passed": gate.passed,
+            "failures": gate.failures,
+            "macro_f1": gate.macro_f1,
+            "min_f1": gate.min_f1,
+            "min_macro_f1": gate.min_macro_f1,
+            "macro_scope": "holdout" if run.macro_results is not None else "all",
+        },
+    }
+    if args.set == "politax":
+        payload.update(_politax_payload(run))
+    print(json.dumps(payload, indent=2))
+    return 0 if gate.passed else 1
+
+
+def _print_eval_table(results, min_f1) -> None:
+    print(f"{'fixture':16} {'cond':14} pages gold pred   P     R    F1 fOCR  gate")
     for r in results:
         mark = "PASS" if r.passed_gate(min_f1) else "FAIL"
         print(
@@ -723,34 +735,43 @@ def _cmd_eval(args) -> int:
             f"{r.boundary.precision:5.2f} {r.boundary.recall:5.2f} {r.boundary.f1:5.2f} "
             f"{len(r.false_ocr_pages):4}  {mark}"
         )
-    if politax_census is not None:
-        from packet.eval import politax
-        from packet.eval.metrics import micro_boundary_prf
 
-        print(politax.format_census(politax_census))
-        if politax_gold_totals is not None:
-            print(politax.format_gold_label_totals(*politax_gold_totals))
-        mp, mr, mf = micro_boundary_prf(results)
-        print(f"micro boundary P {mp:.2f} R {mr:.2f} F1 {mf:.2f} (all {len(results)} packets)")
-        if ocr_stats is not None:
-            st = ocr_stats.as_dict()
-            print(f"ocr cache (GMA-274 opt-in): pages used {st['pages_used']} "
-                  f"missing {st['pages_missing']} truncated {st['pages_truncated']}")
-        if politax_holdout_baseline is not None:
-            from packet.eval.politax_split import format_holdout_baseline
 
-            print(format_holdout_baseline(politax_holdout_baseline))
-        if politax_holdout_scorer is not None:
-            print("holdout with boundary weights:")
-            print(
-                f"  macro F1 {politax_holdout_scorer.macro_f1:.4f}  "
-                f"micro P {politax_holdout_scorer.micro_p:.4f} "
-                f"R {politax_holdout_scorer.micro_r:.4f} "
-                f"F1 {politax_holdout_scorer.micro_f1:.4f}"
-            )
-            for name, f1 in politax_holdout_scorer.per_packet_f1.items():
-                print(f"    {name}: F1 {f1:.4f}")
-    scope = " holdout" if macro_results is not None else ""
+def _print_holdout_scorer(scorer) -> None:
+    print("holdout with boundary weights:")
+    print(
+        f"  macro F1 {scorer.macro_f1:.4f}  "
+        f"micro P {scorer.micro_p:.4f} "
+        f"R {scorer.micro_r:.4f} "
+        f"F1 {scorer.micro_f1:.4f}"
+    )
+    for name, f1 in scorer.per_packet_f1.items():
+        print(f"    {name}: F1 {f1:.4f}")
+
+
+def _print_politax_summary(run: _EvalRun) -> None:
+    from packet.eval import politax
+    from packet.eval.metrics import micro_boundary_prf
+
+    print(politax.format_census(run.census))
+    if run.gold_totals is not None:
+        print(politax.format_gold_label_totals(*run.gold_totals))
+    mp, mr, mf = micro_boundary_prf(run.results)
+    print(f"micro boundary P {mp:.2f} R {mr:.2f} F1 {mf:.2f} (all {len(run.results)} packets)")
+    if run.ocr_stats is not None:
+        st = run.ocr_stats.as_dict()
+        print(f"ocr cache (GMA-274 opt-in): pages used {st['pages_used']} "
+              f"missing {st['pages_missing']} truncated {st['pages_truncated']}")
+    if run.holdout_baseline is not None:
+        from packet.eval.politax_split import format_holdout_baseline
+
+        print(format_holdout_baseline(run.holdout_baseline))
+    if run.holdout_scorer is not None:
+        _print_holdout_scorer(run.holdout_scorer)
+
+
+def _print_gate(run: _EvalRun, gate, min_f1) -> int:
+    scope = " holdout" if run.macro_results is not None else ""
     print(f"macro{scope} F1 {gate.macro_f1:.2f} (min {gate.min_macro_f1:.2f}; "
           f"per-fixture min {min_f1:.2f})")
     if gate.passed:
@@ -760,6 +781,33 @@ def _cmd_eval(args) -> int:
     for f in gate.failures:
         print(f"  - {f}")
     return 1
+
+
+def _cmd_eval(args) -> int:
+    from packet.eval import run as ev
+
+    root = Path(args.dir) if args.dir else None
+    viz_dir = Path(args.viz_dir) if args.viz_dir else None
+    viz_kw = {"viz_dir": viz_dir} if viz_dir is not None else {}
+    min_f1, min_macro = _eval_thresholds(args, ev)
+    err = _eval_arg_error(args)
+    if err:
+        print(err, file=sys.stderr)
+        return 2
+    pipe = _pipeline_for_boundary_weights(args.boundary_weights)
+    if pipe is None:
+        return 2
+    run = _eval_collect(args, ev, pipe, root, viz_kw)
+    if viz_dir is not None:
+        ev.write_fail_mode_viz(root, viz_dir)
+    gate = ev.evaluate_gate(run.results, min_f1=min_f1, min_macro_f1=min_macro,
+                            macro_results=run.macro_results)
+    if args.json:
+        return _eval_json(args, ev, run, gate, min_f1)
+    _print_eval_table(run.results, min_f1)
+    if run.census is not None:
+        _print_politax_summary(run)
+    return _print_gate(run, gate, min_f1)
 
 
 def _cmd_eval_plan(args) -> int:
