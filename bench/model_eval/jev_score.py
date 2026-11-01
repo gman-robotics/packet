@@ -66,6 +66,11 @@ def render_text(text: str, width: int = 1000, size: int = 28) -> Image.Image:
     return img
 
 
+def render_width(img) -> int:
+    """Width passed to render_text. parity and score_page must use the same one."""
+    return max(400, min(1400, img.width))
+
+
 class Jev:
     def __init__(self):
         if os.path.realpath(sys.prefix) != os.path.realpath(SANDBOX) or os.environ.get("HF_HUB_OFFLINE") != "1":
@@ -99,7 +104,7 @@ def parity(root: str) -> None:
         c = json.loads(case.read_text()); blk = Image.open(case.parent / c["block_image"])
         for cand in c["candidates"]:
             row = {"case": c["case_id"], "role": cand["role"], "observed": c["observed_prob_yes"].get(cand["role"]),
-                   "pil_render": round(j.score(blk, render_text(cand["text"], blk.width), cand["text"]), 5)}
+                   "pil_render": round(j.score(blk, render_text(cand["text"], render_width(blk)), cand["text"]), 5)}
             if c.get("reference_render_of") == cand["role"]:
                 row["ref_render"] = round(j.score(blk, Image.open(case.parent / c["reference_render"]), cand["text"]), 5)
             print(json.dumps(row, ensure_ascii=False), flush=True)
@@ -107,7 +112,7 @@ def parity(root: str) -> None:
 
 # ---- regions -----------------------------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parents[2]
-TAG = re.compile(r"!\[([a-z_]+)\+?\]\((\d+),(\d+),(\d+),(\d+)\)")
+TAG = re.compile(r"!\[([a-z_]+)\+?\]\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)")
 NO_TEXT = {"image", "header_image", "footer_image"}  # picture regions: nothing to verify, never scored or dropped
 SKIP_PAGE_SCORE = 12000  # chars; page-level candidates longer than this are recorded unscored (latency guard)
 
@@ -121,10 +126,26 @@ def regions(raw: str):
     return out
 
 
+def norm_bbox(bb):
+    """Clamp each coord to 0..1000 and order corners, as ocr_parse does."""
+    x0, y0, x1, y1 = (min(1000, max(0, int(v))) for v in bb)
+    return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
+
+
+def _min_span(center, limit):
+    """One pixel around center, kept inside the image."""
+    if limit <= 0: return 0, 0
+    px = min(limit - 1, max(0, int(center)))
+    return px, px + 1
+
+
 def crop(img: Image.Image, bb, pad: int = 6) -> Image.Image:
-    w, h = img.size; x0, y0, x1, y1 = bb
-    box = (max(0, int(x0 * w / 1000) - pad), max(0, int(y0 * h / 1000) - pad), min(w, int(x1 * w / 1000) + pad), min(h, int(y1 * h / 1000) + pad))
-    return img.crop(box) if box[2] > box[0] + 2 and box[3] > box[1] + 2 else img
+    w, h = img.size; x0, y0, x1, y1 = norm_bbox(bb)
+    box = [max(0, int(x0 * w / 1000) - pad), max(0, int(y0 * h / 1000) - pad),
+           min(w, int(x1 * w / 1000) + pad), min(h, int(y1 * h / 1000) + pad)]
+    if box[2] <= box[0]: box[0], box[2] = _min_span((x0 + x1) / 2 * w / 1000, w)
+    if box[3] <= box[1]: box[1], box[3] = _min_span((y0 + y1) / 2 * h / 1000, h)
+    return img.crop(tuple(box))
 
 
 def page_text(raw: str) -> str:
@@ -138,7 +159,7 @@ def score_page(j: Jev, img: Image.Image, raw: str, page_level: bool = True):
         if lab in NO_TEXT or not txt:
             rows.append({"kind": "block", "i": k, "label": lab, "bbox": bb, "prob": None, "chars": len(txt)}); continue
         c = crop(img, bb); t = time.perf_counter()
-        p = j.score(c, render_text(txt, max(400, min(1400, c.width))), txt)
+        p = j.score(c, render_text(txt, render_width(c)), txt)
         rows.append({"kind": "block", "i": k, "label": lab, "bbox": bb, "prob": p, "chars": len(txt), "s": time.perf_counter() - t})
     if page_level:
         txt = page_text(raw); t = time.perf_counter()
@@ -167,6 +188,24 @@ def testset(runs):
         print(json.dumps({"run": str(run), "pages": len(out), "scored": n, "wall_s": round(wall, 1), "pages_per_min": round(60 * len(out) / wall, 2)}), flush=True)
 
 
+def resume_jsonl(raw: bytes):
+    """Done keys and the byte offset of the last good line end.
+
+    A truncated or malformed final line is dropped. A bad earlier line raises.
+    """
+    done, end, i = set(), 0, 0
+    while i < len(raw):
+        nl = raw.find(b"\n", i)
+        if nl < 0: return done, end  # truncated final line has no line end
+        try:
+            done.add(json.loads(raw[i:nl])["key"])
+        except (json.JSONDecodeError, KeyError, TypeError, UnicodeDecodeError):
+            if nl + 1 < len(raw): raise
+            return done, end
+        end, i = nl + 1, nl + 1
+    return done, end
+
+
 def politax(data: str, out: str, stride: int = 1, page_level: bool = True):
     """Holdout (report only): score OCR records in DATA/ocr; resumable jsonl at OUT. Never trains on these rows."""
     sys.path.insert(0, str(ROOT / "src"))
@@ -175,7 +214,11 @@ def politax(data: str, out: str, stride: int = 1, page_level: bool = True):
     from packet.source import PdfPageSource
     data, outp = Path(data).expanduser(), Path(out).expanduser()
     m = pt.load_manifest(); hold = holdout_file_names(m)
-    done = {json.loads(l)["key"] for l in outp.read_text().splitlines()} if outp.exists() else set()
+    done = set()
+    if outp.exists():
+        raw = outp.read_bytes(); done, end = resume_jsonl(raw)
+        if end < len(raw):
+            with outp.open("rb+") as fh: fh.truncate(end)
     j = Jev(); n = 0; t0 = time.perf_counter()
     with outp.open("a") as fo:
         for d in m.docs:
@@ -185,7 +228,11 @@ def politax(data: str, out: str, stride: int = 1, page_level: bool = True):
             for k, f in enumerate(recs):
                 key = f"{d.sha256}/{f.name}"
                 if k % stride or key in done: continue
-                if src is None: src = PdfPageSource(Path.home() / ".cache/packet/politax" / d.file_name)
+                if src is None:
+                    pdf = data / d.file_name
+                    if not pdf.is_file():
+                        sys.exit(f"missing politax PDF: {pdf} (link PDFs into the data dir with exp_a.politax_link)")
+                    src = PdfPageSource(pdf)
                 rec = json.loads(f.read_text()); idx = int(f.stem[1:])
                 img = src.render(idx, longest_px=1540).convert("RGB"); t = time.perf_counter()
                 rows = score_page(j, img, rec["raw"], page_level)
