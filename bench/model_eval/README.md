@@ -41,8 +41,10 @@ PY=/Users/Shared/gman-sandbox/lfm3-mps/venv/bin/python; export HF_HUB_OFFLINE=1
 $PY bench/model_eval/jev_score.py parity <upstream>/examples
 $PY bench/model_eval/jev_score.py testset ~/.cache/packet/model-eval/p1/runs/{lighton-1b-grounding,lfm25x,lfm3-mps,minicpm-mps}
 .venv/bin/python bench/model_eval/jev_a2.py dev                    # thresholds from dev only
-STRIDE=2 PAGE_LEVEL=0 $PY bench/model_eval/jev_score.py politax ~/.cache/packet/politax P1/a2/politax-lighton.jsonl   # read-only source
+STRIDE=1 PAGE_LEVEL=0 $PY bench/model_eval/jev_score.py politax ~/.cache/packet/politax P1/a2/politax-lighton.jsonl   # drop path: every holdout page; read-only source
 .venv/bin/python bench/model_eval/jev_a2.py drop-testset T; .venv/bin/python bench/model_eval/jev_a2.py drop-politax T
+STRIDE=2 PAGE_LEVEL=0 $PY bench/model_eval/jev_score.py politax ~/.cache/packet/politax P1/a2/politax-lighton.jsonl   # report-only for holdout
+.venv/bin/python bench/model_eval/jev_a2.py holdout T_BLOCK T_PAGE
 .venv/bin/python bench/model_eval/exp_a.py politax-eval P1/politax-lighton-jevdrop
 ```
 Regions: LightOn grounding output is scored per `![label](bbox)` block, cropped from the page image. Untagged engines

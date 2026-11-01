@@ -45,41 +45,81 @@ def tune(rows):
     return best
 
 
+def accepted_cer(cer, prob, t):
+    """cer_all and of use pages with a non-None page prob. unscored is the rest of cer."""
+    base = [k for k in cer if prob.get(k) is not None]
+    acc = [cer[k] for k in base if prob[k] >= t]
+    vals = [cer[k] for k in base]
+    return {"cer_all": sum(vals) / len(vals) if vals else None,
+            "cer_accepted": sum(acc) / len(acc) if acc else None,
+            "accepted": len(acc), "of": len(base), "unscored": len(cer) - len(base)}
+
+
+def _load_engine(e):
+    jv_doc = json.loads((RUNS / e / "_jev.json").read_text())
+    cer = {r["page"]: r["cer"] for r in json.loads((RUNS / e / "_scores.json").read_text())["pages"] if r.get("cer") is not None}
+    return jv_doc, cer
+
+
+def _page_gold(e, page):
+    blocks = regions((RUNS / e / f"{page}.txt").read_text()); g = sc.gold_for(page)
+    return blocks, (sc.norm(sc.strip(g["full_text"])) if g else None)
+
+
+def _block_row(r, blocks, gold, page):
+    """(prob, ok, page) for a scored block whose page has gold; None otherwise."""
+    if gold is None: return None
+    t = sc.norm(sc.strip(blocks[r["i"]][2]))
+    return (r["prob"], t in gold, page) if t else None
+
+
+def _label_rows(e, jv, cer):
+    """Labeled (prob, ok, page) rows for pages and blocks of one engine."""
+    pr, br = [], []
+    for page, rows in jv.items():
+        blocks, gold = _page_gold(e, page)
+        for r in rows:
+            if r["prob"] is None: continue
+            if r["kind"] == "page" and page in cer: pr.append((r["prob"], cer[page] <= PAGE_OK_CER, page))
+            if r["kind"] == "block":
+                b = _block_row(r, blocks, gold, page)
+                if b: br.append(b)
+    return pr, br
+
+
+def _split_auroc(rows):
+    return auroc([r[0] for r in rows if r[1]], [r[0] for r in rows if not r[1]])
+
+
+def _engine_summary(pr, br):
+    return {"pages": len(pr), "page_err": sum(not ok for _, ok, _ in pr), "page_auroc": _split_auroc(pr),
+            "blocks": len(br), "block_err": sum(not ok for _, ok, _ in br), "block_auroc": _split_auroc(br),
+            "page_prob_median": sorted(p for p, _, _ in pr)[len(pr) // 2] if pr else None,
+            "pages_detail": sorted([(page, round(p, 4), ok) for p, ok, page in pr], key=lambda x: x[1])}
+
+
+def _pooled(rows):
+    return {"n": len(rows), "err": sum(not ok for _, ok in rows), "auroc": _split_auroc(rows), "tuned": tune(rows)}
+
+
+def _page_probs(jv):
+    return {k: next((r["prob"] for r in v if r["kind"] == "page"), None) for k, v in jv.items()}
+
+
 def dev():
     out = {"engines": {}, "label_rules": {"block": "substring of gold", "page": f"CER<={PAGE_OK_CER}"}}
-    page_rows, block_rows = [], []
+    page_rows, block_rows, loaded = [], [], {}
     for e in ENGINES:
-        jv = json.loads((RUNS / e / "_jev.json").read_text())["pages"]
-        cer = {r["page"]: r["cer"] for r in json.loads((RUNS / e / "_scores.json").read_text())["pages"] if r.get("cer") is not None}
-        pr, br = [], []
-        for page, rows in jv.items():
-            raw = (RUNS / e / f"{page}.txt").read_text(); blocks = regions(raw); g = sc.gold_for(page)
-            gold = sc.norm(sc.strip(g["full_text"])) if g else None
-            for r in rows:
-                if r["prob"] is None: continue
-                if r["kind"] == "page" and page in cer: pr.append((r["prob"], cer[page] <= PAGE_OK_CER, page))
-                if r["kind"] == "block" and gold is not None:
-                    t = sc.norm(sc.strip(blocks[r["i"]][2]))
-                    if t: br.append((r["prob"], t in gold, page))
+        jv_doc, cer = loaded[e] = _load_engine(e)
+        pr, br = _label_rows(e, jv_doc["pages"], cer)
         page_rows += [(p, ok) for p, ok, _ in pr]; block_rows += [(p, ok) for p, ok, _ in br]
-        out["engines"][e] = {"pages": len(pr), "page_err": sum(not ok for _, ok, _ in pr),
-                             "page_auroc": auroc([p for p, ok, _ in pr if ok], [p for p, ok, _ in pr if not ok]),
-                             "blocks": len(br), "block_err": sum(not ok for _, ok, _ in br),
-                             "block_auroc": auroc([p for p, ok, _ in br if ok], [p for p, ok, _ in br if not ok]),
-                             "page_prob_median": sorted(p for p, _, _ in pr)[len(pr) // 2] if pr else None,
-                             "pages_detail": sorted([(page, round(p, 4), ok) for p, ok, page in pr], key=lambda x: x[1])}
-    out["pooled_page"] = {"n": len(page_rows), "err": sum(not ok for _, ok in page_rows),
-                          "auroc": auroc([p for p, ok in page_rows if ok], [p for p, ok in page_rows if not ok]), "tuned": tune(page_rows)}
-    out["pooled_block"] = {"n": len(block_rows), "err": sum(not ok for _, ok in block_rows),
-                           "auroc": auroc([p for p, ok in block_rows if ok], [p for p, ok in block_rows if not ok]), "tuned": tune(block_rows)}
+        out["engines"][e] = _engine_summary(pr, br)
+    out["pooled_page"] = _pooled(page_rows); out["pooled_block"] = _pooled(block_rows)
+    t = out["pooled_page"]["tuned"]["t"]
     for e in ENGINES:  # effective error: CER over pages accepted at the tuned page threshold (flagged pages go to review)
-        jv = json.loads((RUNS / e / "_jev.json").read_text())["pages"]
-        cer = {r["page"]: r["cer"] for r in json.loads((RUNS / e / "_scores.json").read_text())["pages"] if r.get("cer") is not None}
-        t = out["pooled_page"]["tuned"]["t"]; prob = {k: next((r["prob"] for r in v if r["kind"] == "page"), None) for k, v in jv.items()}
-        acc = [cer[k] for k in cer if prob.get(k) is not None and prob[k] >= t]
-        out["engines"][e].update({"cer_all": sum(cer.values()) / len(cer), "cer_accepted": sum(acc) / len(acc) if acc else None,
-                                  "accepted": len(acc), "of": len(cer),
-                                  "jev_pages_per_min": round(60 * len(jv) / json.loads((RUNS / e / "_jev.json").read_text())["wall_s"], 2)})
+        jv_doc, cer = loaded[e]
+        out["engines"][e].update(accepted_cer(cer, _page_probs(jv_doc["pages"]), t))
+        out["engines"][e]["jev_pages_per_min"] = round(60 * len(jv_doc["pages"]) / jv_doc["wall_s"], 2)
     A2.mkdir(exist_ok=True); (A2 / "dev.json").write_text(json.dumps(out, indent=1)); return out
 
 
@@ -106,20 +146,30 @@ def drop_testset(t):
     print(json.dumps({"dst": str(dst), "dropped_blocks": n}))
 
 
+def missing_score_count(keys, scored):
+    """Holdout records with no jsonl score. drop-politax exits when this is not zero."""
+    return sum(k not in scored for k in keys)
+
+
 def drop_politax(t):
     sys.path.insert(0, str(ROOT / "src")); sys.path.insert(0, str(Path(__file__).parent))
     import exp_a
-    dst = exp_a.candidate_dir(P1 / "politax-lighton-jevdrop"); exp_a.politax_link(exp_a.LIGHTON_CACHE, dst)
-    sc_rows = [json.loads(l) for l in (A2 / "politax-lighton.jsonl").read_text().splitlines()]
-    probs = {r["key"]: {x["i"]: x["prob"] for x in r["rows"] if x["kind"] == "block"} for r in sc_rows}
+
     from packet.eval import politax
     from packet.eval.politax_split import holdout_file_names
-    m = politax.load_manifest(); hold = holdout_file_names(m); n = recs = 0
-    for d in m.docs:
-        if d.file_name not in hold: continue
-        for f in sorted((exp_a.LIGHTON_CACHE / "ocr" / d.sha256).glob("p*.json")):
-            rec = json.loads(f.read_text()); rec["raw"], k = _drop(rec["raw"], probs.get(f"{d.sha256}/{f.name}", {}), t)
-            o = dst / "ocr" / d.sha256 / f.name; o.parent.mkdir(parents=True, exist_ok=True); o.write_text(json.dumps(rec)); n += k; recs += 1
+    sc_rows = [json.loads(l) for l in (A2 / "politax-lighton.jsonl").read_text().splitlines()]
+    probs = {r["key"]: {x["i"]: x["prob"] for x in r["rows"] if x["kind"] == "block"} for r in sc_rows}
+    m = politax.load_manifest(); hold = holdout_file_names(m)
+    jobs = [(d, f) for d in m.docs if d.file_name in hold
+            for f in sorted((exp_a.LIGHTON_CACHE / "ocr" / d.sha256).glob("p*.json"))]
+    missing = missing_score_count((f"{d.sha256}/{f.name}" for d, f in jobs), probs)
+    if missing: sys.exit(f"drop-politax: {missing} holdout records have no scores")
+    dst = exp_a.candidate_dir(P1 / "politax-lighton-jevdrop"); exp_a.politax_link(exp_a.LIGHTON_CACHE, dst)
+    n = recs = 0
+    for d, f in jobs:
+        rec = json.loads(f.read_text()); key = f"{d.sha256}/{f.name}"
+        rec["raw"], k = _drop(rec["raw"], probs[key], t)
+        o = dst / "ocr" / d.sha256 / f.name; o.parent.mkdir(parents=True, exist_ok=True); o.write_text(json.dumps(rec)); n += k; recs += 1
     print(json.dumps({"dst": str(dst), "records": recs, "dropped_blocks": n, "scored_pages": len(probs)}))
 
 
