@@ -1,5 +1,7 @@
 """GMA-446: pure helpers in the Jev eval scripts. No model load, no ~/.cache."""
+import importlib
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -9,10 +11,15 @@ import pytest
 
 pytest.importorskip("PIL")
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench" / "model_eval"))
-import jev_a2
-import jev_score
 from PIL import Image, ImageDraw
+
+# Mutation workers put the mutated tree first on PYTHONPATH; prefer it over the checkout.
+_REPO = Path(__file__).resolve().parents[1]
+for _root in reversed([*map(Path, filter(None, os.environ.get("PYTHONPATH", "").split(os.pathsep))), _REPO]):
+    if (_root / "bench" / "model_eval").is_dir():
+        sys.path.insert(0, str(_root / "bench" / "model_eval"))
+jev_score = importlib.import_module("jev_score")
+jev_a2 = importlib.import_module("jev_a2")
 
 
 def test_tag_groups_and_regions_keep_negative_coords():
