@@ -206,6 +206,34 @@ def resume_jsonl(raw: bytes):
     return done, end
 
 
+def _resume(outp: Path) -> set:
+    """Done keys from OUT; a truncated final line is cut off so appends start on a clean line."""
+    if not outp.exists(): return set()
+    raw = outp.read_bytes(); done, end = resume_jsonl(raw)
+    if end < len(raw):
+        with outp.open("rb+") as fh: fh.truncate(end)
+    return done
+
+
+def _todo(data: Path, sha: str, stride: int, done: set):
+    """(key, record path) for the records of one doc that this run still has to score."""
+    recs = sorted((data / "ocr" / sha).glob("p*.json"))
+    return [(f"{sha}/{f.name}", f) for k, f in enumerate(recs) if not k % stride and f"{sha}/{f.name}" not in done]
+
+
+def _open_pdf(data: Path, file_name: str, source_cls):
+    pdf = data / file_name
+    if not pdf.is_file(): sys.exit(f"missing politax PDF: {pdf} (link PDFs into the data dir with exp_a.politax_link)")
+    return source_cls(pdf)
+
+
+def _score_record(j, src, key: str, f: Path, file_name: str, page_level: bool) -> dict:
+    rec = json.loads(f.read_text()); idx = int(f.stem[1:])
+    img = src.render(idx, longest_px=1540).convert("RGB"); t = time.perf_counter()
+    rows = score_page(j, img, rec["raw"], page_level)
+    return {"key": key, "file": file_name, "page": idx, "s": time.perf_counter() - t, "rows": rows}
+
+
 def politax(data: str, out: str, stride: int = 1, page_level: bool = True):
     """Holdout (report only): score OCR records in DATA/ocr; resumable jsonl at OUT. Never trains on these rows."""
     sys.path.insert(0, str(ROOT / "src"))
@@ -214,30 +242,16 @@ def politax(data: str, out: str, stride: int = 1, page_level: bool = True):
     from packet.source import PdfPageSource
     data, outp = Path(data).expanduser(), Path(out).expanduser()
     m = pt.load_manifest(); hold = holdout_file_names(m)
-    done = set()
-    if outp.exists():
-        raw = outp.read_bytes(); done, end = resume_jsonl(raw)
-        if end < len(raw):
-            with outp.open("rb+") as fh: fh.truncate(end)
+    done = _resume(outp)
     j = Jev(); n = 0; t0 = time.perf_counter()
     with outp.open("a") as fo:
-        for d in m.docs:
-            if d.file_name not in hold: continue
-            recs = sorted((data / "ocr" / d.sha256).glob("p*.json"))
-            src = None
-            for k, f in enumerate(recs):
-                key = f"{d.sha256}/{f.name}"
-                if k % stride or key in done: continue
-                if src is None:
-                    pdf = data / d.file_name
-                    if not pdf.is_file():
-                        sys.exit(f"missing politax PDF: {pdf} (link PDFs into the data dir with exp_a.politax_link)")
-                    src = PdfPageSource(pdf)
-                rec = json.loads(f.read_text()); idx = int(f.stem[1:])
-                img = src.render(idx, longest_px=1540).convert("RGB"); t = time.perf_counter()
-                rows = score_page(j, img, rec["raw"], page_level)
-                fo.write(json.dumps({"key": key, "file": d.file_name, "page": idx, "s": time.perf_counter() - t, "rows": rows}) + "\n"); fo.flush(); n += 1
-            if src is not None: src.close()
+        for d in (d for d in m.docs if d.file_name in hold):
+            todo = _todo(data, d.sha256, stride, done)
+            if not todo: continue
+            src = _open_pdf(data, d.file_name, PdfPageSource)
+            for key, f in todo:
+                fo.write(json.dumps(_score_record(j, src, key, f, d.file_name, page_level)) + "\n"); fo.flush(); n += 1
+            src.close()
     print(json.dumps({"pages": n, "wall_s": round(time.perf_counter() - t0, 1)}))
 
 

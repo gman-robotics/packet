@@ -1,7 +1,9 @@
 """GMA-446: pure helpers in the Jev eval scripts. No model load, no ~/.cache."""
 import json
 import sys
+import types
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -133,3 +135,216 @@ def test_missing_score_count():
     assert jev_a2.missing_score_count(keys, {"a/p0.json": {0: 0.5}}) == 2
     assert jev_a2.missing_score_count(keys, set(keys)) == 0
     assert jev_a2.missing_score_count([], {"a": 1}) == 0
+
+
+# ---- orchestration paths, with a fake model and tmp dirs ---------------------------------------------------
+
+
+@pytest.fixture
+def fake_render(monkeypatch):
+    """render_text needs a macOS font; tests only need the requested width."""
+    monkeypatch.setattr(jev_score, "render_text", lambda text, width=1000, size=28: Image.new("RGB", (width, 10)))
+
+
+class FakeJev:
+    load_s = 1.5
+
+    def __init__(self, probs=None):
+        self.calls = []
+        self.probs = list(probs or [])
+
+    def score(self, original, render, text):
+        self.calls.append((original.size, render.size, text))
+        return self.probs.pop(0) if self.probs else 0.25
+
+
+def test_score_page_rows(fake_render, monkeypatch):
+    j = FakeJev([0.9, 0.4])
+    img = Image.new("RGB", (1000, 1000), "white")
+    raw = "![text](0,0,500,500)\nhello\n![image](0,0,10,10)\n![title](500,500,1000,1000)\nT"
+    rows = jev_score.score_page(j, img, raw)
+    assert [(r["kind"], r.get("i"), r["prob"]) for r in rows] == [
+        ("block", 0, 0.9), ("block", 1, None), ("block", 2, 0.4), ("page", None, 0.25)]
+    assert j.calls[0][0] == (506, 506) and j.calls[0][1][0] == 506
+    assert j.calls[-1][2] == "hello\n\n\nT"
+    long_rows = jev_score.score_page(FakeJev(), img, "x" * (jev_score.SKIP_PAGE_SCORE + 1))
+    assert long_rows == [{"kind": "page", "prob": None, "chars": jev_score.SKIP_PAGE_SCORE + 1, "skipped": "too_long"}]
+    assert jev_score.score_page(FakeJev(), img, raw, page_level=False)[-1]["kind"] == "block"
+
+
+def test_parity_uses_render_width(fake_render, monkeypatch, tmp_path, capsys):
+    case = tmp_path / "c1"; case.mkdir()
+    Image.new("RGB", (200, 50)).save(case / "blk.png"); Image.new("RGB", (30, 30)).save(case / "ref.png")
+    (case / "case.json").write_text(json.dumps({
+        "case_id": "c1", "block_image": "blk.png", "observed_prob_yes": {"good": 0.8},
+        "reference_render_of": "good", "reference_render": "ref.png",
+        "candidates": [{"role": "good", "text": "a"}, {"role": "bad", "text": "b"}]}))
+    fake = FakeJev([0.5, 0.6, 0.7])
+    monkeypatch.setattr(jev_score, "Jev", lambda: fake)
+    jev_score.parity(str(tmp_path))
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "load_s 1.5"
+    assert json.loads(lines[1]) == {"case": "c1", "role": "good", "observed": 0.8, "pil_render": 0.5, "ref_render": 0.6}
+    assert json.loads(lines[2]) == {"case": "c1", "role": "bad", "observed": None, "pil_render": 0.7}
+    assert fake.calls[0][1][0] == 400 and fake.calls[1][1] == (30, 30)
+
+
+def test_testset_writes_jev_json(fake_render, monkeypatch, tmp_path, capsys):
+    root = tmp_path / "root"
+    for d in ("packet", "synth", "public"): (root / "testset" / d).mkdir(parents=True)
+    Image.new("RGB", (100, 100)).save(root / "testset" / "synth" / "pg1.png")
+    (root / "testset" / "synth" / "notes.txt").write_text("x")
+    run = tmp_path / "run"; run.mkdir()
+    (run / "pg1.txt").write_text("hello"); (run / "other.txt").write_text("skip")
+    monkeypatch.setattr(jev_score, "ROOT", root); monkeypatch.setattr(jev_score, "Jev", lambda: FakeJev([0.3]))
+    jev_score.testset([str(run)])
+    doc = json.loads((run / "_jev.json").read_text())
+    assert list(doc["pages"]) == ["pg1"] and doc["pages"]["pg1"][0]["prob"] == 0.3 and doc["load_s"] == 1.5
+    assert json.loads(capsys.readouterr().out)["scored"] == 1
+
+
+class FakeSrc:
+    opened: ClassVar[list] = []
+
+    def __init__(self, pdf):
+        FakeSrc.opened.append(pdf); self.closed = False
+
+    def render(self, idx, longest_px):
+        assert longest_px == 1540
+        return Image.new("RGB", (100 + idx, 100))
+
+    def close(self):
+        self.closed = True
+
+
+def _fake_packet(monkeypatch, docs, hold):
+    m = types.SimpleNamespace(docs=docs)
+    pt = types.ModuleType("packet.eval.politax"); pt.load_manifest = lambda: m
+    split = types.ModuleType("packet.eval.politax_split"); split.holdout_file_names = lambda _m: hold
+    src = types.ModuleType("packet.source"); src.PdfPageSource = FakeSrc
+    ev = types.ModuleType("packet.eval"); ev.politax = pt
+    monkeypatch.setitem(sys.modules, "packet.eval", ev)
+    monkeypatch.setitem(sys.modules, "packet.eval.politax", pt)
+    monkeypatch.setitem(sys.modules, "packet.eval.politax_split", split)
+    monkeypatch.setitem(sys.modules, "packet.source", src)
+
+
+def _ocr(data, sha, n):
+    (data / "ocr" / sha).mkdir(parents=True)
+    for i in range(n): (data / "ocr" / sha / f"p{i:05d}.json").write_text(json.dumps({"raw": f"page {i}"}))
+
+
+def test_politax_scores_resumes_and_strides(fake_render, monkeypatch, tmp_path, capsys):
+    data = tmp_path / "data"; _ocr(data, "s1", 4); _ocr(data, "s2", 1)
+    (data / "a.pdf").write_text("pdf")
+    docs = [types.SimpleNamespace(file_name="a.pdf", sha256="s1"), types.SimpleNamespace(file_name="b.pdf", sha256="s2")]
+    _fake_packet(monkeypatch, docs, {"a.pdf"})
+    monkeypatch.setattr(jev_score, "Jev", lambda: FakeJev())
+    out = tmp_path / "o.jsonl"
+    out.write_bytes(b'{"key":"s1/p00000.json"}\n{"key":"s1/p0')
+    FakeSrc.opened = []
+    jev_score.politax(str(data), str(out), stride=2, page_level=True)
+    lines = out.read_text().splitlines()
+    assert json.loads(lines[0]) == {"key": "s1/p00000.json"}
+    rows = [json.loads(x) for x in lines[1:]]
+    assert [(r["key"], r["file"], r["page"]) for r in rows] == [("s1/p00002.json", "a.pdf", 2)]
+    assert rows[0]["rows"][-1] == {"kind": "page", "prob": 0.25, "chars": 6, "s": rows[0]["rows"][-1]["s"]}
+    assert FakeSrc.opened == [data / "a.pdf"]
+    assert json.loads(capsys.readouterr().out)["pages"] == 1
+    FakeSrc.opened = []
+    jev_score.politax(str(data), str(out), stride=2)
+    assert FakeSrc.opened == [] and len(out.read_text().splitlines()) == 2
+
+
+def test_politax_missing_pdf_exits(monkeypatch, tmp_path):
+    data = tmp_path / "data"; _ocr(data, "s1", 1)
+    _fake_packet(monkeypatch, [types.SimpleNamespace(file_name="a.pdf", sha256="s1")], {"a.pdf"})
+    monkeypatch.setattr(jev_score, "Jev", lambda: FakeJev())
+    with pytest.raises(SystemExit, match="missing politax PDF: .*a.pdf"):
+        jev_score.politax(str(data), str(tmp_path / "o.jsonl"))
+
+
+def _a2_dirs(monkeypatch, tmp_path):
+    runs, a2 = tmp_path / "runs", tmp_path / "a2"
+    monkeypatch.setattr(jev_a2, "RUNS", runs); monkeypatch.setattr(jev_a2, "A2", a2); monkeypatch.setattr(jev_a2, "P1", tmp_path)
+    return runs, a2
+
+
+def test_dev_labels_and_accepted_cer(monkeypatch, tmp_path):
+    runs, a2 = _a2_dirs(monkeypatch, tmp_path)
+    monkeypatch.setattr(jev_a2, "ENGINES", ["e1"])
+    gold = {"p1": {"full_text": "hello world"}, "p2": {"full_text": "foo"}}
+    monkeypatch.setattr(jev_a2.sc, "gold_for", gold.get)
+    e = runs / "e1"; e.mkdir(parents=True)
+    (e / "p1.txt").write_text("![text](0,0,1,1)\nhello\n![text](0,0,1,1)\nnope\n![text](0,0,1,1)\n")
+    (e / "p2.txt").write_text("![text](0,0,1,1)\nfoo"); (e / "p3.txt").write_text("![text](0,0,1,1)\nx")
+    pages = {"p1": [{"kind": "block", "i": 0, "prob": 0.9}, {"kind": "block", "i": 1, "prob": 0.2},
+                    {"kind": "block", "i": 2, "prob": 0.5}, {"kind": "page", "prob": 0.8}],
+             "p2": [{"kind": "page", "prob": 0.1}, {"kind": "block", "i": 0, "prob": None}],
+             "p3": [{"kind": "block", "i": 0, "prob": 0.4}, {"kind": "page", "prob": None}]}
+    (e / "_jev.json").write_text(json.dumps({"wall_s": 30, "pages": pages}))
+    (e / "_scores.json").write_text(json.dumps({"pages": [{"page": "p1", "cer": 0.0}, {"page": "p2", "cer": 0.5},
+                                                          {"page": "p3", "cer": 0.1}, {"page": "p4"}]}))
+    out = jev_a2.dev()
+    eng = out["engines"]["e1"]
+    assert (eng["pages"], eng["page_err"], eng["blocks"], eng["block_err"]) == (2, 1, 2, 1)
+    assert eng["page_auroc"] == 1.0 and eng["block_auroc"] == 1.0 and eng["page_prob_median"] == 0.8
+    assert eng["pages_detail"] == [("p2", 0.1, False), ("p1", 0.8, True)]
+    assert out["pooled_page"]["n"] == 2 and out["pooled_page"]["err"] == 1 and out["pooled_block"]["err"] == 1
+    t = out["pooled_page"]["tuned"]["t"]
+    assert 0.1 < t <= 0.8
+    assert {k: eng[k] for k in ("cer_all", "cer_accepted", "accepted", "of", "unscored")} == {
+        "cer_all": 0.25, "cer_accepted": 0.0, "accepted": 1, "of": 2, "unscored": 1}
+    assert eng["jev_pages_per_min"] == 6.0
+    assert json.loads((a2 / "dev.json").read_text())["engines"]["e1"]["of"] == 2
+
+
+def test_drop_testset_copies_and_drops(monkeypatch, tmp_path, capsys):
+    runs, _ = _a2_dirs(monkeypatch, tmp_path)
+    src = runs / "lighton-1b-grounding"; src.mkdir(parents=True)
+    (src / "p1.txt").write_text("![text](0,0,1,1)\nlow\n![text](0,0,1,1)\nhigh")
+    (src / "p1_labels.json").write_text("{}")
+    (src / "_jev.json").write_text(json.dumps({"pages": {"p1": [{"kind": "block", "i": 0, "prob": 0.1},
+                                                               {"kind": "block", "i": 1, "prob": 0.9},
+                                                               {"kind": "page", "prob": 0.0}]}}))
+    jev_a2.drop_testset(0.5)
+    dst = runs / "lighton-1b-grounding-jevdrop"
+    assert (dst / "p1.txt").read_text() == "![text](0,0,1,1)\nhigh" and (dst / "p1_labels.json").exists()
+    assert json.loads(capsys.readouterr().out)["dropped_blocks"] == 1
+
+
+def _fake_exp_a(monkeypatch, cache, made):
+    ex = types.ModuleType("exp_a"); ex.LIGHTON_CACHE = cache
+    ex.candidate_dir = lambda p: made.append(p) or p
+    ex.politax_link = lambda s, d: made.append(("link", s, d))
+    monkeypatch.setitem(sys.modules, "exp_a", ex)
+
+
+def test_drop_politax_writes_dropped_records(monkeypatch, tmp_path, capsys):
+    _, a2 = _a2_dirs(monkeypatch, tmp_path); a2.mkdir()
+    cache = tmp_path / "cache"; (cache / "ocr" / "s1").mkdir(parents=True)
+    (cache / "ocr" / "s1" / "p00000.json").write_text(json.dumps({"raw": "![text](0,0,1,1)\nbad\n![text](0,0,1,1)\nok", "n": 1}))
+    (cache / "ocr" / "s9").mkdir(); (cache / "ocr" / "s9" / "p00000.json").write_text("{}")
+    _fake_packet(monkeypatch, [types.SimpleNamespace(file_name="a.pdf", sha256="s1"),
+                               types.SimpleNamespace(file_name="z.pdf", sha256="s9")], {"a.pdf"})
+    made = []; _fake_exp_a(monkeypatch, cache, made)
+    (a2 / "politax-lighton.jsonl").write_text(json.dumps({"key": "s1/p00000.json", "rows": [
+        {"kind": "block", "i": 0, "prob": 0.1}, {"kind": "block", "i": 1, "prob": 0.8}, {"kind": "page", "prob": 0.0}]}) + "\n")
+    jev_a2.drop_politax(0.5)
+    dst = tmp_path / "politax-lighton-jevdrop"
+    assert made == [dst, ("link", cache, dst)]
+    assert json.loads((dst / "ocr" / "s1" / "p00000.json").read_text()) == {"raw": "![text](0,0,1,1)\nok", "n": 1}
+    assert not (dst / "ocr" / "s9").exists()
+    assert json.loads(capsys.readouterr().out) == {"dst": str(dst), "records": 1, "dropped_blocks": 1, "scored_pages": 1}
+
+
+def test_drop_politax_refuses_unscored_records(monkeypatch, tmp_path):
+    _, a2 = _a2_dirs(monkeypatch, tmp_path); a2.mkdir()
+    cache = tmp_path / "cache"; (cache / "ocr" / "s1").mkdir(parents=True)
+    for i in range(2): (cache / "ocr" / "s1" / f"p0000{i}.json").write_text(json.dumps({"raw": "x"}))
+    _fake_packet(monkeypatch, [types.SimpleNamespace(file_name="a.pdf", sha256="s1")], {"a.pdf"})
+    made = []; _fake_exp_a(monkeypatch, cache, made)
+    (a2 / "politax-lighton.jsonl").write_text(json.dumps({"key": "s1/p00000.json", "rows": []}) + "\n")
+    with pytest.raises(SystemExit, match="drop-politax: 1 holdout records have no scores"):
+        jev_a2.drop_politax(0.5)
+    assert made == []
