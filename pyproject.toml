@@ -17,7 +17,7 @@ docling = ["docling"]
 ocr-mlx = ["mlx", "mlx-vlm", "huggingface_hub", "Pillow"]
 ocr-paddle = ["paddleocr[doc-parser]", "paddlepaddle", "Pillow"]
 transformers = ["transformers>=4.44", "torch>=2.2"]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = ["pytest>=8.0", "ruff>=0.6", "Pillow", "jiwer"]  # Pillow + jiwer: tests/test_jev_eval.py (bench/model_eval)
 
 [project.scripts]
 packet = "packet.cli:main"
