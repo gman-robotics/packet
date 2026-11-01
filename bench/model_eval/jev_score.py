@@ -134,7 +134,6 @@ def norm_bbox(bb):
 
 def _min_span(center, limit):
     """One pixel around center, kept inside the image."""
-    if limit <= 0: return 0, 0
     px = min(limit - 1, max(0, int(center)))
     return px, px + 1
 
@@ -193,25 +192,23 @@ def resume_jsonl(raw: bytes):
 
     A truncated or malformed final line is dropped. A bad earlier line raises.
     """
-    done, end, i = set(), 0, 0
-    while i < len(raw):
-        nl = raw.find(b"\n", i)
-        if nl < 0: return done, end  # truncated final line has no line end
+    done, end = set(), 0
+    for line in raw.splitlines(keepends=True):
+        if not line.endswith(b"\n"): break  # truncated final line has no line end
         try:
-            done.add(json.loads(raw[i:nl])["key"])
+            done.add(json.loads(line)["key"])
         except (json.JSONDecodeError, KeyError, TypeError, UnicodeDecodeError):
-            if nl + 1 < len(raw): raise
-            return done, end
-        end, i = nl + 1, nl + 1
+            if end + len(line) < len(raw): raise
+            break
+        end += len(line)
     return done, end
 
 
 def _resume(outp: Path) -> set:
     """Done keys from OUT; a truncated final line is cut off so appends start on a clean line."""
     if not outp.exists(): return set()
-    raw = outp.read_bytes(); done, end = resume_jsonl(raw)
-    if end < len(raw):
-        with outp.open("rb+") as fh: fh.truncate(end)
+    done, end = resume_jsonl(outp.read_bytes())
+    with outp.open("rb+") as fh: fh.truncate(end)
     return done
 
 

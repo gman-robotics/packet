@@ -255,6 +255,7 @@ def test_politax_scores_resumes_and_strides(fake_render, monkeypatch, tmp_path, 
     assert json.loads(lines[0]) == {"key": "s1/p00000.json"}
     rows = [json.loads(x) for x in lines[1:]]
     assert [(r["key"], r["file"], r["page"]) for r in rows] == [("s1/p00002.json", "a.pdf", 2)]
+    assert 0 <= rows[0]["s"] < 60
     assert rows[0]["rows"][-1] == {"kind": "page", "prob": 0.25, "chars": 6, "s": rows[0]["rows"][-1]["s"]}
     assert FakeSrc.opened == [data / "a.pdf"]
     assert json.loads(capsys.readouterr().out)["pages"] == 1
@@ -290,7 +291,7 @@ def test_dev_labels_and_accepted_cer(monkeypatch, tmp_path):
              "p2": [{"kind": "page", "prob": 0.1}, {"kind": "block", "i": 0, "prob": None}],
              "p3": [{"kind": "block", "i": 0, "prob": 0.4}, {"kind": "page", "prob": None}]}
     (e / "_jev.json").write_text(json.dumps({"wall_s": 30, "pages": pages}))
-    (e / "_scores.json").write_text(json.dumps({"pages": [{"page": "p1", "cer": 0.0}, {"page": "p2", "cer": 0.5},
+    (e / "_scores.json").write_text(json.dumps({"pages": [{"page": "p1", "cer": 0.02}, {"page": "p2", "cer": 0.5},
                                                           {"page": "p3", "cer": 0.1}, {"page": "p4"}]}))
     out = jev_a2.dev()
     eng = out["engines"]["e1"]
@@ -301,7 +302,7 @@ def test_dev_labels_and_accepted_cer(monkeypatch, tmp_path):
     t = out["pooled_page"]["tuned"]["t"]
     assert 0.1 < t <= 0.8
     assert {k: eng[k] for k in ("cer_all", "cer_accepted", "accepted", "of", "unscored")} == {
-        "cer_all": 0.25, "cer_accepted": 0.0, "accepted": 1, "of": 2, "unscored": 1}
+        "cer_all": 0.26, "cer_accepted": 0.02, "accepted": 1, "of": 2, "unscored": 1}
     assert eng["jev_pages_per_min"] == 6.0
     assert json.loads((a2 / "dev.json").read_text())["engines"]["e1"]["of"] == 2
 
@@ -331,18 +332,20 @@ def test_drop_politax_writes_dropped_records(monkeypatch, tmp_path, capsys):
     _, a2 = _a2_dirs(monkeypatch, tmp_path); a2.mkdir()
     cache = tmp_path / "cache"; (cache / "ocr" / "s1").mkdir(parents=True)
     (cache / "ocr" / "s1" / "p00000.json").write_text(json.dumps({"raw": "![text](0,0,1,1)\nbad\n![text](0,0,1,1)\nok", "n": 1}))
+    (cache / "ocr" / "s1" / "p00001.json").write_text(json.dumps({"raw": "plain"}))
     (cache / "ocr" / "s9").mkdir(); (cache / "ocr" / "s9" / "p00000.json").write_text("{}")
     _fake_packet(monkeypatch, [types.SimpleNamespace(file_name="a.pdf", sha256="s1"),
                                types.SimpleNamespace(file_name="z.pdf", sha256="s9")], {"a.pdf"})
     made = []; _fake_exp_a(monkeypatch, cache, made)
     (a2 / "politax-lighton.jsonl").write_text(json.dumps({"key": "s1/p00000.json", "rows": [
-        {"kind": "block", "i": 0, "prob": 0.1}, {"kind": "block", "i": 1, "prob": 0.8}, {"kind": "page", "prob": 0.0}]}) + "\n")
+        {"kind": "block", "i": 0, "prob": 0.1}, {"kind": "block", "i": 1, "prob": 0.8}, {"kind": "page", "prob": 0.0}]}) + "\n"
+        + json.dumps({"key": "s1/p00001.json", "rows": []}) + "\n")
     jev_a2.drop_politax(0.5)
     dst = tmp_path / "politax-lighton-jevdrop"
     assert made == [dst, ("link", cache, dst)]
     assert json.loads((dst / "ocr" / "s1" / "p00000.json").read_text()) == {"raw": "![text](0,0,1,1)\nok", "n": 1}
     assert not (dst / "ocr" / "s9").exists()
-    assert json.loads(capsys.readouterr().out) == {"dst": str(dst), "records": 1, "dropped_blocks": 1, "scored_pages": 1}
+    assert json.loads(capsys.readouterr().out) == {"dst": str(dst), "records": 2, "dropped_blocks": 1, "scored_pages": 2}
 
 
 def test_drop_politax_refuses_unscored_records(monkeypatch, tmp_path):
@@ -355,3 +358,15 @@ def test_drop_politax_refuses_unscored_records(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="drop-politax: 1 holdout records have no scores"):
         jev_a2.drop_politax(0.5)
     assert made == []
+
+
+def test_mutation_edges(monkeypatch, tmp_path):
+    assert jev_a2.accepted_cer({"a": 0.2, "b": 0.4}, {"a": 0.9, "b": 0.9}, 0.5)["cer_accepted"] == pytest.approx(0.3)
+    assert jev_a2._split_auroc([(0.9, True, "a"), (0.1, False, "b"), (0.8, True, "c")]) == 1.0
+    assert jev_a2._split_auroc([(0.1, True, "a"), (0.9, False, "b")]) == 0.0
+    s = jev_a2._engine_summary([(0.9, True, "a"), (0.8, True, "b"), (0.1, False, "c")],
+                               [(0.9, True, "a"), (0.2, False, "a"), (0.3, False, "b")])
+    assert (s["page_err"], s["block_err"]) == (1, 2)
+    assert jev_a2._pooled([(0.9, True), (0.1, False), (0.2, False)])["err"] == 2
+    img = Image.new("RGB", (1000, 1000), "white")
+    assert jev_score.crop(img, (100, 500, 300, 500), pad=0).size == (200, 1)
