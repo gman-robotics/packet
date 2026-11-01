@@ -640,6 +640,7 @@ def _eval_thresholds(args, ev) -> tuple[float, float]:
 def _eval_politax(args, ev, pipe, viz_kw) -> _EvalRun:
     from packet.eval import politax
     from packet.eval.politax_split import compute_holdout_baseline
+    from packet.eval.politax_train import holdout_scorecard
 
     data = Path(args.data_dir) if args.data_dir else ev.DEFAULT_POLITAX_CACHE
     m, fixtures = ev.prepare_politax(data)
@@ -657,8 +658,6 @@ def _eval_politax(args, ev, pipe, viz_kw) -> _EvalRun:
         run.results, run.ocr_stats = run_with_ocr_cache(m, fixtures, data, **viz_kw)
         run.macro_results = holdout_results(m, fixtures, run.results)
     elif args.boundary_weights:
-        from packet.eval.politax_train import holdout_scorecard
-
         run.results = [ev.run_fixture(fx, pipe, **viz_kw) for fx in fixtures]
         run.holdout_scorer = holdout_scorecard(m, fixtures, run.results)
     else:
