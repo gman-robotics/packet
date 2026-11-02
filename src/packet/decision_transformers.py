@@ -102,7 +102,10 @@ class _HFVisionRunner:
                 "transformers backend images require AutoModelForImageTextToText"
             ) from exc
         _require_pillow()
-        import torch  # lazy: the first import of the stack
+        try:
+            import torch  # lazy: the first import of the stack
+        except ImportError as exc:
+            raise DecisionBackendError("transformers backend images require torch") from exc
 
         self._torch = torch
         self.processor = AutoProcessor.from_pretrained(
@@ -118,25 +121,24 @@ class _HFVisionRunner:
 
     def generate(self, prompt: str, image: Any = None) -> str:
         proc = self.processor
-        text = INSTRUCTION + "\n\n" + prompt
         if getattr(proc, "chat_template", None):
-            inputs = proc.apply_chat_template(
+            text = proc.apply_chat_template(
                 [
+                    {"role": "system", "content": INSTRUCTION},
                     {
                         "role": "user",
                         "content": [
-                            {"type": "image", "image": image},
-                            {"type": "text", "text": text},
+                            {"type": "image"},
+                            {"type": "text", "text": prompt},
                         ],
-                    }
+                    },
                 ],
-                tokenize=True,
+                tokenize=False,
                 add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt",
             )
         else:
-            inputs = proc(text=text, images=image, return_tensors="pt")
+            text = INSTRUCTION + "\n\n" + prompt
+        inputs = proc(text=text, images=image, return_tensors="pt")
         inputs = inputs.to(self.device)
         tok = getattr(proc, "tokenizer", proc)
         pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
@@ -153,7 +155,7 @@ class _HFVisionRunner:
 
 def _require_pillow() -> None:
     try:
-        __import__("PIL")
+        __import__("PIL.Image")
     except ImportError as exc:
         raise DecisionBackendError("transformers backend images require Pillow") from exc
 
@@ -311,9 +313,10 @@ class TransformersDecisionBackend:
         *,
         render: Callable[[], Any] | None = None,
     ) -> DecisionResult:
+        runner = self._get_runner()
         image = self._optional_image(render)
         prompt = self.build_message(request)
-        output = _run_generate(self._get_runner(), prompt, image)
+        output = _run_generate(runner, prompt, image)
         self.last_output = output
         result = parse_output(output)
         if result is not None:
