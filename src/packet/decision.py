@@ -31,6 +31,13 @@ class DecisionBackendError(Exception):
     """Raised when decision config or runtime cannot proceed."""
 
 
+class DecisionBudgetExhausted(DecisionBackendError):
+    """Third unparseable reply in one file. Only a confirmer may catch this."""
+
+
+MAX_STRIKES = 3
+
+
 @dataclass(frozen=True)
 class DecisionCapabilities:
     structured_output: bool = False
@@ -70,6 +77,23 @@ class DecisionBackend(Protocol):
         *,
         render: Callable[[], Any] | None = None,
     ) -> DecisionResult: ...
+
+
+def record_unparseable(
+    backend: str,
+    page_index: int,
+    strikes: list[dict[str, Any]],
+    degraded_pages: list[int],
+) -> DecisionResult:
+    """Record one unparseable page. The third strike raises and does not append."""
+    if len(strikes) + 1 >= MAX_STRIKES:
+        raise DecisionBudgetExhausted(
+            f"{backend} backend: unparseable output on page {page_index} "
+            f"(strike {MAX_STRIKES})"
+        )
+    strikes.append({"page": page_index, "reason": "unparseable"})
+    degraded_pages.append(page_index)
+    return DecisionResult(probability=None, scores=None, label=None)
 
 
 def decision_backend_passes_images(backend: DecisionBackend) -> bool:
@@ -202,6 +226,22 @@ def format_default_message(
     return format_features_message(features) + "\n".join(additive) + "\n"
 
 
+def message_for_request(request: DecisionRequest, *, input_mode: str, max_chars: int) -> str:
+    """Payload selected by the backend config's ``input`` field."""
+    if input_mode == "page_text":
+        fact = request.facts[request.page_index]
+        return str(fact.get("text") or "")[:max_chars]
+    features = featurize_from_facts(request.facts, request.page_index)
+    if input_mode == "features":
+        return format_features_message(features)
+    return format_default_message(
+        features=features,
+        fact=request.facts[request.page_index],
+        blocks=request.blocks,
+        ref=request.ref,
+    )
+
+
 @dataclass
 class LogisticDecisionBackend:
     scorer: LogisticBoundaryScorer
@@ -233,33 +273,45 @@ def load_logistic_decision_backend(path: Path) -> LogisticDecisionBackend:
     return _load(path)
 
 
-def load_decision_config(path: Path) -> DecisionBackend:
+def read_config_object(path: Path, kind: str) -> dict[str, Any]:
     if not path.exists():
-        raise DecisionBackendError(f"decision config not found: {path}")
+        raise DecisionBackendError(f"{kind} not found: {path}")
     try:
         raw = path.read_text()
     except OSError as exc:
-        raise DecisionBackendError(f"cannot read decision config {path}: {exc}") from exc
+        raise DecisionBackendError(f"cannot read {kind} {path}: {exc}") from exc
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise DecisionBackendError(f"malformed decision config JSON in {path}: {exc}") from exc
+        raise DecisionBackendError(f"malformed {kind} JSON in {path}: {exc}") from exc
     if not isinstance(parsed, dict):
         raise DecisionBackendError(
-            f"malformed decision config: expected JSON object, got {type(parsed).__name__}"
+            f"malformed {kind}: expected JSON object, got {type(parsed).__name__}"
         )
-    data: dict[str, Any] = parsed
+    _prepare_decision_data(parsed)
+    return parsed
+
+
+def _prepare_decision_data(data: dict[str, Any]) -> None:
     _reject_secret_fields(data)
     if isinstance(data.get("base_url"), str):
         _reject_url_secrets(data["base_url"])
+
+
+def _load_logistic(data: dict[str, Any], base_dir: Path) -> LogisticDecisionBackend:
+    weights = data.get("weights")
+    if not isinstance(weights, str) or not weights.strip():
+        raise DecisionBackendError("logistic backend requires weights path")
+    return load_logistic_decision_backend(base_dir / weights)
+
+
+def build_decision_backend(data: dict[str, Any], *, base_dir: Path) -> DecisionBackend:
+    _prepare_decision_data(data)
     backend = data.get("backend")
     if backend == "logistic":
-        weights = data.get("weights")
-        if not isinstance(weights, str) or not weights.strip():
-            raise DecisionBackendError("logistic backend requires weights path")
-        return load_logistic_decision_backend(path.parent / weights)
+        return _load_logistic(data, base_dir)
     if backend == "transformers":
-        # Lazy: this module imports no torch/transformers; the model loads on first decide.
+        # Lazy: importing this module loads no torch/transformers.
         from packet.decision_transformers import build_transformers_backend
 
         return build_transformers_backend(data)
@@ -267,7 +319,18 @@ def load_decision_config(path: Path) -> DecisionBackend:
         from packet.decision_http import load_http_decision_backend
 
         return load_http_decision_backend(data)
+    if backend == "mlx_vlm":
+        # Lazy: importing this module loads no mlx/mlx_vlm. The model loads on first decide.
+        from packet.decision_mlx import build_mlx_vlm_backend
+
+        return build_mlx_vlm_backend(data)
     raise DecisionBackendError(f"unknown decision backend {backend!r}")
+
+
+def load_decision_config(path: Path) -> DecisionBackend:
+    return build_decision_backend(
+        read_config_object(path, "decision config"), base_dir=path.parent
+    )
 
 
 # GMA-272: lenient extraction for sentence-style replies ("The probability is 0.62.").

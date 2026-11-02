@@ -21,6 +21,7 @@ from packet.decision import (
     load_decision_config,
 )
 from packet.decision_http import HttpDecisionBackend
+from packet.decision_mlx import MlxVlmDecisionBackend
 from packet.decision_transformers import TransformersDecisionBackend
 from packet.eval.pdfutil import write_text_pdf
 from packet.eval.run import run_fixture
@@ -34,6 +35,7 @@ HTTP_500_MSG = "decision http 500 page 1"
 _DECISION_BACKEND_IMPLEMENTERS: tuple[tuple[str, type], ...] = (
     ("http", HttpDecisionBackend),
     ("logistic", LogisticDecisionBackend),
+    ("mlx_vlm", MlxVlmDecisionBackend),
     ("transformers", TransformersDecisionBackend),
 )
 
@@ -67,6 +69,8 @@ def _minimal_backend_instance(kind: str) -> object:
         return LogisticDecisionBackend(load_logistic_scorer(FIXTURES / "logistic_weights.json"))
     if kind == "transformers":
         return TransformersDecisionBackend(model="m", revision="r")
+    if kind == "mlx_vlm":
+        return MlxVlmDecisionBackend(model="m", revision="r")
     raise AssertionError(kind)
 
 
@@ -483,3 +487,177 @@ def test_timings_success_includes_decision_fields(tmp_path, monkeypatch):
     row = json.loads(timings.read_text().strip())
     assert row["decision_backend"] == "http"
     assert row["decision_degraded_pages"] == [1]
+
+
+class _NullConfirmer:
+    def __init__(self) -> None:
+        self.observed: list[int] = []
+
+    def observe_page(self, classified, blocks, render, page_number, page_total) -> None:
+        del blocks, render, page_number, page_total
+        self.observed.append(classified.index)
+
+    def confirm(self, before, page, after):
+        del before, page, after
+
+
+def test_parse_missing_pdf_reports_before_confirm_config(tmp_path, capsys):
+    rc = cli.main(
+        [
+            "parse",
+            str(tmp_path / "missing.pdf"),
+            "--confirm-config",
+            str(tmp_path / "missing.json"),
+        ]
+    )
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "not found" in err
+    assert "confirm config" not in err
+
+
+def test_parse_missing_confirm_config_exits_2(tmp_path, monkeypatch, capsys):
+    _native_extractors_only(monkeypatch)
+    pdf = _minimal_pdf(tmp_path)
+    rc = cli.main(
+        [
+            "parse",
+            str(pdf),
+            "-o",
+            str(tmp_path / "out.json"),
+            "--confirm-config",
+            str(tmp_path / "missing.json"),
+        ]
+    )
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "confirm config not found" in err
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_parse_confirm_config_is_attached(tmp_path, monkeypatch):
+    import packet.confirm as confirm_mod
+
+    _native_extractors_only(monkeypatch)
+    confirmer = _NullConfirmer()
+    monkeypatch.setattr(confirm_mod, "load_confirm_config", lambda _path: confirmer)
+    seen = _capture_pipeline_config(monkeypatch)
+    pdf = _minimal_pdf(tmp_path)
+    rc = cli.main(
+        [
+            "parse",
+            str(pdf),
+            "-o",
+            str(tmp_path / "out.json"),
+            "--confirm-config",
+            str(tmp_path / "confirm.json"),
+            "--decision-config",
+            str(FIXTURES / "config_logistic.json"),
+        ]
+    )
+    assert rc == 0
+    assert seen[0].confirmer is confirmer
+    assert seen[0].decision_backend is not None
+    assert seen[0].scorer is None
+    assert confirmer.observed == [0, 1]
+
+
+def test_eval_missing_confirm_config_exits_before_politax(tmp_path, capsys):
+    rc = cli.main(
+        [
+            "eval",
+            "--set",
+            "politax",
+            "--data-dir",
+            str(tmp_path / "empty"),
+            "--confirm-config",
+            str(tmp_path / "missing.json"),
+        ]
+    )
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "confirm config not found" in err
+
+
+def test_eval_builtin_malformed_confirm_config_exits_2(tmp_path, capsys):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{")
+    rc = cli.main(
+        ["eval", "--set", "builtin", "--dir", str(tmp_path), "--confirm-config", str(bad)]
+    )
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "malformed confirm config" in err
+
+
+def test_ocr_cache_confirm_config_threads_pipeline(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from packet.eval import run as ev
+
+    seen: dict = {}
+    monkeypatch.setattr(ev, "prepare_politax", lambda _data: (SimpleNamespace(docs=[]), []))
+    monkeypatch.setattr("packet.eval.politax.corpus_gold_label_totals", lambda _m: (0, 0))
+    monkeypatch.setattr("packet.eval.politax.text_layer_census", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        "packet.eval.politax_split.compute_holdout_baseline", lambda *_a, **_k: None
+    )
+
+    def fake_cache(_m, _fixtures, _data, config=None, **_kwargs):
+        seen["config"] = config
+        return [], SimpleNamespace()
+
+    monkeypatch.setattr("packet.eval.politax_ocr_eval.run_with_ocr_cache", fake_cache)
+    confirmer = _NullConfirmer()
+    pipe = cli.Pipeline(config=PipelineConfig(confirmer=confirmer))
+    args = argparse.Namespace(
+        ocr_cache=True,
+        boundary_weights=None,
+        confirm_config=str(tmp_path / "c.json"),
+        data_dir=str(tmp_path),
+        set="politax",
+    )
+    cli._eval_politax(args, ev, pipe, {})
+    assert seen["config"] is pipe.config
+    assert seen["config"].confirmer is confirmer
+
+    args.confirm_config = None
+    cli._eval_politax(args, ev, pipe, {})
+    assert seen["config"] is None
+
+
+def test_confirm_config_without_weights_skips_holdout_scorer(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from packet.eval import run as ev
+
+    fixture = SimpleNamespace(name="fx")
+    seen: list = []
+    monkeypatch.setattr(ev, "prepare_politax", lambda _data: (SimpleNamespace(docs=[]), [fixture]))
+    monkeypatch.setattr("packet.eval.politax.corpus_gold_label_totals", lambda _m: (0, 0))
+    monkeypatch.setattr("packet.eval.politax.text_layer_census", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        "packet.eval.politax_split.compute_holdout_baseline", lambda *_a, **_k: None
+    )
+
+    def fake_run(_fx, pipe, **_kwargs):
+        seen.append(pipe)
+        return SimpleNamespace()
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("holdout scorer")
+
+    monkeypatch.setattr(ev, "run_fixture", fake_run)
+    monkeypatch.setattr("packet.eval.politax_train.holdout_scorecard", boom)
+    pipe = cli.Pipeline(config=PipelineConfig(confirmer=_NullConfirmer()))
+    args = argparse.Namespace(
+        ocr_cache=False,
+        boundary_weights=None,
+        confirm_config=str(tmp_path / "c.json"),
+        data_dir=str(tmp_path),
+        set="politax",
+    )
+    run = cli._eval_politax(args, ev, pipe, {})
+    assert seen[0].config.confirmer is None
+    assert seen[1] is pipe
+    assert run.holdout_scorer is None
