@@ -15,8 +15,13 @@ import pytest
 from packet.classify import HeuristicClassifier
 from packet.decision import (
     DecisionBackendError,
+    DecisionCapabilities,
     DecisionRequest,
     load_decision_config,
+)
+from packet.decision_transformers import (
+    TransformersDecisionBackend,
+    load_transformers_runner,
 )
 from packet.furniture import FurnitureTagger
 from packet.types import BBox, Block, BlockKind, PageClass, PageRef, SourceKind
@@ -130,6 +135,7 @@ def test_config_loads_with_cpu_default_and_no_socket_or_key(monkeypatch):
     assert backend.model == "packet-ci-fake"
     assert backend.revision == "ci-revision"
     assert backend.device == "cpu"
+    assert backend.send_images is False
     assert "PACKET_DECISION_API_KEY" not in reads
     caps = backend.capabilities
     assert (caps.structured_output, caps.logprobs, caps.images) == (False, False, False)
@@ -164,6 +170,19 @@ def test_runner_source_has_no_cuda_auto_path_or_hardcoded_model():
         {"backend": "transformers", "model": "m", "revision": "r", "device": 0},
         {"backend": "transformers", "model": "m", "revision": "r", "max_chars": True},
         {"backend": "transformers", "model": "m", "revision": "r", "max_chars": 0},
+        {"backend": "transformers", "model": "m", "revision": "r", "send_images": 1},
+        {"backend": "transformers", "model": "m", "revision": "r", "send_images": "true"},
+        {"backend": "transformers", "model": "m", "revision": "r", "send_images": None},
+        {"backend": "transformers", "model": "m", "revision": "r", "capabilities": []},
+        {"backend": "transformers", "model": "m", "revision": "r", "capabilities": "x"},
+        {"backend": "transformers", "model": "m", "revision": "r", "capabilities": None},
+        {"backend": "transformers", "model": "m", "revision": "r", "capabilities": {"images": 1}},
+        {
+            "backend": "transformers",
+            "model": "m",
+            "revision": "r",
+            "capabilities": {"images": "true"},
+        },
     ],
 )
 def test_invalid_transformers_config_rejected(tmp_path, cfg):
@@ -280,7 +299,9 @@ def test_no_top_level_heavy_imports_and_trust_remote_code_off():
         else:
             continue
         assert "torch" not in names and "transformers" not in names
-    assert text.count("trust_remote_code=False") == 2
+    assert text.count("trust_remote_code=False") == 4
+    assert "AutoModelForCausalLM" in text
+    assert "AutoModelForImageTextToText" in text
     assert "device_map" not in text
 
 
@@ -429,3 +450,312 @@ def test_sentence_third_strike_message_omits_body():
         backend.decide(_page1_request(3))
     msg = str(err.value)
     assert "unparseable" in msg and "3" in msg and raw not in msg
+
+
+class _RecordingRunner:
+    """Records each ``generate`` call as ``(prompt, image)``. Image is absent when omitted."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def generate(self, prompt: str, *args: object) -> str:
+        image = args[0] if args else None
+        self.calls.append((prompt, image))
+        return "0.5"
+
+
+def _factory(runner):
+    def factory(model: str, revision: str, device: str):
+        return runner
+
+    return factory
+
+
+def _image_backend(runner, *, send_images: bool, images: bool) -> TransformersDecisionBackend:
+    return TransformersDecisionBackend(
+        model="m",
+        revision="r",
+        send_images=send_images,
+        capabilities=DecisionCapabilities(images=images),
+        runner_factory=_factory(runner),
+    )
+
+
+def test_images_on_calls_thunk_once_and_passes_the_pil_image():
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    image = Image.new("RGB", (2, 2), "white")
+    calls: list[int] = []
+
+    def thunk():
+        calls.append(1)
+        return image
+
+    runner = _RecordingRunner()
+    backend = _image_backend(runner, send_images=True, images=True)
+    result = backend.decide(_page1_request(), render=thunk)
+    assert result.probability == pytest.approx(0.5)
+    assert calls == [1]
+    assert len(runner.calls) == 1
+    prompt, got = runner.calls[0]
+    assert prompt == DEFAULT_INPUT_PAGE1
+    assert got is image
+    assert "no_images" not in backend.flags
+
+
+@pytest.mark.parametrize(
+    ("send_images", "images"),
+    [(True, False), (False, True), (False, False)],
+)
+def test_either_image_flag_false_does_not_call_thunk(send_images, images):
+    def thunk():
+        raise AssertionError("thunk called")
+
+    class PromptOnly:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def generate(self, prompt: str) -> str:
+            self.prompts.append(prompt)
+            return "0.5"
+
+    runner = PromptOnly()
+    backend = _image_backend(runner, send_images=send_images, images=images)
+    result = backend.decide(_page1_request(), render=thunk)
+    assert result.probability == pytest.approx(0.5)
+    assert runner.prompts == [DEFAULT_INPUT_PAGE1]
+    if images:
+        assert "no_images" not in backend.flags
+    else:
+        assert "no_images" in backend.flags
+
+
+def test_images_on_without_render_raises():
+    runner = _RecordingRunner()
+    backend = _image_backend(runner, send_images=True, images=True)
+    with pytest.raises(DecisionBackendError, match="render thunk required"):
+        backend.decide(_page1_request(), render=None)
+    assert runner.calls == []
+
+
+def test_text_only_runner_factory_still_takes_only_prompt():
+    class PromptOnly:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def generate(self, prompt: str) -> str:
+            self.prompts.append(prompt)
+            return "0.25"
+
+    runner = PromptOnly()
+    backend = TransformersDecisionBackend(model="m", revision="r", runner_factory=_factory(runner))
+    assert backend.decide(_page1_request()).probability == pytest.approx(0.25)
+    assert runner.prompts == [DEFAULT_INPUT_PAGE1]
+    assert backend.send_images is False
+    assert "no_images" in backend.flags
+
+
+def test_image_config_keys_parsed_and_unknown_keys_ignored(tmp_path):
+    cfg = tmp_path / "c.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "backend": "transformers",
+                "model": "m",
+                "revision": "r",
+                "send_images": True,
+                "capabilities": {"images": True, "extra": 1},
+                "unused": "ignored",
+            }
+        )
+    )
+    backend = load_decision_config(cfg)
+    assert backend.send_images is True
+    assert backend.capabilities.images is True
+    assert backend.capabilities.structured_output is False
+    assert backend.capabilities.logprobs is False
+    assert "no_images" not in backend.flags
+
+
+def test_empty_capabilities_object_leaves_images_off(tmp_path):
+    cfg = tmp_path / "c.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "backend": "transformers",
+                "model": "m",
+                "revision": "r",
+                "capabilities": {},
+            }
+        )
+    )
+    backend = load_decision_config(cfg)
+    assert backend.send_images is False
+    assert backend.capabilities.images is False
+    assert "no_images" in backend.flags
+
+
+def test_secret_field_still_rejected_with_image_keys(tmp_path):
+    cfg = tmp_path / "c.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "backend": "transformers",
+                "model": "m",
+                "revision": "r",
+                "send_images": True,
+                "capabilities": {"images": True, "token": "x"},
+            }
+        )
+    )
+    with pytest.raises(DecisionBackendError):
+        load_decision_config(cfg)
+
+
+def test_building_images_backend_imports_neither_torch_nor_transformers(tmp_path):
+    cfg = tmp_path / "images.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "backend": "transformers",
+                "model": "m",
+                "revision": "r",
+                "send_images": True,
+                "capabilities": {"images": True},
+            }
+        )
+    )
+    code = (
+        "import sys, pathlib\n"
+        f"sys.path.insert(0, {str(SRC)!r})\n"
+        "import packet, packet.decision, packet.decision_transformers\n"
+        "from packet.decision import load_decision_config\n"
+        f"backend = load_decision_config(pathlib.Path({str(cfg)!r}))\n"
+        "assert backend.send_images is True and backend.capabilities.images is True\n"
+        "bad = [m for m in ('torch', 'transformers') if m in sys.modules]\n"
+        "assert not bad, bad\n"
+        "print('clean')\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ),
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr
+    assert "clean" in out.stdout
+
+
+def test_missing_vision_class_is_decision_backend_error(monkeypatch):
+    import builtins
+
+    real = builtins.__import__
+
+    def fake(name, *args, **kwargs):
+        fromlist = kwargs.get("fromlist", ())
+        if len(args) >= 3 and args[2]:
+            fromlist = args[2]
+        if name == "transformers" and fromlist and "AutoModelForImageTextToText" in fromlist:
+            raise ImportError("cannot import name 'AutoModelForImageTextToText'")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake)
+    with pytest.raises(DecisionBackendError, match="AutoModelForImageTextToText"):
+        load_transformers_runner("m", "r", "cpu", images=True)
+
+
+def test_missing_pillow_is_decision_backend_error(monkeypatch):
+    import builtins
+    import sys
+    import types
+
+    real = builtins.__import__
+    fake_tf = types.ModuleType("transformers")
+    fake_tf.AutoModelForImageTextToText = object
+    fake_tf.AutoProcessor = object
+
+    def fake(name, *args, **kwargs):
+        if name == "PIL" or name.startswith("PIL."):
+            raise ImportError("No module named 'PIL'")
+        if name == "transformers":
+            return fake_tf
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setitem(sys.modules, "transformers", fake_tf)
+    monkeypatch.setattr(builtins, "__import__", fake)
+    with pytest.raises(DecisionBackendError, match="Pillow"):
+        load_transformers_runner("m", "r", "cpu", images=True)
+
+
+def test_decide_asks_loader_for_vision_runner_only_when_images_on(monkeypatch):
+    import packet.decision_transformers as dt
+
+    seen: list[bool] = []
+
+    def spy(model, revision, device, *, max_output=16, images=False):
+        seen.append(images)
+        return _RecordingRunner()
+
+    monkeypatch.setattr(dt, "load_transformers_runner", spy)
+    plain = TransformersDecisionBackend(model="m", revision="r")
+    plain.decide(_page1_request())
+    vision = TransformersDecisionBackend(
+        model="m",
+        revision="r",
+        send_images=True,
+        capabilities=DecisionCapabilities(images=True),
+    )
+    vision.decide(_page1_request(), render=lambda: object())
+    assert seen == [False, True]
+
+
+def test_pipeline_passes_lazy_render_only_when_both_image_flags_on(tmp_path, monkeypatch):
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    from packet.eval.pdfutil import write_text_pdf
+    from packet.extract import NativeTextExtractor
+    from packet.pipeline import Pipeline, PipelineConfig
+    from packet.source import PdfPageSource
+
+    image = Image.new("RGB", (4, 4), "red")
+    rendered: list[int] = []
+
+    def fake_render(self, index: int, longest_px: int = 1540):
+        rendered.append(index)
+        return image
+
+    monkeypatch.setattr(PdfPageSource, "render", fake_render)
+    pdf = write_text_pdf(tmp_path / "two.pdf", [["Page one text."], ["Page two text."]])
+
+    def run(name: str, payload: dict) -> _RecordingRunner:
+        cfg = tmp_path / name
+        cfg.write_text(
+            json.dumps({"backend": "transformers", "model": "m", "revision": "r", **payload})
+        )
+        runner = _RecordingRunner()
+        backend = load_decision_config(cfg)
+        backend.runner_factory = _factory(runner)
+        pipe = Pipeline(
+            config=PipelineConfig(decision_backend=backend, split_on_boundary=False),
+            extractors=[NativeTextExtractor()],
+        )
+        list(pipe.stream(pdf))
+        return runner
+
+    rendered.clear()
+    off = run("off.json", {})
+    assert len(off.calls) == 1
+    assert off.calls[0][1] is None
+    assert rendered == []
+
+    rendered.clear()
+    on = run(
+        "on.json",
+        {"send_images": True, "capabilities": {"images": True}},
+    )
+    assert len(on.calls) == 1
+    assert on.calls[0][1] is image
+    assert rendered == [1]

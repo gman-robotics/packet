@@ -6,7 +6,8 @@ on the first :meth:`TransformersDecisionBackend.decide` call. Loading a config
 builds the backend object only: no model download, no socket, no key read.
 
 Device is ``cpu`` unless the config sets ``device``. There is no CUDA auto path.
-Model id and revision always come from config.
+Model id and revision always come from config. A page image is forwarded only
+when ``send_images`` and ``capabilities.images`` are both true.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ MAX_STRIKES = 3
 _PLAIN_NUMBER = re.compile(r"\d*\.?\d+")
 DEFAULT_MAX_CHARS = 4000
 DEFAULT_MAX_OUTPUT = 16
+_MISSING_IMAGE = object()
 
 INSTRUCTION = (
     "You score document boundaries. Given the page facts below, reply with only one "
@@ -42,7 +44,7 @@ INSTRUCTION = (
 
 
 class TransformersRunner(Protocol):
-    def generate(self, prompt: str) -> str: ...
+    def generate(self, prompt: str, image: Any = None) -> str: ...
 
 
 RunnerFactory = Callable[[str, str, str], TransformersRunner]
@@ -89,10 +91,84 @@ class _HFRunner:
         return tok.decode(new_tokens, skip_special_tokens=True)
 
 
+class _HFVisionRunner:
+    """Greedy image-text generation with one image part (real weights)."""
+
+    def __init__(self, model: str, revision: str, device: str, max_output: int):
+        try:
+            from transformers import AutoModelForImageTextToText, AutoProcessor
+        except ImportError as exc:
+            raise DecisionBackendError(
+                "transformers backend images require AutoModelForImageTextToText"
+            ) from exc
+        _require_pillow()
+        import torch  # lazy: the first import of the stack
+
+        self._torch = torch
+        self.processor = AutoProcessor.from_pretrained(
+            model, revision=revision, trust_remote_code=False
+        )
+        self.model = AutoModelForImageTextToText.from_pretrained(
+            model, revision=revision, trust_remote_code=False
+        )
+        self.model.to(device)
+        self.model.eval()
+        self.device = device
+        self.max_output = max_output
+
+    def generate(self, prompt: str, image: Any = None) -> str:
+        proc = self.processor
+        text = INSTRUCTION + "\n\n" + prompt
+        if getattr(proc, "chat_template", None):
+            inputs = proc.apply_chat_template(
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "image": image},
+                            {"type": "text", "text": text},
+                        ],
+                    }
+                ],
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+        else:
+            inputs = proc(text=text, images=image, return_tensors="pt")
+        inputs = inputs.to(self.device)
+        tok = getattr(proc, "tokenizer", proc)
+        pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
+        with self._torch.inference_mode():
+            out = self.model.generate(
+                **inputs,
+                max_new_tokens=self.max_output,
+                do_sample=False,
+                pad_token_id=pad_id,
+            )
+        new_tokens = out[0][inputs["input_ids"].shape[1] :]
+        return tok.decode(new_tokens, skip_special_tokens=True)
+
+
+def _require_pillow() -> None:
+    try:
+        __import__("PIL")
+    except ImportError as exc:
+        raise DecisionBackendError("transformers backend images require Pillow") from exc
+
+
 def load_transformers_runner(
-    model: str, revision: str, device: str, *, max_output: int = DEFAULT_MAX_OUTPUT
+    model: str,
+    revision: str,
+    device: str,
+    *,
+    max_output: int = DEFAULT_MAX_OUTPUT,
+    images: bool = False,
 ) -> TransformersRunner:
     """The only function that imports torch/transformers."""
+    if images:
+        return _HFVisionRunner(model, revision, device, max_output)
     return _HFRunner(model, revision, device, max_output)
 
 
@@ -160,6 +236,7 @@ class TransformersDecisionBackend:
     max_chars: int = DEFAULT_MAX_CHARS
     max_output: int = DEFAULT_MAX_OUTPUT
     capabilities: DecisionCapabilities = field(default_factory=DecisionCapabilities)
+    send_images: bool = False
     degraded_pages: list[int] = field(default_factory=list)
     strikes: list[dict[str, Any]] = field(default_factory=list)
     flags: set[str] = field(default_factory=set)
@@ -193,10 +270,25 @@ class TransformersDecisionBackend:
             if self.runner_factory is not None:
                 self._runner = self.runner_factory(self.model, self.revision, self.device)
             else:
+                kwargs: dict[str, Any] = {"max_output": self.max_output}
+                if self._images_on():
+                    kwargs["images"] = True  # text-only callers keep the old signature
                 self._runner = load_transformers_runner(
-                    self.model, self.revision, self.device, max_output=self.max_output
+                    self.model, self.revision, self.device, **kwargs
                 )
         return self._runner
+
+    def _images_on(self) -> bool:
+        return self.send_images and self.capabilities.images
+
+    def _optional_image(self, render: Callable[[], Any] | None) -> Any:
+        if not self._images_on():
+            return _MISSING_IMAGE
+        if render is None:
+            raise DecisionBackendError(
+                "transformers backend: render thunk required when images are enabled"
+            )
+        return render()
 
     def build_message(self, request: DecisionRequest) -> str:
         mode = self.input_mode  # the config's ``input`` selects the payload
@@ -219,9 +311,9 @@ class TransformersDecisionBackend:
         *,
         render: Callable[[], Any] | None = None,
     ) -> DecisionResult:
-        del render  # images capability is false for this backend
+        image = self._optional_image(render)
         prompt = self.build_message(request)
-        output = self._get_runner().generate(prompt)
+        output = _run_generate(self._get_runner(), prompt, image)
         self.last_output = output
         result = parse_output(output)
         if result is not None:
@@ -241,6 +333,35 @@ def _require_str(data: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise DecisionBackendError(f"transformers backend requires non-empty {key!r}")
     return value
+
+
+def _run_generate(runner: TransformersRunner, prompt: str, image: Any) -> str:
+    if image is _MISSING_IMAGE:
+        return runner.generate(prompt)
+    return runner.generate(prompt, image)
+
+
+def _strict_bool(value: Any, key: str) -> bool:
+    if not isinstance(value, bool):
+        raise DecisionBackendError(f"transformers backend {key!r} must be a bool")
+    return value
+
+
+def _images_capability(data: dict[str, Any]) -> bool:
+    if "capabilities" not in data:
+        return False
+    caps = data["capabilities"]
+    if not isinstance(caps, dict):
+        raise DecisionBackendError("transformers backend capabilities must be an object")
+    if "images" not in caps:
+        return False
+    return _strict_bool(caps["images"], "capabilities.images")
+
+
+def _send_images_flag(data: dict[str, Any]) -> bool:
+    if "send_images" not in data:
+        return False
+    return _strict_bool(data["send_images"], "send_images")
 
 
 def _positive_int(data: dict[str, Any], key: str, default: int) -> int:
@@ -267,4 +388,6 @@ def build_transformers_backend(data: dict[str, Any]) -> TransformersDecisionBack
         input_mode=input_mode,
         max_chars=_positive_int(data, "max_chars", DEFAULT_MAX_CHARS),
         max_output=_positive_int(data, "max_output", DEFAULT_MAX_OUTPUT),
+        capabilities=DecisionCapabilities(images=_images_capability(data)),
+        send_images=_send_images_flag(data),
     )
