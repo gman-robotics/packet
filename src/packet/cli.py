@@ -538,8 +538,13 @@ def _cmd_politax_ocr(args) -> int:
     from packet.eval import politax_ocr as po
     from packet.eval.run import DEFAULT_POLITAX_CACHE
 
-    data = Path(args.data_dir or DEFAULT_POLITAX_CACHE).expanduser()
-    err = _politax_ocr_arg_error(args, data)
+    data = (Path(args.data_dir) if args.data_dir else DEFAULT_POLITAX_CACHE).expanduser()
+    repo = Path(__file__).resolve().parents[2]
+    if data.resolve().is_relative_to(repo):
+        print(f"packet: --data-dir {data} is inside the repo checkout; use a path outside git",
+              file=sys.stderr)
+        return 2
+    err = _politax_ocr_arg_error(args)
     if err:
         print(err, file=sys.stderr)
         return 2
@@ -565,26 +570,10 @@ def _cmd_politax_ocr(args) -> int:
         return 0
     if importlib.util.find_spec("mlx_vlm") is None:
         _fail_ocr_config(OcrConfigError("politax-ocr needs mlx-vlm", pip_extra="ocr-mlx"))
-    from packet.source import PdfPageSource
-
     ext = LightOnExtractor(max_tokens=args.max_tokens)
-    sources: dict[str, PdfPageSource] = {}
+    sources: dict = {}
     loop_rule = rule if args.loop_stop else None
-
-    def recognize(plan):
-        t0 = time.perf_counter()
-        src = sources.get(plan.file)
-        if src is None:
-            for old in sources.values():
-                old.close()
-            sources.clear()
-            src = sources[plan.file] = PdfPageSource(data / plan.file)
-        img = src.render(plan.index, longest_px=engine.render_px)
-        render_s = time.perf_counter() - t0
-        rec = ext.recognize(img, loop_rule=loop_rule)
-        return po.PageResult(raw=rec.raw, tokens=rec.tokens, prompt_tokens=rec.prompt_tokens,
-                             prefill_s=rec.prefill_s, decode_s=rec.decode_s, stop=rec.stop,
-                             render_s=render_s)
+    recognize = _ocr_recognizer(ext, sources, data, engine.render_px, loop_rule, po)
 
     versions = {"packet": _version_or_dash(importlib.metadata, _DISTRIBUTION),
                 "mlx_vlm": _version_or_dash(importlib.metadata, "mlx-vlm")}
@@ -602,10 +591,28 @@ def _cmd_politax_ocr(args) -> int:
     return 0
 
 
-def _politax_ocr_arg_error(args, data: Path) -> str | None:
-    repo = Path(__file__).resolve().parents[2]
-    if data.resolve().is_relative_to(repo):
-        return f"packet: --data-dir {data} is inside the repo checkout; use a path outside git"
+def _ocr_recognizer(ext, sources: dict, data: Path, render_px: int, loop_rule, po):
+    from packet.source import PdfPageSource
+
+    def recognize(plan):
+        t0 = time.perf_counter()
+        src = sources.get(plan.file)
+        if src is None:
+            for old in sources.values():
+                old.close()
+            sources.clear()
+            src = sources[plan.file] = PdfPageSource(data / plan.file)
+        img = src.render(plan.index, longest_px=render_px)
+        render_s = time.perf_counter() - t0
+        rec = ext.recognize(img, loop_rule=loop_rule)
+        return po.PageResult(raw=rec.raw, tokens=rec.tokens, prompt_tokens=rec.prompt_tokens,
+                             prefill_s=rec.prefill_s, decode_s=rec.decode_s, stop=rec.stop,
+                             render_s=render_s)
+
+    return recognize
+
+
+def _politax_ocr_arg_error(args) -> str | None:
     if args.limit_pages is not None and args.limit_pages < 0:
         return "packet: --limit-pages must be >= 0"
     if args.loop_window_chars <= 0:
