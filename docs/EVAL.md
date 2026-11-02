@@ -275,6 +275,13 @@ already in the cache stay current. A page that stops early is stored with
 `stop=loop` and `truncated=false`. `truncated` still means the token count reached
 `max_tokens`.
 
+`--loop-window-chars N` widens the window (default 1500) for loops whose period
+plus noise does not fit in 1,500 characters. `--only-looped` (GMA-417) re-runs only
+cached pages that are `truncated` and whose text trips the rule at that window;
+their records are overwritten in place, never deleted. Example:
+
+    packet politax-ocr --max-tokens 8192 --loop-window-chars 6000 --only-looped
+
 Read-only check (does not write the cache and does not load MLX):
 
     python scripts/replay_ocr_loop_stop.py

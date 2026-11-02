@@ -138,6 +138,30 @@ def _state(plan: PagePlan, data_dir: Path, engine: EngineId) -> str:
     return "cached" if rec.get("engine") == asdict(engine) else "stale"
 
 
+def _cached_raw_if_truncated(plan: PagePlan, data_dir: Path) -> str | None:
+    try:
+        rec = json.loads(record_path(data_dir, plan.pdf_sha256, plan.index).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(rec, dict) or rec.get("truncated") is not True:
+        return None
+    raw = rec.get("raw")
+    return raw if isinstance(raw, str) else None
+
+
+def looped_plans(plans: Iterable[PagePlan], data_dir: Path, fired: Callable[[str], bool]
+                 ) -> list[PagePlan]:
+    """Plans whose cached record is truncated and whose raw text trips ``fired`` (GMA-417).
+
+    Missing, unreadable or non-truncated records are left out. Read-only."""
+    out = []
+    for p in plans:
+        raw = _cached_raw_if_truncated(p, data_dir)
+        if raw is not None and fired(raw):
+            out.append(p)
+    return out
+
+
 def classify(plans: Iterable[PagePlan], data_dir: Path, engine: EngineId) -> Counter:
     out: Counter = Counter({"cached": 0, "stale": 0, "corrupt": 0, "pending": 0})
     for p in plans:
@@ -184,10 +208,27 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _tally(summary: RunSummary, result: PageResult, secs: float, truncated: bool,
+           state: str) -> None:
+    summary.gen_s += secs
+    summary.render_s += result.render_s
+    summary.prefill_s += result.prefill_s
+    summary.decode_s += result.decode_s
+    summary.stops[result.stop] = summary.stops.get(result.stop, 0) + 1
+    summary.truncated += int(truncated)
+    pending = state == "pending"
+    summary.ocr_done += int(pending)
+    summary.redone += int(not pending)
+
+
 def run(plans: list[PagePlan], recognize: Recognize, data_dir: Path, engine: EngineId, *,
         limit: int | None = None, clock: Callable[[], float] = time.monotonic,
-        versions: dict[str, str] | None = None, setup_s: float = 0.0) -> RunSummary:
+        versions: dict[str, str] | None = None, setup_s: float = 0.0,
+        force: bool = False) -> RunSummary:
     """OCR every pending, stale or corrupt page; skip current records. Single writer.
+
+    ``force`` re-runs current records too (counted as ``redone``); records are
+    overwritten in place by the atomic write, never deleted.
 
     ``limit`` caps ``recognize`` calls. A log is written even on Ctrl-C or an engine
     error; the page in flight is the most that is lost."""
@@ -199,7 +240,7 @@ def run(plans: list[PagePlan], recognize: Recognize, data_dir: Path, engine: Eng
     try:
         for plan in plans:
             state = _state(plan, data_dir, engine)
-            if state == "cached":
+            if state == "cached" and not force:
                 summary.skipped_cached += 1
                 continue
             if limit is not None and summary.engine_calls >= limit:
@@ -230,16 +271,7 @@ def run(plans: list[PagePlan], recognize: Recognize, data_dir: Path, engine: Eng
                 "stop": result.stop,
             })
             summary.write_s += time.perf_counter() - t_write
-            summary.gen_s += secs
-            summary.render_s += result.render_s
-            summary.prefill_s += result.prefill_s
-            summary.decode_s += result.decode_s
-            summary.stops[result.stop] = summary.stops.get(result.stop, 0) + 1
-            summary.truncated += int(truncated)
-            if state == "pending":
-                summary.ocr_done += 1
-            else:
-                summary.redone += 1
+            _tally(summary, result, secs, truncated, state)
     except BaseException:
         summary.interrupted = True
         raise

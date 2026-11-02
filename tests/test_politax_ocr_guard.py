@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -200,11 +201,17 @@ def test_ocr_extras_stay_optional_and_out_of_ci():
 def test_data_dir_inside_repo_is_refused(tmp_path):
     from packet import cli
 
-    assert cli.main(["politax-ocr", "--data-dir", str(ROOT / "tmp-ocr"), "--dry-run"]) == 2
-    link = tmp_path / "link"
+    inside = ROOT / "tmp-ocr"
+    existed = inside.exists()
     try:
-        os.symlink(ROOT, link)
-    except OSError:
-        pytest.skip("no symlinks")
-    assert cli.main(["politax-ocr", "--data-dir", str(link / "x"), "--dry-run"]) == 2
-    assert not (ROOT / "tmp-ocr").exists()
+        assert cli.main(["politax-ocr", "--data-dir", str(inside), "--dry-run"]) == 2
+        link = tmp_path / "link"
+        try:
+            os.symlink(ROOT, link)
+        except OSError:
+            pytest.skip("no symlinks")
+        assert cli.main(["politax-ocr", "--data-dir", str(link / "x"), "--dry-run"]) == 2
+        assert inside.exists() == existed
+    finally:
+        if not existed:  # a mutant that skips the refusal must not poison later runs
+            shutil.rmtree(inside, ignore_errors=True)

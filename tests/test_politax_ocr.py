@@ -660,3 +660,132 @@ def test_replay_script_flags_only_non_truncated_loops(tmp_path):
     assert missing.returncode == 0
     assert "not found" in missing.stdout
     assert not (tmp_path / "nope").exists()
+
+
+# GMA-417: wider loop window and --only-looped re-run of truncated loop pages.
+
+def _write_record(data: Path, plan: po.PagePlan, raw: str, truncated: bool) -> None:
+    path = po.record_path(data, plan.pdf_sha256, plan.index)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema": po.SCHEMA, "pdf_sha256": plan.pdf_sha256,
+                                "page": plan.index, "raw": raw, "truncated": truncated,
+                                "engine": dict(ENGINE.__dict__)}))
+
+
+def test_looped_plans_keeps_only_truncated_records_that_fire(corpus):
+    data, docs = corpus
+    plans, _ = po.plan_pages(docs, data)
+    loop, dense, clean, corrupt = plans[0], plans[1], plans[2], plans[3]
+    _write_record(data, loop, "LOOP", True)
+    _write_record(data, dense, "dense", True)
+    _write_record(data, clean, "LOOP", False)
+    path = po.record_path(data, corrupt.pdf_sha256, corrupt.index)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json")
+    got = po.looped_plans(plans, data, lambda raw: raw == "LOOP")
+    assert got == [loop]
+
+
+def test_run_force_redoes_cached_pages(corpus):
+    data, docs = corpus
+    plans, _ = po.plan_pages(docs, data)
+    po.run(plans, FakeRecognizer(), data, ENGINE)
+    fake = FakeRecognizer()
+    s = po.run(plans[:1], fake, data, ENGINE, force=True)
+    assert len(fake.calls) == 1 and s.redone == 1 and s.skipped_cached == 0
+
+
+def _ocr_cli(monkeypatch, corpus):
+    import importlib.util
+
+    from packet import cli
+    from packet.backends import LightOnExtractor, Recognition
+    from packet.source import PdfPageSource
+
+    data, docs = corpus
+
+    class Manifest:
+        pass
+
+    manifest = Manifest()
+    manifest.docs = docs
+    monkeypatch.setattr(politax, "load_manifest", lambda: manifest)
+    monkeypatch.setattr(politax, "fetch", lambda *a, **k: None)
+    monkeypatch.setattr(PdfPageSource, "render",
+                        lambda self, index, longest_px=1540: (self.path.name, index))
+    seen: list = []
+
+    def fake_recognize(self, img, loop_rule=None):
+        seen.append((img, loop_rule))
+        return Recognition("ok", 3, 1, 0.0, 0.0, "eos")
+
+    monkeypatch.setattr(LightOnExtractor, "recognize", fake_recognize)
+    real_find = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a, **k: object() if name == "mlx_vlm"
+                        else real_find(name, *a, **k))
+    return cli, data, seen
+
+
+def test_loop_window_flag_reaches_loop_rule(monkeypatch, corpus):
+    from packet.backends import LoopRule
+
+    cli, data, seen = _ocr_cli(monkeypatch, corpus)
+    argv = ["politax-ocr", "--data-dir", str(data), "--limit-pages", "1"]
+    assert cli.main(argv + ["--loop-window-chars", "6000"]) == 0
+    assert [r for _, r in seen] == [LoopRule(window_chars=6000)]
+
+
+@pytest.mark.parametrize("bad", ["0", "-5"])
+def test_loop_window_must_be_positive(monkeypatch, corpus, capsys, bad):
+    cli, data, seen = _ocr_cli(monkeypatch, corpus)
+    assert cli.main(["politax-ocr", "--data-dir", str(data), "--loop-window-chars", bad]) == 2
+    assert "--loop-window-chars must be > 0" in capsys.readouterr().err
+    assert seen == []
+
+
+def _mark(data: Path, plan: po.PagePlan, raw: str) -> None:
+    path = po.record_path(data, plan.pdf_sha256, plan.index)
+    rec = json.loads(path.read_text())
+    rec.update(raw=raw, truncated=True)
+    path.write_text(json.dumps(rec))
+
+
+def test_only_looped_recognizes_only_the_looped_page(monkeypatch, corpus, capsys):
+    cli, data, seen = _ocr_cli(monkeypatch, corpus)
+    argv = ["politax-ocr", "--data-dir", str(data), "--max-tokens", "4096"]
+    assert cli.main(argv) == 0
+    plans, _ = po.plan_pages(corpus[1], data)
+    _mark(data, plans[0], "a" * 3000)    # long loop
+    _mark(data, plans[1], _prose(3000))  # dense page, truncated but no loop
+    seen.clear()
+    assert cli.main(argv + ["--only-looped", "--loop-window-chars", "2000", "--dry-run"]) == 0
+    assert "only-looped: 1 of 5 pages" in capsys.readouterr().out
+    assert seen == []
+    assert cli.main(argv + ["--only-looped", "--loop-window-chars", "2000"]) == 0
+    assert [img for img, _ in seen] == [(plans[0].file, plans[0].index)]
+    assert json.loads(po.record_path(data, plans[0].pdf_sha256, plans[0].index)
+                      .read_text())["raw"] == "ok"
+
+
+def test_politax_ocr_engine_error_exits_1(monkeypatch, corpus, capsys):
+    from packet.backends import LightOnExtractor
+
+    cli, data, _ = _ocr_cli(monkeypatch, corpus)
+
+    def boom(self, img, loop_rule=None):
+        raise RuntimeError("gpu gone")
+
+    monkeypatch.setattr(LightOnExtractor, "recognize", boom)
+    assert cli.main(["politax-ocr", "--data-dir", str(data)]) == 1
+    assert "politax-ocr engine error: gpu gone" in capsys.readouterr().err
+
+
+def test_politax_ocr_report_reads_cache_without_engine(monkeypatch, corpus, capsys):
+    cli, data, seen = _ocr_cli(monkeypatch, corpus)
+    assert cli.main(["politax-ocr", "--data-dir", str(data), "--limit-pages", "2"]) == 0
+    seen.clear()
+    assert cli.main(["politax-ocr", "--data-dir", str(data), "--report"]) == 0
+    out = capsys.readouterr().out
+    assert json.loads(out[out.index("{"):out.rindex("}") + 1])["pages_cached"] == 2
+    assert seen == []

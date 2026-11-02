@@ -165,6 +165,11 @@ def main(argv: list[str] | None = None) -> int:
         help="stop a page when its tail compresses under the zlib loop rule "
              "(default: on; --no-loop-stop runs to eos or max tokens)",
     )
+    po.add_argument("--loop-window-chars", type=int, default=1500,
+                    help="loop-stop window in characters (default 1500)")
+    po.add_argument("--only-looped", action="store_true",
+                    help="re-run only cached truncated pages whose text trips the loop rule "
+                         "at --loop-window-chars (GMA-417); records are overwritten, not deleted")
     mode = po.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true",
                       help="fetch PDFs, print selected/cached/pending pages; no model load")
@@ -202,21 +207,17 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    if args.cmd == "eval":
-        return _cmd_eval(args)
-    if args.cmd == "politax-train-weights":
-        return _cmd_politax_train_weights(args)
-    if args.cmd == "politax-ocr":
-        return _cmd_politax_ocr(args)
-    if args.cmd == "politax-ship-check":
-        return _cmd_politax_ship_check(args)
-    if args.cmd == "eval-plan":
-        return _cmd_eval_plan(args)
-
-    if args.cmd == "parse":
-        return _cmd_parse(args)
-    if args.cmd == "viz":
-        return _cmd_viz(args)
+    handler = {
+        "eval": _cmd_eval,
+        "politax-train-weights": _cmd_politax_train_weights,
+        "politax-ocr": _cmd_politax_ocr,
+        "politax-ship-check": _cmd_politax_ship_check,
+        "eval-plan": _cmd_eval_plan,
+        "parse": _cmd_parse,
+        "viz": _cmd_viz,
+    }.get(args.cmd)
+    if handler is not None:
+        return handler(args)
 
     path = Path(args.path)
     if not path.exists():
@@ -543,8 +544,9 @@ def _cmd_politax_ocr(args) -> int:
         print(f"packet: --data-dir {data} is inside the repo checkout; use a path outside git",
               file=sys.stderr)
         return 2
-    if args.limit_pages is not None and args.limit_pages < 0:
-        print("packet: --limit-pages must be >= 0", file=sys.stderr)
+    err = _politax_ocr_arg_error(args)
+    if err:
+        print(err, file=sys.stderr)
         return 2
     engine = po.EngineId("lighton-mlx", LightOnExtractor.model, LightOnExtractor.revision,
                          LightOnExtractor.mode, args.max_tokens, args.render_px)
@@ -562,36 +564,22 @@ def _cmd_politax_ocr(args) -> int:
     print(f"selected {len(plans)} pages (<{po.OCR_MIN_NATIVE_CHARS} native chars), "
           f"native-text skipped {native}; cached {states['cached']} stale {states['stale']} "
           f"corrupt {states['corrupt']} pending {states['pending']}")
+    rule = LoopRule(window_chars=args.loop_window_chars)
+    plans = _only_looped(args, plans, data, rule, po)
     if args.dry_run:
         return 0
     if importlib.util.find_spec("mlx_vlm") is None:
         _fail_ocr_config(OcrConfigError("politax-ocr needs mlx-vlm", pip_extra="ocr-mlx"))
-    from packet.source import PdfPageSource
-
     ext = LightOnExtractor(max_tokens=args.max_tokens)
-    sources: dict[str, PdfPageSource] = {}
-    loop_rule = LoopRule() if args.loop_stop else None
-
-    def recognize(plan):
-        t0 = time.perf_counter()
-        src = sources.get(plan.file)
-        if src is None:
-            for old in sources.values():
-                old.close()
-            sources.clear()
-            src = sources[plan.file] = PdfPageSource(data / plan.file)
-        img = src.render(plan.index, longest_px=engine.render_px)
-        render_s = time.perf_counter() - t0
-        rec = ext.recognize(img, loop_rule=loop_rule)
-        return po.PageResult(raw=rec.raw, tokens=rec.tokens, prompt_tokens=rec.prompt_tokens,
-                             prefill_s=rec.prefill_s, decode_s=rec.decode_s, stop=rec.stop,
-                             render_s=render_s)
+    sources: dict = {}
+    recognize = _ocr_recognizer(ext, sources, data, engine.render_px,
+                                rule, args.loop_stop, po)
 
     versions = {"packet": _version_or_dash(importlib.metadata, _DISTRIBUTION),
                 "mlx_vlm": _version_or_dash(importlib.metadata, "mlx-vlm")}
     try:
         s = po.run(plans, recognize, data, engine, limit=args.limit_pages, versions=versions,
-                   setup_s=setup_s)
+                   setup_s=setup_s, force=args.only_looped)
     except Exception as exc:  # noqa: BLE001 - any engine failure exits 1; log is kept
         print(f"packet: politax-ocr engine error: {exc}", file=sys.stderr)
         return 1
@@ -601,6 +589,47 @@ def _cmd_politax_ocr(args) -> int:
     print(f"ocr_done {s.ocr_done} redone {s.redone} skipped_cached {s.skipped_cached} "
           f"truncated {s.truncated} wall_s {s.wall_s} gen_s {s.gen_s}")
     return 0
+
+
+def _ocr_recognizer(ext, sources: dict, data: Path, render_px: int, rule, loop_stop: bool, po):
+    from packet.source import PdfPageSource
+
+    loop_rule = rule if loop_stop else None
+
+    def recognize(plan):
+        t0 = time.perf_counter()
+        src = sources.get(plan.file)
+        if src is None:
+            for old in sources.values():
+                old.close()
+            sources.clear()
+            src = sources[plan.file] = PdfPageSource(data / plan.file)
+        img = src.render(plan.index, longest_px=render_px)
+        render_s = time.perf_counter() - t0
+        rec = ext.recognize(img, loop_rule=loop_rule)
+        return po.PageResult(raw=rec.raw, tokens=rec.tokens, prompt_tokens=rec.prompt_tokens,
+                             prefill_s=rec.prefill_s, decode_s=rec.decode_s, stop=rec.stop,
+                             render_s=render_s)
+
+    return recognize
+
+
+def _politax_ocr_arg_error(args) -> str | None:
+    if args.limit_pages is not None and args.limit_pages < 0:
+        return "packet: --limit-pages must be >= 0"
+    if args.loop_window_chars <= 0:
+        return "packet: --loop-window-chars must be > 0"
+    return None
+
+
+def _only_looped(args, plans, data, rule, po):
+    if not args.only_looped:
+        return plans
+    from packet.backends import _loop_fired
+
+    picked = po.looped_plans(plans, data, lambda raw: _loop_fired(raw, rule))
+    print(f"only-looped: {len(picked)} of {len(plans)} pages")
+    return picked
 
 
 def _version_or_dash(md, dist: str) -> str:
