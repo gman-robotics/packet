@@ -766,3 +766,26 @@ def test_only_looped_recognizes_only_the_looped_page(monkeypatch, corpus, capsys
     assert [img for img, _ in seen] == [(plans[0].file, plans[0].index)]
     assert json.loads(po.record_path(data, plans[0].pdf_sha256, plans[0].index)
                       .read_text())["raw"] == "ok"
+
+
+def test_politax_ocr_engine_error_exits_1(monkeypatch, corpus, capsys):
+    from packet.backends import LightOnExtractor
+
+    cli, data, _ = _ocr_cli(monkeypatch, corpus)
+
+    def boom(self, img, loop_rule=None):
+        raise RuntimeError("gpu gone")
+
+    monkeypatch.setattr(LightOnExtractor, "recognize", boom)
+    assert cli.main(["politax-ocr", "--data-dir", str(data)]) == 1
+    assert "politax-ocr engine error: gpu gone" in capsys.readouterr().err
+
+
+def test_politax_ocr_report_reads_cache_without_engine(monkeypatch, corpus, capsys):
+    cli, data, seen = _ocr_cli(monkeypatch, corpus)
+    assert cli.main(["politax-ocr", "--data-dir", str(data), "--limit-pages", "2"]) == 0
+    seen.clear()
+    assert cli.main(["politax-ocr", "--data-dir", str(data), "--report"]) == 0
+    out = capsys.readouterr().out
+    assert json.loads(out[out.index("{"):out.rindex("}") + 1])["pages_cached"] == 2
+    assert seen == []
