@@ -572,8 +572,8 @@ def _cmd_politax_ocr(args) -> int:
         _fail_ocr_config(OcrConfigError("politax-ocr needs mlx-vlm", pip_extra="ocr-mlx"))
     ext = LightOnExtractor(max_tokens=args.max_tokens)
     sources: dict = {}
-    loop_rule = rule if args.loop_stop else None
-    recognize = _ocr_recognizer(ext, sources, data, engine.render_px, loop_rule, po)
+    recognize = _ocr_recognizer(ext, sources, data, engine.render_px,
+                                rule, args.loop_stop, po)
 
     versions = {"packet": _version_or_dash(importlib.metadata, _DISTRIBUTION),
                 "mlx_vlm": _version_or_dash(importlib.metadata, "mlx-vlm")}
@@ -591,8 +591,10 @@ def _cmd_politax_ocr(args) -> int:
     return 0
 
 
-def _ocr_recognizer(ext, sources: dict, data: Path, render_px: int, loop_rule, po):
+def _ocr_recognizer(ext, sources: dict, data: Path, render_px: int, rule, loop_stop: bool, po):
     from packet.source import PdfPageSource
+
+    loop_rule = rule if loop_stop else None
 
     def recognize(plan):
         t0 = time.perf_counter()
