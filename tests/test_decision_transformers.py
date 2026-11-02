@@ -759,3 +759,101 @@ def test_pipeline_passes_lazy_render_only_when_both_image_flags_on(tmp_path, mon
     assert len(on.calls) == 1
     assert on.calls[0][1] is image
     assert rendered == [1]
+
+
+class _FakeIds:
+    def __init__(self, ids):
+        self.shape = (1, len(ids))
+
+
+class _FakeInputs(dict):
+    def __init__(self, ids):
+        super().__init__(input_ids=_FakeIds(ids))
+        self.moved_to = None
+
+    def to(self, device):
+        self.moved_to = device
+        return self
+
+
+class _FakeTok:
+    pad_token_id = None
+    eos_token_id = 7
+
+    def decode(self, tokens, skip_special_tokens):
+        assert skip_special_tokens is True
+        return "|".join(str(t) for t in tokens)
+
+
+class _FakeProcessor:
+    def __init__(self, chat_template):
+        self.chat_template = chat_template
+        self.tokenizer = _FakeTok()
+        self.calls = []
+
+    def apply_chat_template(self, messages, **kwargs):
+        self.calls.append(("chat", messages, kwargs))
+        return _FakeInputs([1, 2])
+
+    def __call__(self, **kwargs):
+        self.calls.append(("plain", kwargs))
+        return _FakeInputs([1, 2])
+
+
+class _FakeVisionModel:
+    def __init__(self):
+        self.kwargs = None
+
+    def generate(self, **kwargs):
+        self.kwargs = kwargs
+        return [[1, 2, 9, 4]]
+
+
+class _FakeTorch:
+    class _Ctx:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def inference_mode(self):
+        return self._Ctx()
+
+
+def _vision_runner(chat_template):
+    from packet.decision_transformers import _HFVisionRunner
+
+    runner = _HFVisionRunner.__new__(_HFVisionRunner)
+    runner._torch = _FakeTorch()
+    runner.processor = _FakeProcessor(chat_template)
+    runner.model = _FakeVisionModel()
+    runner.device = "cpu"
+    runner.max_output = 5
+    return runner
+
+
+@pytest.mark.parametrize("chat_template", ["{{ tpl }}", None])
+def test_vision_runner_generate_sends_one_image_and_decodes_new_tokens(chat_template):
+    from packet.decision_transformers import INSTRUCTION
+
+    image = object()
+    runner = _vision_runner(chat_template)
+    assert runner.generate("facts", image) == "9|4"
+    call = runner.processor.calls[0]
+    text = INSTRUCTION + "\n\nfacts"
+    if chat_template:
+        assert call[0] == "chat"
+        assert call[1][0]["content"] == [
+            {"type": "image", "image": image},
+            {"type": "text", "text": text},
+        ]
+        assert call[2]["add_generation_prompt"] is True
+        assert call[2]["return_dict"] is True
+    else:
+        assert call == ("plain", {"text": text, "images": image, "return_tensors": "pt"})
+    kw = runner.model.kwargs
+    assert kw["max_new_tokens"] == 5
+    assert kw["do_sample"] is False
+    assert kw["pad_token_id"] == 7
+    assert kw["input_ids"].shape == (1, 2)
