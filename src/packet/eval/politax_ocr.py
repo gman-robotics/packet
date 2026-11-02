@@ -208,6 +208,19 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _tally(summary: RunSummary, result: PageResult, secs: float, truncated: bool,
+           state: str) -> None:
+    summary.gen_s += secs
+    summary.render_s += result.render_s
+    summary.prefill_s += result.prefill_s
+    summary.decode_s += result.decode_s
+    summary.stops[result.stop] = summary.stops.get(result.stop, 0) + 1
+    summary.truncated += int(truncated)
+    pending = state == "pending"
+    summary.ocr_done += int(pending)
+    summary.redone += int(not pending)
+
+
 def run(plans: list[PagePlan], recognize: Recognize, data_dir: Path, engine: EngineId, *,
         limit: int | None = None, clock: Callable[[], float] = time.monotonic,
         versions: dict[str, str] | None = None, setup_s: float = 0.0,
@@ -258,16 +271,7 @@ def run(plans: list[PagePlan], recognize: Recognize, data_dir: Path, engine: Eng
                 "stop": result.stop,
             })
             summary.write_s += time.perf_counter() - t_write
-            summary.gen_s += secs
-            summary.render_s += result.render_s
-            summary.prefill_s += result.prefill_s
-            summary.decode_s += result.decode_s
-            summary.stops[result.stop] = summary.stops.get(result.stop, 0) + 1
-            summary.truncated += int(truncated)
-            if state == "pending":
-                summary.ocr_done += 1
-            else:
-                summary.redone += 1
+            _tally(summary, result, secs, truncated, state)
     except BaseException:
         summary.interrupted = True
         raise

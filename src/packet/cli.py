@@ -207,21 +207,17 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    if args.cmd == "eval":
-        return _cmd_eval(args)
-    if args.cmd == "politax-train-weights":
-        return _cmd_politax_train_weights(args)
-    if args.cmd == "politax-ocr":
-        return _cmd_politax_ocr(args)
-    if args.cmd == "politax-ship-check":
-        return _cmd_politax_ship_check(args)
-    if args.cmd == "eval-plan":
-        return _cmd_eval_plan(args)
-
-    if args.cmd == "parse":
-        return _cmd_parse(args)
-    if args.cmd == "viz":
-        return _cmd_viz(args)
+    handler = {
+        "eval": _cmd_eval,
+        "politax-train-weights": _cmd_politax_train_weights,
+        "politax-ocr": _cmd_politax_ocr,
+        "politax-ship-check": _cmd_politax_ship_check,
+        "eval-plan": _cmd_eval_plan,
+        "parse": _cmd_parse,
+        "viz": _cmd_viz,
+    }.get(args.cmd)
+    if handler is not None:
+        return handler(args)
 
     path = Path(args.path)
     if not path.exists():
@@ -542,17 +538,10 @@ def _cmd_politax_ocr(args) -> int:
     from packet.eval import politax_ocr as po
     from packet.eval.run import DEFAULT_POLITAX_CACHE
 
-    data = (Path(args.data_dir) if args.data_dir else DEFAULT_POLITAX_CACHE).expanduser()
-    repo = Path(__file__).resolve().parents[2]
-    if data.resolve().is_relative_to(repo):
-        print(f"packet: --data-dir {data} is inside the repo checkout; use a path outside git",
-              file=sys.stderr)
-        return 2
-    if args.limit_pages is not None and args.limit_pages < 0:
-        print("packet: --limit-pages must be >= 0", file=sys.stderr)
-        return 2
-    if args.loop_window_chars <= 0:
-        print("packet: --loop-window-chars must be > 0", file=sys.stderr)
+    data = Path(args.data_dir or DEFAULT_POLITAX_CACHE).expanduser()
+    err = _politax_ocr_arg_error(args, data)
+    if err:
+        print(err, file=sys.stderr)
         return 2
     engine = po.EngineId("lighton-mlx", LightOnExtractor.model, LightOnExtractor.revision,
                          LightOnExtractor.mode, args.max_tokens, args.render_px)
@@ -611,6 +600,17 @@ def _cmd_politax_ocr(args) -> int:
     print(f"ocr_done {s.ocr_done} redone {s.redone} skipped_cached {s.skipped_cached} "
           f"truncated {s.truncated} wall_s {s.wall_s} gen_s {s.gen_s}")
     return 0
+
+
+def _politax_ocr_arg_error(args, data: Path) -> str | None:
+    repo = Path(__file__).resolve().parents[2]
+    if data.resolve().is_relative_to(repo):
+        return f"packet: --data-dir {data} is inside the repo checkout; use a path outside git"
+    if args.limit_pages is not None and args.limit_pages < 0:
+        return "packet: --limit-pages must be >= 0"
+    if args.loop_window_chars <= 0:
+        return "packet: --loop-window-chars must be > 0"
+    return None
 
 
 def _only_looped(args, plans, data, rule, po):
