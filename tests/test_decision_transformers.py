@@ -848,7 +848,9 @@ def test_vision_runner_generate_sends_one_image_and_decodes_new_tokens(chat_temp
             {"type": "image", "image": image},
             {"type": "text", "text": text},
         ]
+        assert call[2]["tokenize"] is True
         assert call[2]["add_generation_prompt"] is True
+        assert call[2]["return_tensors"] == "pt"
         assert call[2]["return_dict"] is True
     else:
         assert call == ("plain", {"text": text, "images": image, "return_tensors": "pt"})
