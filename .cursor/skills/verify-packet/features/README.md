@@ -34,7 +34,8 @@ Each feature file has an H1 title, one introductory paragraph, then exactly four
 ## Features
 
 - [Inspect a packet](./inspect.md) — stream page classification and pipeline events for a PDF.
-- [Parse to JSON](./parse.md) — build a PacketTree and write JSON (stdout or `-o`).
-- [Run builtin eval](./eval.md) — boundary metrics on synthetic fixtures with pass/fail gates.
+- [Parse to JSON](./parse.md) — build a PacketTree, optional `--trace` JSONL, and `packet viz` HTML.
+- [Run builtin eval](./eval.md) — boundary metrics on synthetic fixtures with pass/fail gates and optional `--viz-dir` HTML.
+- [PoliTax tooling](./politax-tools.md) — train weights, optional OCR cache, and default-on ship gate.
 - [OCR paths](./ocr.md) — LightOnOCR on a scanned PDF, `--force-inspect`, and `PACKET_OCR=off`.
 - [Plan DocLayNet eval packets](./eval-plan.md) — generate a manifest and placeholder PDFs from an external catalog.
