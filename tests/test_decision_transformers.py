@@ -15,8 +15,13 @@ import pytest
 from packet.classify import HeuristicClassifier
 from packet.decision import (
     DecisionBackendError,
+    DecisionCapabilities,
     DecisionRequest,
     load_decision_config,
+)
+from packet.decision_transformers import (
+    TransformersDecisionBackend,
+    load_transformers_runner,
 )
 from packet.furniture import FurnitureTagger
 from packet.types import BBox, Block, BlockKind, PageClass, PageRef, SourceKind
@@ -130,6 +135,7 @@ def test_config_loads_with_cpu_default_and_no_socket_or_key(monkeypatch):
     assert backend.model == "packet-ci-fake"
     assert backend.revision == "ci-revision"
     assert backend.device == "cpu"
+    assert backend.send_images is False
     assert "PACKET_DECISION_API_KEY" not in reads
     caps = backend.capabilities
     assert (caps.structured_output, caps.logprobs, caps.images) == (False, False, False)
@@ -164,6 +170,19 @@ def test_runner_source_has_no_cuda_auto_path_or_hardcoded_model():
         {"backend": "transformers", "model": "m", "revision": "r", "device": 0},
         {"backend": "transformers", "model": "m", "revision": "r", "max_chars": True},
         {"backend": "transformers", "model": "m", "revision": "r", "max_chars": 0},
+        {"backend": "transformers", "model": "m", "revision": "r", "send_images": 1},
+        {"backend": "transformers", "model": "m", "revision": "r", "send_images": "true"},
+        {"backend": "transformers", "model": "m", "revision": "r", "send_images": None},
+        {"backend": "transformers", "model": "m", "revision": "r", "capabilities": []},
+        {"backend": "transformers", "model": "m", "revision": "r", "capabilities": "x"},
+        {"backend": "transformers", "model": "m", "revision": "r", "capabilities": None},
+        {"backend": "transformers", "model": "m", "revision": "r", "capabilities": {"images": 1}},
+        {
+            "backend": "transformers",
+            "model": "m",
+            "revision": "r",
+            "capabilities": {"images": "true"},
+        },
     ],
 )
 def test_invalid_transformers_config_rejected(tmp_path, cfg):
@@ -280,7 +299,9 @@ def test_no_top_level_heavy_imports_and_trust_remote_code_off():
         else:
             continue
         assert "torch" not in names and "transformers" not in names
-    assert text.count("trust_remote_code=False") == 2
+    assert text.count("trust_remote_code=False") == 4
+    assert "AutoModelForCausalLM" in text
+    assert "AutoModelForImageTextToText" in text
     assert "device_map" not in text
 
 
@@ -429,3 +450,669 @@ def test_sentence_third_strike_message_omits_body():
         backend.decide(_page1_request(3))
     msg = str(err.value)
     assert "unparseable" in msg and "3" in msg and raw not in msg
+
+
+class _RecordingRunner:
+    """Records each ``generate`` call as ``(prompt, image)``. Image is absent when omitted."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def generate(self, prompt: str, *args: object) -> str:
+        image = args[0] if args else None
+        self.calls.append((prompt, image))
+        return "0.5"
+
+
+def _factory(runner):
+    def factory(model: str, revision: str, device: str):
+        return runner
+
+    return factory
+
+
+def _image_backend(runner, *, send_images: bool, images: bool) -> TransformersDecisionBackend:
+    return TransformersDecisionBackend(
+        model="m",
+        revision="r",
+        send_images=send_images,
+        capabilities=DecisionCapabilities(images=images),
+        runner_factory=_factory(runner),
+    )
+
+
+def test_images_on_calls_thunk_once_and_passes_the_pil_image():
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    image = Image.new("RGB", (2, 2), "white")
+    calls: list[int] = []
+
+    def thunk():
+        calls.append(1)
+        return image
+
+    runner = _RecordingRunner()
+    backend = _image_backend(runner, send_images=True, images=True)
+    result = backend.decide(_page1_request(), render=thunk)
+    assert result.probability == pytest.approx(0.5)
+    assert calls == [1]
+    assert len(runner.calls) == 1
+    prompt, got = runner.calls[0]
+    assert prompt == DEFAULT_INPUT_PAGE1
+    assert got is image
+    assert "no_images" not in backend.flags
+
+
+@pytest.mark.parametrize(
+    ("send_images", "images"),
+    [(True, False), (False, True), (False, False)],
+)
+def test_either_image_flag_false_does_not_call_thunk(send_images, images):
+    def thunk():
+        raise AssertionError("thunk called")
+
+    class PromptOnly:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def generate(self, prompt: str) -> str:
+            self.prompts.append(prompt)
+            return "0.5"
+
+    runner = PromptOnly()
+    backend = _image_backend(runner, send_images=send_images, images=images)
+    result = backend.decide(_page1_request(), render=thunk)
+    assert result.probability == pytest.approx(0.5)
+    assert runner.prompts == [DEFAULT_INPUT_PAGE1]
+    if images:
+        assert "no_images" not in backend.flags
+    else:
+        assert "no_images" in backend.flags
+
+
+def test_images_on_without_render_raises():
+    runner = _RecordingRunner()
+    backend = _image_backend(runner, send_images=True, images=True)
+    with pytest.raises(DecisionBackendError, match="render thunk required"):
+        backend.decide(_page1_request(), render=None)
+    assert runner.calls == []
+
+
+def test_text_only_runner_factory_still_takes_only_prompt():
+    class PromptOnly:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def generate(self, prompt: str) -> str:
+            self.prompts.append(prompt)
+            return "0.25"
+
+    runner = PromptOnly()
+    backend = TransformersDecisionBackend(model="m", revision="r", runner_factory=_factory(runner))
+    assert backend.decide(_page1_request()).probability == pytest.approx(0.25)
+    assert runner.prompts == [DEFAULT_INPUT_PAGE1]
+    assert backend.send_images is False
+    assert "no_images" in backend.flags
+
+
+def test_image_config_keys_parsed_and_unknown_keys_ignored(tmp_path):
+    cfg = tmp_path / "c.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "backend": "transformers",
+                "model": "m",
+                "revision": "r",
+                "send_images": True,
+                "capabilities": {"images": True, "extra": 1},
+                "unused": "ignored",
+            }
+        )
+    )
+    backend = load_decision_config(cfg)
+    assert backend.send_images is True
+    assert backend.capabilities.images is True
+    assert backend.capabilities.structured_output is False
+    assert backend.capabilities.logprobs is False
+    assert "no_images" not in backend.flags
+
+
+def test_empty_capabilities_object_leaves_images_off(tmp_path):
+    cfg = tmp_path / "c.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "backend": "transformers",
+                "model": "m",
+                "revision": "r",
+                "capabilities": {},
+            }
+        )
+    )
+    backend = load_decision_config(cfg)
+    assert backend.send_images is False
+    assert backend.capabilities.images is False
+    assert "no_images" in backend.flags
+
+
+def test_secret_field_still_rejected_with_image_keys(tmp_path):
+    cfg = tmp_path / "c.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "backend": "transformers",
+                "model": "m",
+                "revision": "r",
+                "send_images": True,
+                "capabilities": {"images": True, "token": "x"},
+            }
+        )
+    )
+    with pytest.raises(DecisionBackendError):
+        load_decision_config(cfg)
+
+
+def test_building_images_backend_imports_neither_torch_nor_transformers(tmp_path):
+    cfg = tmp_path / "images.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "backend": "transformers",
+                "model": "m",
+                "revision": "r",
+                "send_images": True,
+                "capabilities": {"images": True},
+            }
+        )
+    )
+    code = (
+        "import sys, pathlib\n"
+        f"sys.path.insert(0, {str(SRC)!r})\n"
+        "import packet, packet.decision, packet.decision_transformers\n"
+        "from packet.decision import load_decision_config\n"
+        f"backend = load_decision_config(pathlib.Path({str(cfg)!r}))\n"
+        "assert backend.send_images is True and backend.capabilities.images is True\n"
+        "bad = [m for m in ('torch', 'transformers') if m in sys.modules]\n"
+        "assert not bad, bad\n"
+        "print('clean')\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ),
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr
+    assert "clean" in out.stdout
+
+
+def test_missing_vision_class_is_decision_backend_error(monkeypatch):
+    import builtins
+
+    real = builtins.__import__
+
+    def fake(name, *args, **kwargs):
+        fromlist = kwargs.get("fromlist", ())
+        if len(args) >= 3 and args[2]:
+            fromlist = args[2]
+        if name == "transformers" and fromlist and "AutoModelForImageTextToText" in fromlist:
+            raise ImportError("cannot import name 'AutoModelForImageTextToText'")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake)
+    with pytest.raises(DecisionBackendError, match="AutoModelForImageTextToText"):
+        load_transformers_runner("m", "r", "cpu", images=True)
+
+
+def test_missing_pillow_is_decision_backend_error(monkeypatch):
+    import builtins
+    import sys
+    import types
+
+    real = builtins.__import__
+    fake_tf = types.ModuleType("transformers")
+    fake_tf.AutoModelForImageTextToText = object
+    fake_tf.AutoProcessor = object
+
+    def fake(name, *args, **kwargs):
+        if name == "PIL" or name.startswith("PIL."):
+            raise ImportError("No module named 'PIL'")
+        if name == "transformers":
+            return fake_tf
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setitem(sys.modules, "transformers", fake_tf)
+    monkeypatch.delitem(sys.modules, "PIL", raising=False)
+    monkeypatch.delitem(sys.modules, "PIL.Image", raising=False)
+    monkeypatch.setattr(builtins, "__import__", fake)
+    with pytest.raises(DecisionBackendError, match="Pillow"):
+        load_transformers_runner("m", "r", "cpu", images=True)
+
+
+def test_missing_pil_image_is_decision_backend_error(monkeypatch):
+    import sys
+    import types
+
+    loaded: list[str] = []
+
+    class _Proc:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            loaded.append("processor")
+            return object()
+
+    class _Model:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            loaded.append("model")
+            return cls()
+
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+    fake_tf = types.ModuleType("transformers")
+    fake_tf.AutoProcessor = _Proc
+    fake_tf.AutoModelForImageTextToText = _Model
+    fake_pil = types.ModuleType("PIL")
+    monkeypatch.setitem(sys.modules, "transformers", fake_tf)
+    monkeypatch.setitem(sys.modules, "torch", types.ModuleType("torch"))
+    monkeypatch.setitem(sys.modules, "PIL", fake_pil)
+    monkeypatch.delitem(sys.modules, "PIL.Image", raising=False)
+    with pytest.raises(DecisionBackendError, match="Pillow"):
+        load_transformers_runner("m", "rev-pil", "cpu", images=True)
+    assert loaded == []
+
+
+def test_missing_torch_is_decision_backend_error(monkeypatch):
+    import builtins
+    import sys
+    import types
+
+    real = builtins.__import__
+    fake_tf = types.ModuleType("transformers")
+    fake_tf.AutoModelForImageTextToText = object
+    fake_tf.AutoProcessor = object
+    fake_pil = types.ModuleType("PIL")
+    fake_pil_image = types.ModuleType("PIL.Image")
+    fake_pil.Image = fake_pil_image
+
+    def fake(name, *args, **kwargs):
+        if name == "torch" or name.startswith("torch."):
+            raise ImportError("No module named 'torch'")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setitem(sys.modules, "transformers", fake_tf)
+    monkeypatch.setitem(sys.modules, "PIL", fake_pil)
+    monkeypatch.setitem(sys.modules, "PIL.Image", fake_pil_image)
+    monkeypatch.delitem(sys.modules, "torch", raising=False)
+    monkeypatch.setattr(builtins, "__import__", fake)
+    with pytest.raises(DecisionBackendError, match="transformers backend images require torch"):
+        load_transformers_runner("m", "rev-torch", "cpu", images=True)
+
+
+def test_decide_asks_loader_for_vision_runner_only_when_images_on(monkeypatch):
+    import packet.decision_transformers as dt
+
+    seen: list[bool] = []
+
+    def spy(model, revision, device, *, max_output=16, images=False):
+        seen.append(images)
+        return _RecordingRunner()
+
+    monkeypatch.setattr(dt, "load_transformers_runner", spy)
+    plain = TransformersDecisionBackend(model="m", revision="r")
+    plain.decide(_page1_request())
+    vision = TransformersDecisionBackend(
+        model="m",
+        revision="r",
+        send_images=True,
+        capabilities=DecisionCapabilities(images=True),
+    )
+    vision.decide(_page1_request(), render=lambda: object())
+    assert seen == [False, True]
+
+
+@pytest.mark.parametrize(
+    ("send_images", "images"),
+    [(True, False), (False, True)],
+)
+def test_loader_images_false_for_each_one_flag_off(monkeypatch, send_images, images):
+    import packet.decision_transformers as dt
+
+    seen: list[tuple] = []
+
+    def spy(model, revision, device, *, max_output=16, images=False):
+        seen.append((model, revision, device, max_output, images))
+        return _RecordingRunner()
+
+    monkeypatch.setattr(dt, "load_transformers_runner", spy)
+    backend = TransformersDecisionBackend(
+        model="packet-ci-fake",
+        revision="ci-revision",
+        device="meta",
+        max_output=7,
+        send_images=send_images,
+        capabilities=DecisionCapabilities(images=images),
+    )
+
+    def thunk():
+        raise AssertionError("render called")
+
+    result = backend.decide(_page1_request(), render=thunk)
+    assert result.probability == pytest.approx(0.5)
+    assert seen == [("packet-ci-fake", "ci-revision", "meta", 7, False)]
+
+
+def test_decide_loads_runner_before_render(monkeypatch):
+    import packet.decision_transformers as dt
+
+    order: list[str] = []
+
+    def spy(model, revision, device, *, max_output=16, images=False):
+        order.append("load")
+        assert images is True
+        assert (model, revision, device, max_output) == ("m", "r", "cpu", 16)
+        raise DecisionBackendError("missing AutoModelForImageTextToText")
+
+    monkeypatch.setattr(dt, "load_transformers_runner", spy)
+    backend = TransformersDecisionBackend(
+        model="m",
+        revision="r",
+        send_images=True,
+        capabilities=DecisionCapabilities(images=True),
+    )
+
+    def thunk():
+        order.append("render")
+        return object()
+
+    with pytest.raises(DecisionBackendError, match="AutoModelForImageTextToText"):
+        backend.decide(_page1_request(), render=thunk)
+    assert order == ["load"]
+
+
+def test_send_images_true_capabilities_omitted_stays_text_only(tmp_path, monkeypatch):
+    import packet.decision_transformers as dt
+
+    seen: list[bool] = []
+    made: list[_RecordingRunner] = []
+
+    def spy(model, revision, device, *, max_output=16, images=False):
+        seen.append(images)
+        runner = _RecordingRunner()
+        made.append(runner)
+        return runner
+
+    monkeypatch.setattr(dt, "load_transformers_runner", spy)
+    cfg = tmp_path / "c.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "backend": "transformers",
+                "model": "packet-ci-fake",
+                "revision": "ci-revision",
+                "send_images": True,
+            }
+        )
+    )
+    backend = load_decision_config(cfg)
+    assert backend.send_images is True
+    assert backend.capabilities.images is False
+    assert "no_images" in backend.flags
+
+    def thunk():
+        raise AssertionError("render called")
+
+    result = backend.decide(_page1_request(), render=thunk)
+    assert result.probability == pytest.approx(0.5)
+    assert seen == [False]
+    assert made[0].calls == [(DEFAULT_INPUT_PAGE1, None)]
+
+
+def test_pipeline_passes_lazy_render_only_when_both_image_flags_on(tmp_path, monkeypatch):
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    from packet.eval.pdfutil import write_text_pdf
+    from packet.extract import NativeTextExtractor
+    from packet.pipeline import Pipeline, PipelineConfig
+    from packet.source import PdfPageSource
+
+    image = Image.new("RGB", (4, 4), "red")
+    rendered: list[int] = []
+
+    def fake_render(self, index: int, longest_px: int = 1540):
+        rendered.append(index)
+        return image
+
+    monkeypatch.setattr(PdfPageSource, "render", fake_render)
+    pdf = write_text_pdf(tmp_path / "two.pdf", [["Page one text."], ["Page two text."]])
+
+    def run(name: str, payload: dict) -> _RecordingRunner:
+        cfg = tmp_path / name
+        cfg.write_text(
+            json.dumps({"backend": "transformers", "model": "m", "revision": "r", **payload})
+        )
+        runner = _RecordingRunner()
+        backend = load_decision_config(cfg)
+        backend.runner_factory = _factory(runner)
+        pipe = Pipeline(
+            config=PipelineConfig(decision_backend=backend, split_on_boundary=False),
+            extractors=[NativeTextExtractor()],
+        )
+        list(pipe.stream(pdf))
+        return runner
+
+    rendered.clear()
+    off = run("off.json", {})
+    assert len(off.calls) == 1
+    assert off.calls[0][1] is None
+    assert rendered == []
+
+    for name, payload in (
+        ("send-only.json", {"send_images": True}),
+        ("images-only.json", {"capabilities": {"images": True}}),
+    ):
+        rendered.clear()
+        one = run(name, payload)
+        assert len(one.calls) == 1
+        assert one.calls[0][1] is None
+        assert rendered == []
+
+    rendered.clear()
+    on = run(
+        "on.json",
+        {"send_images": True, "capabilities": {"images": True}},
+    )
+    assert len(on.calls) == 1
+    assert on.calls[0][1] is image
+    assert rendered == [1]
+
+
+class _FakeIds:
+    def __init__(self, ids):
+        self.shape = (1, len(ids))
+
+
+class _FakeInputs(dict):
+    def __init__(self, ids):
+        super().__init__(input_ids=_FakeIds(ids), image_sizes=[[8, 9]])
+        self.moved_to = None
+
+    def to(self, device):
+        self.moved_to = device
+        return self
+
+
+class _FakeTok:
+    pad_token_id = None
+    eos_token_id = 7
+
+    def decode(self, tokens, skip_special_tokens):
+        assert skip_special_tokens is True
+        return "|".join(str(t) for t in tokens)
+
+
+class _FakeProcessor:
+    def __init__(self, chat_template):
+        self.chat_template = chat_template
+        self.tokenizer = _FakeTok()
+        self.calls = []
+        self.last_inputs = None
+
+    def apply_chat_template(self, messages, **kwargs):
+        self.calls.append(("chat", messages, kwargs))
+        return "rendered-chat"
+
+    def __call__(self, **kwargs):
+        self.calls.append(("call", kwargs))
+        self.last_inputs = _FakeInputs([1, 2])
+        return self.last_inputs
+
+
+class _FakeVisionModel:
+    def __init__(self):
+        self.kwargs = None
+
+    def generate(self, **kwargs):
+        self.kwargs = kwargs
+        return [[1, 2, 9, 4]]
+
+
+class _FakeTorch:
+    class _Ctx:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def inference_mode(self):
+        return self._Ctx()
+
+
+def _vision_runner(chat_template):
+    from packet.decision_transformers import _HFVisionRunner
+
+    runner = _HFVisionRunner.__new__(_HFVisionRunner)
+    runner._torch = _FakeTorch()
+    runner.processor = _FakeProcessor(chat_template)
+    runner.model = _FakeVisionModel()
+    runner.device = "cpu"
+    runner.max_output = 5
+    return runner
+
+
+@pytest.mark.parametrize("chat_template", ["{{ tpl }}", None])
+def test_vision_runner_generate_sends_one_image_and_decodes_new_tokens(chat_template):
+    from packet.decision_transformers import INSTRUCTION
+
+    image = object()
+    runner = _vision_runner(chat_template)
+    runner.device = "unit-device"
+    assert runner.generate("facts", image) == "9|4"
+    if chat_template:
+        assert len(runner.processor.calls) == 2
+        kind, messages, kwargs = runner.processor.calls[0]
+        assert kind == "chat"
+        assert kwargs == {"tokenize": False, "add_generation_prompt": True}
+        assert messages == [
+            {"role": "system", "content": INSTRUCTION},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": "facts"},
+                ],
+            },
+        ]
+        call_kind, call_kw = runner.processor.calls[1]
+        assert call_kind == "call"
+        assert call_kw["images"] is image
+        assert call_kw == {"text": "rendered-chat", "images": image, "return_tensors": "pt"}
+    else:
+        plain = INSTRUCTION + "\n\n" + "facts"
+        assert runner.processor.calls == [
+            ("call", {"text": plain, "images": image, "return_tensors": "pt"}),
+        ]
+        assert runner.processor.calls[0][1]["images"] is image
+    sent = runner.processor.last_inputs
+    assert sent.moved_to == "unit-device"
+    kw = runner.model.kwargs
+    assert kw["max_new_tokens"] == 5
+    assert kw["do_sample"] is False
+    assert kw["pad_token_id"] == 7
+    assert kw["input_ids"] is sent["input_ids"]
+    assert kw["input_ids"].shape == (1, 2)
+    assert kw["image_sizes"] is sent["image_sizes"]
+    assert kw["image_sizes"] == [[8, 9]]
+    assert all(value is not image for value in kw.values())
+
+
+def test_vision_from_pretrained_passes_revision_and_disables_remote_code(monkeypatch):
+    import sys
+    import types
+
+    from packet.decision_transformers import _HFVisionRunner
+
+    calls: list[tuple] = []
+    processor_sentinel = object()
+
+    class _Loaded:
+        def __init__(self) -> None:
+            self.moved = None
+            self.evaluated = False
+
+        def to(self, device):
+            self.moved = device
+            return self
+
+        def eval(self):
+            self.evaluated = True
+            return self
+
+    class _Processor:
+        @classmethod
+        def from_pretrained(cls, model, **kwargs):
+            calls.append(("processor", model, kwargs.get("revision"), kwargs["trust_remote_code"]))
+            return processor_sentinel
+
+    class _Vision:
+        @classmethod
+        def from_pretrained(cls, model, **kwargs):
+            calls.append(("model", model, kwargs.get("revision"), kwargs["trust_remote_code"]))
+            return _Loaded()
+
+    fake_tf = types.ModuleType("transformers")
+    fake_tf.AutoProcessor = _Processor
+    fake_tf.AutoModelForImageTextToText = _Vision
+    fake_torch = types.ModuleType("torch")
+    fake_pil = types.ModuleType("PIL")
+    fake_pil_image = types.ModuleType("PIL.Image")
+    fake_pil.Image = fake_pil_image
+    monkeypatch.setitem(sys.modules, "transformers", fake_tf)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "PIL", fake_pil)
+    monkeypatch.setitem(sys.modules, "PIL.Image", fake_pil_image)
+
+    runner = load_transformers_runner(
+        "packet-ci-fake", "ci-revision", "cpu", max_output=6, images=True
+    )
+    assert isinstance(runner, _HFVisionRunner)
+    assert calls == [
+        ("processor", "packet-ci-fake", "ci-revision", False),
+        ("model", "packet-ci-fake", "ci-revision", False),
+    ]
+    assert calls[0][3] is False
+    assert calls[1][3] is False
+    assert runner.processor is processor_sentinel
+    assert runner.model.moved == "cpu"
+    assert runner.model.evaluated is True
+    assert runner.device == "cpu"
+    assert runner.max_output == 6
+    assert runner._torch is fake_torch

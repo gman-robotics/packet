@@ -402,7 +402,9 @@ The hard checklist lives in
    `PaddleExtractor`, currently `NotImplementedError`), so `SCAN` pages
    stop returning empty results
 4. Mid-band VLM confirm window (3-page) for both classification and
-   boundary confirmation
+   boundary confirmation. Seam: `TransformersDecisionBackend` takes one
+   page image when `send_images` and `capabilities.images` are both true
+   (both default false). The confirm window is still open.
 5. ~~`--force-inspect` CLI flag~~ (shipped)
 6. ~~**Look-ahead commit for boundaries**~~ (shipped, signed off by Tom
    2026-10-13; page-number evidence only) — defer `_close_document` until
