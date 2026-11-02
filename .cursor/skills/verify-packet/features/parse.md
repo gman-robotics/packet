@@ -11,7 +11,7 @@ Parse runs the full pipeline on a PDF and emits a PacketTree as JSON, either to 
 - `parse-timings` appends one JSON line per input file via `--timings` (wall seconds, page count, per-page OCR seconds when applicable).
 - `parse-boundary-weights` loads an optional T9 logistic scorer JSON via `--boundary-weights` (parse-only; load errors exit `2` with a single `packet:` line on stderr).
 - `parse-decision-config` loads a decision backend JSON via `--decision-config` (parse-only; mutually exclusive with `--boundary-weights`; load errors exit `2`). Successful `--timings` rows add `decision_backend` and `decision_degraded_pages` when a backend is configured.
-- `parse-trace` writes one JSON object per pipeline event to `--trace OUT.JSONL` (includes `boundary_decided` payloads). The trace file is replaced atomically on success; a failed run may leave `OUT.JSONL.partial` on stderr.
+- `parse-trace` writes one JSON object per pipeline event to `--trace OUT.JSONL` (includes `boundary_decided` payloads). On success, `os.replace` moves the partial onto the target and removes the partial. A failed run keeps `OUT.JSONL.partial` on disk and prints `packet parse: run failed; partial trace kept at <path>` on stderr (the partial JSONL is not written to stderr). A missing single input exits `2` with `not found:` before any partial is opened.
 - `viz-html` (`packet viz`) renders a self-contained offline HTML review from a parse trace plus the `-o` PacketTree JSON (optional `--pdf`, comma-separated `--gold` page indices).
 
 ## How to get to it (user POV)
