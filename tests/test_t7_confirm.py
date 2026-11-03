@@ -13,17 +13,29 @@ from types import SimpleNamespace
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-RUN = ROOT / "bench" / "t7_confirm" / "run.py"
 README = ROOT / "bench" / "t7_confirm" / "README.md"
 BANDS = ("[0.35, 0.74]", "[0.45, 0.74]", "[0.50, 0.65]")
 
 
+def _run_py() -> Path:
+    # Mutator workers overlay the mutant at cwd. Path(__file__).resolve() follows
+    # the tests/ symlink back to the original tree and would load the unmutated file.
+    overlay = Path.cwd() / "bench" / "t7_confirm" / "run.py"
+    if overlay.is_file():
+        return overlay
+    return ROOT / "bench" / "t7_confirm" / "run.py"
+
+
+RUN = _run_py()
+
+
 def _load():
     """Compile from source each time (no stale .pyc under a mutation run)."""
+    run_path = _run_py()
     module = types.ModuleType("t7_confirm_run")
-    module.__file__ = str(RUN)
+    module.__file__ = str(run_path)
     sys.modules["t7_confirm_run"] = module
-    exec(compile(RUN.read_text(), str(RUN), "exec"), module.__dict__)  # noqa: S102 - trusted repo file
+    exec(compile(run_path.read_text(), str(run_path), "exec"), module.__dict__)  # noqa: S102 - trusted repo file
     return module
 
 
@@ -105,6 +117,10 @@ def test_write_config_emits_one_band_without_loading(tmp_path, capsys):
     narrow = json.loads(other.read_text())
     assert narrow["low"] == 0.50
     assert narrow["high"] == 0.65
+    again = tmp_path / "nested" / "again.json"
+    assert mod.main(["--write-config", str(again)]) == 0
+    assert path.read_text().endswith("\n")
+    assert again.read_text().endswith("\n")
     assert mod.main(["--low", "0.2"]) == 2
     assert "both" in capsys.readouterr().err
     rejected = tmp_path / "no.json"
@@ -189,6 +205,7 @@ def test_builtin_run_scores_with_a_stub_backend(tmp_path, monkeypatch):
     assert body["fixtures"]
     assert body["baseline_false_splits"] >= 0
     assert body["pages_confirmed"] >= 0
+    assert 0 <= body["wall_seconds"] < 120
     summary = json.loads((out / "summary-builtin-na.json").read_text())
     assert summary["holdout"] == "not run by this script"
 
@@ -244,13 +261,34 @@ def test_politax_rows_feed_each_file_through_the_cache_pipeline(monkeypatch, tmp
         return "pipe"
 
     monkeypatch.setattr(ocr_eval, "ocr_cache_pipeline", fake_pipe)
-    monkeypatch.setattr(mod, "_score_one", lambda fx, pipe: (SimpleNamespace(name="a"), 2))
+
+    def fake_score(fx, pipe):
+        del pipe
+        return SimpleNamespace(name=fx.notes or fx.pdf.name), 2
+
+    monkeypatch.setattr(mod, "_score_one", fake_score)
     rows, confirmed, degraded, _stats = mod._politax_rows(manifest, fixtures, tmp_path, None)
     assert confirmed == 2 and degraded == [] and len(rows) == 1
     assert seen == [(tmp_path, "s1", None)]
+    unnamed = [SimpleNamespace(notes="", pdf=Path("a.pdf"))]
+    _rows, _c, _d, _s = mod._politax_rows(manifest, unnamed, tmp_path, None)
+    assert seen[-1] == (tmp_path, "s1", None)
     config = SimpleNamespace(confirmer=SimpleNamespace(degraded_pages=[4]))
     _rows, _c, degraded, _s = mod._politax_rows(manifest, fixtures, tmp_path, config)
-    assert degraded == [{"file": "a", "pages": [4]}]
+    assert degraded == [{"file": "a.pdf", "pages": [4]}]
+
+
+def test_score_many_sums_confirmed_pages(monkeypatch):
+    mod = _load()
+    monkeypatch.setattr(mod, "_score_one", lambda fx, pipe: (SimpleNamespace(name=fx.name), 2))
+    fixtures = [SimpleNamespace(name="a"), SimpleNamespace(name="b")]
+    rows, confirmed, degraded = mod._score_many(fixtures, "pipe", None)
+    assert [row.name for row in rows] == ["a", "b"]
+    assert confirmed == 4 and degraded == []
+    spy = SimpleNamespace(degraded_pages=[9])
+    _rows, confirmed, degraded = mod._score_many(fixtures, "pipe", spy)
+    assert confirmed == 4
+    assert degraded == [{"file": "a", "pages": [9]}, {"file": "b", "pages": [9]}]
 
 
 def test_evaluate_politax_runs_baseline_then_confirmer(monkeypatch):
@@ -267,7 +305,8 @@ def test_evaluate_politax_runs_baseline_then_confirmer(monkeypatch):
         SimpleNamespace(), "politax", "conf"
     )
     assert calls[0] is None and calls[1].confirmer == "conf"
-    assert got == base == ["row"] and confirmed == 1 and stats == "stats" and wall >= 0
+    assert got == base == ["row"] and confirmed == 1 and stats == "stats"
+    assert 0 <= wall < 10
 
 
 def _ns(**kw):
@@ -369,7 +408,9 @@ def test_best_eligible_emit_and_paths(tmp_path, capsys):
     assert mod._result_path(_ns(out=tmp_path), "builtin", 0.5, 0.65).name == "builtin-na-0.50-0.65.json"
     payload = {"set": "s", "subset": "t", "low": 0.1, "high": 0.2, "macro_f1": 0.5,
                "false_splits": 1, "eligible": True}
-    mod._emit(tmp_path / "x" / "p.json", payload)
+    written = tmp_path / "x" / "p.json"
+    mod._emit(written, payload)
+    assert written.read_text().endswith("\n")
     out = capsys.readouterr().out
     assert "macro 0.5000 false_splits 1 eligible True" in out
     mod._emit(tmp_path / "s.json", {"set": "s", "subset": "t", "best_eligible": None})
@@ -409,6 +450,46 @@ def test_score_one_counts_only_confirmed_reasons(tmp_path, monkeypatch):
     result, confirmed = mod._score_one(fx, _Pipe())
     assert confirmed == 2
     assert result.boundary == "score" and result.pages == 2
+
+
+def test_score_one_does_not_credit_a_one_page_miss(tmp_path, monkeypatch):
+    from packet.eval import run
+    from packet.types import LogicalDocument, Packet, PacketOrigin
+
+    gold = Packet(
+        id="g",
+        origin=PacketOrigin(path="a.pdf", page_count=4),
+        documents=[
+            LogicalDocument(id="0", page_start=0, page_end=1),
+            LogicalDocument(id="1", page_start=2, page_end=3),
+        ],
+    )
+    pred = Packet(
+        id="p",
+        origin=PacketOrigin(path="a.pdf", page_count=4),
+        documents=[
+            LogicalDocument(id="0", page_start=0, page_end=2),
+            LogicalDocument(id="1", page_start=3, page_end=3),
+        ],
+    )
+
+    class _Pipe:
+        def parse(self, pdf, on_event):
+            del pdf, on_event
+            return pred
+
+    monkeypatch.setattr(run, "text_layer_pages", lambda pdf: set())
+    fx = SimpleNamespace(
+        pdf=tmp_path / "a.pdf",
+        gold=gold,
+        name="a",
+        condition="c",
+        notes="",
+    )
+    result, confirmed = _load()._score_one(fx, _Pipe())
+    assert confirmed == 0
+    assert result.boundary.matched == 0
+    assert result.boundary.f1 == 0.0
 
 
 def test_run_writes_summary_only_for_several_bands(tmp_path, monkeypatch):

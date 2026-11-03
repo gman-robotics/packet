@@ -100,17 +100,12 @@ class Pipeline:
                     yield Event.block_emitted(block)
 
                 backend = self.config.decision_backend
-                decide_render = (
-                    lazy_render
-                    if backend is not None and decision_backend_passes_images(backend)
-                    else None
-                )
                 signal = detector.observe(
                     classified,
                     blocks,
                     scorer=self.config.scorer,
                     decision_backend=backend,
-                    render=decide_render,
+                    render=_decision_render(backend, lazy_render),
                 )
                 if signal is not None:
                     yield Event.boundary_proposed(
@@ -195,6 +190,12 @@ class Pipeline:
         doc.extras[PACKET_FLAGS_KEY] = prior_dicts + [flag.model_dump() for flag in fresh]
         packet.documents.append(doc)
         return doc
+
+
+def _decision_render(backend, lazy_render):
+    if backend is not None and decision_backend_passes_images(backend):
+        return lazy_render
+    return None
 
 
 def _observe_confirmer(confirmer, classified, blocks, render, page_number, page_total) -> None:

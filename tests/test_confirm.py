@@ -402,10 +402,10 @@ def test_fact_slice_reaches_the_last_after_page():
     backend = _SliceBackend()
     conf = _confirmer(backend)
     _observe(conf, ["a", "b", "c", "d"], [None] * 4)
-    assert conf.confirm(_page(0), _page(1, 0.5), [_page(2)]) is True
-    assert len(backend.requests[0].facts) == 3
+    assert conf.confirm(_page(0), _page(1, 0.5), [_page(2), _page(3)]) is True
+    assert [row["text"] for row in backend.requests[0].facts] == ["a", "b", "c", "d"]
     assert conf.confirm(_page(1), _page(2, 0.5), []) is True
-    assert len(backend.requests[1].facts) == 3
+    assert [row["text"] for row in backend.requests[1].facts] == ["a", "b", "c"]
 
 
 def test_unobserved_page_returns_none_without_a_call():
