@@ -1,0 +1,36 @@
+{
+  "set": "dlnet-whole",
+  "subset": null,
+  "bands": [
+    {
+      "low": 0.35,
+      "high": 0.74,
+      "macro_f1": 0.9846153846153847,
+      "false_splits": 0,
+      "baseline_false_splits": 0,
+      "eligible": true
+    },
+    {
+      "low": 0.45,
+      "high": 0.74,
+      "macro_f1": 0.9846153846153847,
+      "false_splits": 0,
+      "baseline_false_splits": 0,
+      "eligible": true
+    },
+    {
+      "low": 0.5,
+      "high": 0.65,
+      "macro_f1": 0.9846153846153847,
+      "false_splits": 0,
+      "baseline_false_splits": 0,
+      "eligible": true
+    }
+  ],
+  "best_eligible": {
+    "low": 0.35,
+    "high": 0.74,
+    "macro_f1": 0.9846153846153847
+  },
+  "holdout": "not run by this script"
+}

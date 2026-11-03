@@ -1,0 +1,261 @@
+{
+  "model": "mlx-community/Qwen3.5-4B-4bit",
+  "revision": "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
+  "set": "dlnet-whole",
+  "subset": null,
+  "low": 0.35,
+  "high": 0.74,
+  "load_seconds": null,
+  "wall_seconds": 4.976056665647775,
+  "peak_rss_bytes": 146145280,
+  "pages_confirmed": 0,
+  "decision_changes": 0,
+  "macro_f1": 0.9846153846153847,
+  "false_splits": 0,
+  "baseline_macro_f1": 0.9846153846153847,
+  "baseline_false_splits": 0,
+  "eligible": true,
+  "latency_p50": null,
+  "latency_p95": null,
+  "degraded_pages": [
+    {
+      "file": "dlw-00",
+      "pages": []
+    },
+    {
+      "file": "dlw-01",
+      "pages": []
+    },
+    {
+      "file": "dlw-02",
+      "pages": []
+    },
+    {
+      "file": "dlw-03",
+      "pages": []
+    },
+    {
+      "file": "dlw-04",
+      "pages": []
+    },
+    {
+      "file": "dlw-05",
+      "pages": []
+    },
+    {
+      "file": "dlw-06",
+      "pages": []
+    },
+    {
+      "file": "dlw-07",
+      "pages": []
+    },
+    {
+      "file": "dlw-08",
+      "pages": []
+    },
+    {
+      "file": "dlw-09",
+      "pages": []
+    },
+    {
+      "file": "dlw-10",
+      "pages": []
+    },
+    {
+      "file": "dlw-11",
+      "pages": []
+    },
+    {
+      "file": "dlw-12",
+      "pages": []
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "dlw-00",
+      "notes": "1001.1442.pdf+1001.2465.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        5
+      ],
+      "baseline_predicted": [
+        5
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-01",
+      "notes": "1001.4869.pdf+1001.0123.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        11
+      ],
+      "baseline_predicted": [
+        11
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-02",
+      "notes": "1001.0266.pdf+1001.0187.pdf+1001.2359.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        10,
+        16
+      ],
+      "baseline_predicted": [
+        10,
+        16
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-03",
+      "notes": "1001.2804.pdf+1001.0652.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        11
+      ],
+      "baseline_predicted": [
+        11
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-04",
+      "notes": "1001.2700.pdf+1001.0481.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        9
+      ],
+      "baseline_predicted": [
+        9
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-05",
+      "notes": "1001.2458.pdf+1001.1616.pdf+1001.2556.pdf+1001.0011.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        11,
+        23,
+        27
+      ],
+      "baseline_predicted": [
+        11,
+        23,
+        27
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-06",
+      "notes": "1001.0957.pdf+1001.1102.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        6
+      ],
+      "baseline_predicted": [
+        6
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-07",
+      "notes": "1001.3200.pdf+1001.1602.pdf+1002.1976.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        3,
+        10
+      ],
+      "baseline_predicted": [
+        3,
+        10
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-08",
+      "notes": "1001.1545.pdf+1001.1983.pdf+1001.0471.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        5,
+        15
+      ],
+      "baseline_predicted": [
+        5,
+        15
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-09",
+      "notes": "1001.2881.pdf+1001.3358.pdf+1001.3228.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        2,
+        7
+      ],
+      "baseline_predicted": [
+        2,
+        7
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-10",
+      "notes": "1002.1987.pdf+1001.2380.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        10
+      ],
+      "baseline_predicted": [
+        10
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-11",
+      "notes": "1001.1226.pdf+1001.1895.pdf+1001.2127.pdf",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        3,
+        12
+      ],
+      "baseline_predicted": [
+        3,
+        12
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "dlw-12",
+      "notes": "1001.3423.pdf+1001.1127.pdf+1001.1368.pdf+1410.8736.pdf",
+      "f1": 0.8,
+      "false_splits": 0,
+      "predicted": [
+        5,
+        14
+      ],
+      "baseline_predicted": [
+        5,
+        14
+      ],
+      "false_ocr_pages": []
+    }
+  ]
+}

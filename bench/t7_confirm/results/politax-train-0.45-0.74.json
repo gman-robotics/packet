@@ -1,0 +1,660 @@
+{
+  "model": "mlx-community/Qwen3.5-4B-4bit",
+  "revision": "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
+  "set": "politax",
+  "subset": "train",
+  "low": 0.45,
+  "high": 0.74,
+  "load_seconds": 1.6127365422435105,
+  "wall_seconds": 984.215023833327,
+  "peak_rss_bytes": 4121542656,
+  "pages_confirmed": 587,
+  "decision_changes": 21,
+  "macro_f1": 0.11307105521845821,
+  "false_splits": 23,
+  "baseline_macro_f1": 0.23431866926753447,
+  "baseline_false_splits": 41,
+  "eligible": true,
+  "latency_p50": 1.6511841672472656,
+  "latency_p95": 1.841382292099297,
+  "degraded_pages": [
+    {
+      "file": "trump_business_2015_DJT_Holdings_2015",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2015_DJT_Holdings_Managing_Member_LLC_2015",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2015_LFB_Acquisition_LLC_2015",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2016_DJT_Holdings_2016",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2016_DJT_Holdings_Managing_Member_LLC_2016",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2016_LFB_Acquisition_LLC_2016",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2017_DJT_Holdings_2017",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2017_LFB_Acquisition_LLC_2017",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2018_DTTM_Operations_2018",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2018_LFB_Acquisition_LLC_2018",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2019_DJT_Holdings_Managing_Member_LLC_2019_-_2",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2019_DTTM_Operations_2019",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2020_DJT_Holdings_2020",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2020_DJT_Holdings_Managing_Member_LLC_2020_-_1",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2020_DTTM_Operations_2020",
+      "pages": []
+    },
+    {
+      "file": "trump_business_2020_LFB_Acquisition_LLC_2020",
+      "pages": []
+    },
+    {
+      "file": "trump_individual_2015_Form_1040_2015-1",
+      "pages": []
+    },
+    {
+      "file": "trump_individual_2015_amt_Form_1040_2015-3",
+      "pages": []
+    },
+    {
+      "file": "trump_individual_2016_Form_1040_2016-2",
+      "pages": []
+    },
+    {
+      "file": "trump_individual_2017_Form_1040_2017-1",
+      "pages": []
+    },
+    {
+      "file": "trump_individual_2018_Form_1040_2018-2",
+      "pages": []
+    },
+    {
+      "file": "trump_individual_2019_Form_1040_2019-3",
+      "pages": []
+    },
+    {
+      "file": "trump_individual_2020_Form_1040_2020-2",
+      "pages": []
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "trump_business_2015_DJT_Holdings_2015",
+      "notes": "trump_business_2015_DJT Holdings 2015.pdf",
+      "f1": 0.04166666666666667,
+      "false_splits": 0,
+      "predicted": [
+        76
+      ],
+      "baseline_predicted": [
+        4,
+        9,
+        15,
+        29,
+        79,
+        83,
+        85
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2015_DJT_Holdings_Managing_Member_LLC_2015",
+      "notes": "trump_business_2015_DJT Holdings Managing Member LLC 2015.pdf",
+      "f1": 0.0,
+      "false_splits": 0,
+      "predicted": [],
+      "baseline_predicted": [
+        57,
+        59
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2015_LFB_Acquisition_LLC_2015",
+      "notes": "trump_business_2015_LFB Acquisition LLC 2015.pdf",
+      "f1": 0.0909090909090909,
+      "false_splits": 0,
+      "predicted": [
+        33
+      ],
+      "baseline_predicted": [
+        9,
+        14,
+        36
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2016_DJT_Holdings_2016",
+      "notes": "trump_business_2016_DJT Holdings 2016.pdf",
+      "f1": 0.0,
+      "false_splits": 2,
+      "predicted": [
+        37,
+        77
+      ],
+      "baseline_predicted": [
+        5,
+        24,
+        58,
+        77,
+        79
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2016_DJT_Holdings_Managing_Member_LLC_2016",
+      "notes": "trump_business_2016_DJT Holdings Managing Member LLC 2016.pdf",
+      "f1": 0.0,
+      "false_splits": 1,
+      "predicted": [
+        0
+      ],
+      "baseline_predicted": [
+        0,
+        7,
+        16
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2016_LFB_Acquisition_LLC_2016",
+      "notes": "trump_business_2016_LFB Acquisition LLC 2016.pdf",
+      "f1": 0.125,
+      "false_splits": 0,
+      "predicted": [
+        9,
+        38
+      ],
+      "baseline_predicted": [
+        5,
+        38,
+        41
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2017_DJT_Holdings_2017",
+      "notes": "trump_business_2017_DJT Holdings 2017.pdf",
+      "f1": 0.05970149253731343,
+      "false_splits": 2,
+      "predicted": [
+        40,
+        92,
+        122,
+        142
+      ],
+      "baseline_predicted": [
+        4,
+        14,
+        17,
+        20,
+        32,
+        87,
+        89,
+        142,
+        146,
+        151
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2017_LFB_Acquisition_LLC_2017",
+      "notes": "trump_business_2017_LFB Acquisition LLC 2017.pdf",
+      "f1": 0.07407407407407407,
+      "false_splits": 0,
+      "predicted": [
+        36
+      ],
+      "baseline_predicted": [
+        9,
+        39
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2018_DTTM_Operations_2018",
+      "notes": "trump_business_2018_DTTM Operations 2018.pdf",
+      "f1": 0.1739130434782609,
+      "false_splits": 1,
+      "predicted": [
+        0,
+        39,
+        101
+      ],
+      "baseline_predicted": [
+        0,
+        2,
+        5,
+        41,
+        42,
+        43,
+        104
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2018_LFB_Acquisition_LLC_2018",
+      "notes": "trump_business_2018_LFB Acquisition LLC 2018.pdf",
+      "f1": 0.07142857142857144,
+      "false_splits": 1,
+      "predicted": [
+        0,
+        46
+      ],
+      "baseline_predicted": [
+        0,
+        10,
+        49
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2019_DJT_Holdings_Managing_Member_LLC_2019_-_2",
+      "notes": "trump_business_2019_DJT Holdings Managing Member LLC 2019 - 2.pdf",
+      "f1": 0.0,
+      "false_splits": 0,
+      "predicted": [],
+      "baseline_predicted": [],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2019_DTTM_Operations_2019",
+      "notes": "trump_business_2019_DTTM Operations 2019.pdf",
+      "f1": 0.05714285714285714,
+      "false_splits": 2,
+      "predicted": [
+        0,
+        34,
+        59
+      ],
+      "baseline_predicted": [
+        0,
+        5,
+        42,
+        62,
+        114,
+        117
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2020_DJT_Holdings_2020",
+      "notes": "trump_business_2020_DJT Holdings 2020.pdf",
+      "f1": 0.0273972602739726,
+      "false_splits": 2,
+      "predicted": [
+        0,
+        55,
+        227
+      ],
+      "baseline_predicted": [
+        0,
+        6,
+        55,
+        194,
+        196,
+        198,
+        230
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2020_DJT_Holdings_Managing_Member_LLC_2020_-_1",
+      "notes": "trump_business_2020_DJT Holdings Managing Member LLC 2020 - 1.pdf",
+      "f1": 0.0689655172413793,
+      "false_splits": 0,
+      "predicted": [
+        33,
+        44
+      ],
+      "baseline_predicted": [
+        5,
+        24,
+        30
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2020_DTTM_Operations_2020",
+      "notes": "trump_business_2020_DTTM Operations 2020.pdf",
+      "f1": 0.10810810810810811,
+      "false_splits": 3,
+      "predicted": [
+        0,
+        32,
+        65,
+        81,
+        102
+      ],
+      "baseline_predicted": [
+        0,
+        6,
+        35,
+        38,
+        40,
+        65,
+        80,
+        102,
+        123
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_business_2020_LFB_Acquisition_LLC_2020",
+      "notes": "trump_business_2020_LFB Acquisition LLC 2020.pdf",
+      "f1": 0.0625,
+      "false_splits": 2,
+      "predicted": [
+        0,
+        13,
+        51
+      ],
+      "baseline_predicted": [
+        0,
+        13,
+        42,
+        44,
+        52,
+        55
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_individual_2015_Form_1040_2015-1",
+      "notes": "trump_individual_2015_Form 1040 2015-1.pdf",
+      "f1": 0.33628318584070793,
+      "false_splits": 0,
+      "predicted": [
+        6,
+        13,
+        19,
+        21,
+        23,
+        25,
+        30,
+        38,
+        42,
+        49,
+        58,
+        67,
+        98,
+        102,
+        111,
+        113,
+        115,
+        117,
+        125
+      ],
+      "baseline_predicted": [
+        6,
+        8,
+        15,
+        21,
+        23,
+        25,
+        27,
+        32,
+        40,
+        44,
+        51,
+        57,
+        61,
+        63,
+        64,
+        66,
+        70,
+        98,
+        102,
+        104,
+        106,
+        109,
+        113,
+        115,
+        117,
+        121
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_individual_2015_amt_Form_1040_2015-3",
+      "notes": "trump_individual_2015_amt_Form 1040 2015-3.pdf",
+      "f1": 0.36363636363636365,
+      "false_splits": 2,
+      "predicted": [
+        1,
+        11,
+        20,
+        26,
+        35,
+        190
+      ],
+      "baseline_predicted": [
+        0,
+        3,
+        4,
+        6,
+        7,
+        8,
+        20,
+        23,
+        24,
+        30,
+        37,
+        38,
+        40
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_individual_2016_Form_1040_2016-2",
+      "notes": "trump_individual_2016_Form 1040 2016-2.pdf",
+      "f1": 0.0,
+      "false_splits": 0,
+      "predicted": [],
+      "baseline_predicted": [
+        7,
+        50,
+        118,
+        135
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_individual_2017_Form_1040_2017-1",
+      "notes": "trump_individual_2017_Form 1040 2017-1.pdf",
+      "f1": 0.33613445378151263,
+      "false_splits": 4,
+      "predicted": [
+        9,
+        11,
+        13,
+        15,
+        17,
+        19,
+        21,
+        28,
+        73,
+        129,
+        134,
+        143,
+        161,
+        191,
+        199,
+        215,
+        231,
+        239,
+        241,
+        247,
+        249,
+        259,
+        278,
+        281
+      ],
+      "baseline_predicted": [
+        1,
+        11,
+        13,
+        15,
+        17,
+        19,
+        21,
+        28,
+        55,
+        57,
+        59,
+        61,
+        63,
+        65,
+        67,
+        69,
+        71,
+        73,
+        75,
+        77,
+        79,
+        81,
+        83,
+        85,
+        89,
+        91,
+        134,
+        139,
+        145,
+        162,
+        191,
+        199,
+        207,
+        208,
+        209,
+        231,
+        237,
+        241,
+        247,
+        249,
+        251,
+        259,
+        267,
+        270,
+        271,
+        276
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_individual_2018_Form_1040_2018-2",
+      "notes": "trump_individual_2018_Form 1040 2018-2.pdf",
+      "f1": 0.6037735849056604,
+      "false_splits": 0,
+      "predicted": [
+        17,
+        20,
+        23,
+        25,
+        28,
+        31,
+        33,
+        35,
+        37,
+        45,
+        48,
+        56,
+        66,
+        69,
+        77,
+        81
+      ],
+      "baseline_predicted": [
+        17,
+        20,
+        23,
+        25,
+        28,
+        31,
+        33,
+        35,
+        37,
+        45,
+        48,
+        56,
+        66,
+        69,
+        77,
+        81
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_individual_2019_Form_1040_2019-3",
+      "notes": "trump_individual_2019_Form 1040 2019-3.pdf",
+      "f1": 0.0,
+      "false_splits": 0,
+      "predicted": [],
+      "baseline_predicted": [
+        2,
+        8,
+        11,
+        12
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "trump_individual_2020_Form_1040_2020-2",
+      "notes": "trump_individual_2020_Form 1040 2020-2.pdf",
+      "f1": 0.0,
+      "false_splits": 1,
+      "predicted": [
+        88
+      ],
+      "baseline_predicted": [
+        7,
+        20,
+        21,
+        66
+      ],
+      "false_ocr_pages": []
+    }
+  ],
+  "ocr_cache": {
+    "pages_used": 2882,
+    "pages_missing": 0,
+    "pages_truncated": 2,
+    "engines": {
+      "lighton-mlx:lightonai/LightOnOCR-3-1B@23d544085c886bbdace647bcfab91203299417e2": 2882
+    }
+  }
+}

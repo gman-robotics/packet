@@ -1,0 +1,97 @@
+{
+  "model": "mlx-community/Qwen3.5-4B-4bit",
+  "revision": "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
+  "set": "builtin",
+  "subset": null,
+  "low": 0.45,
+  "high": 0.74,
+  "load_seconds": null,
+  "wall_seconds": 0.005950000137090683,
+  "peak_rss_bytes": 51609600,
+  "pages_confirmed": 0,
+  "decision_changes": 0,
+  "macro_f1": 1.0,
+  "false_splits": 0,
+  "baseline_macro_f1": 1.0,
+  "baseline_false_splits": 0,
+  "eligible": true,
+  "latency_p50": null,
+  "latency_p95": null,
+  "degraded_pages": [
+    {
+      "file": "text-layer",
+      "pages": []
+    },
+    {
+      "file": "multi-doc",
+      "pages": []
+    },
+    {
+      "file": "shared-header",
+      "pages": []
+    },
+    {
+      "file": "unnumbered-cover",
+      "pages": []
+    },
+    {
+      "file": "scan",
+      "pages": []
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "text-layer",
+      "notes": "Single document, zero gold boundaries.",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [],
+      "baseline_predicted": [],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "multi-doc",
+      "notes": "Two docs, page numbers restart, distinct titles.",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        1
+      ],
+      "baseline_predicted": [
+        1
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "shared-header",
+      "notes": "Same header fingerprint; boundary must come from page-number reset.",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [
+        1
+      ],
+      "baseline_predicted": [
+        1
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "unnumbered-cover",
+      "notes": "Unnumbered cover is page 1 (implied_page_one on page 0); one document.",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [],
+      "baseline_predicted": [],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "scan",
+      "notes": "No text operators. v0 extractor should emit no OCR blocks.",
+      "f1": 1.0,
+      "false_splits": 0,
+      "predicted": [],
+      "baseline_predicted": [],
+      "false_ocr_pages": []
+    }
+  ]
+}
