@@ -1,0 +1,285 @@
+{
+  "model": "mlx-community/Qwen3.5-4B-4bit",
+  "revision": "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
+  "set": "politax",
+  "subset": "holdout",
+  "low": 0.5,
+  "high": 0.65,
+  "load_seconds": 1.7500482080504298,
+  "wall_seconds": 32.99199687456712,
+  "peak_rss_bytes": 3977773056,
+  "pages_confirmed": 21,
+  "decision_changes": 0,
+  "macro_f1": 0.4159071005884396,
+  "false_splits": 19,
+  "baseline_macro_f1": 0.4159071005884396,
+  "baseline_false_splits": 19,
+  "eligible": true,
+  "latency_p50": 1.4337607501074672,
+  "latency_p95": 1.491278958041221,
+  "degraded_pages": [
+    {
+      "file": "biden_2018_federal_returns_tn",
+      "pages": []
+    },
+    {
+      "file": "harris_2020_federal_state_returns",
+      "pages": []
+    },
+    {
+      "file": "harris_2023_federal_state_returns",
+      "pages": []
+    },
+    {
+      "file": "obama_2009_complete_return",
+      "pages": []
+    },
+    {
+      "file": "obama_2010_complete_return",
+      "pages": []
+    },
+    {
+      "file": "obama_2011_complete_return",
+      "pages": []
+    },
+    {
+      "file": "obama_2013_complete_return",
+      "pages": []
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "biden_2018_federal_returns_tn",
+      "notes": "biden_2018_federal_returns_tn.pdf",
+      "f1": 0.14634146341463414,
+      "false_splits": 3,
+      "predicted": [
+        1,
+        3,
+        8,
+        9,
+        22,
+        42
+      ],
+      "baseline_predicted": [
+        1,
+        3,
+        8,
+        9,
+        22,
+        42
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "harris_2020_federal_state_returns",
+      "notes": "harris_2020_federal_state_returns.pdf",
+      "f1": 0.379746835443038,
+      "false_splits": 6,
+      "predicted": [
+        3,
+        7,
+        10,
+        13,
+        15,
+        17,
+        19,
+        22,
+        26,
+        28,
+        29,
+        46,
+        48,
+        51,
+        73,
+        75,
+        77,
+        78,
+        81,
+        89,
+        96
+      ],
+      "baseline_predicted": [
+        3,
+        7,
+        10,
+        13,
+        15,
+        17,
+        19,
+        22,
+        26,
+        28,
+        29,
+        46,
+        48,
+        51,
+        73,
+        75,
+        77,
+        78,
+        81,
+        89,
+        96
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "harris_2023_federal_state_returns",
+      "notes": "harris_2023_federal_state_returns.pdf",
+      "f1": 0.48,
+      "false_splits": 1,
+      "predicted": [
+        1,
+        3,
+        5,
+        8,
+        25,
+        32,
+        35
+      ],
+      "baseline_predicted": [
+        1,
+        3,
+        5,
+        8,
+        25,
+        32,
+        35
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "obama_2009_complete_return",
+      "notes": "obama_2009_complete_return.pdf",
+      "f1": 0.6060606060606061,
+      "false_splits": 2,
+      "predicted": [
+        0,
+        4,
+        6,
+        10,
+        15,
+        17,
+        19,
+        21,
+        23,
+        40,
+        46,
+        52
+      ],
+      "baseline_predicted": [
+        0,
+        4,
+        6,
+        10,
+        15,
+        17,
+        19,
+        21,
+        23,
+        40,
+        46,
+        52
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "obama_2010_complete_return",
+      "notes": "obama_2010_complete_return.pdf",
+      "f1": 0.4090909090909091,
+      "false_splits": 3,
+      "predicted": [
+        3,
+        5,
+        9,
+        11,
+        13,
+        15,
+        17,
+        19,
+        37,
+        48,
+        56,
+        63
+      ],
+      "baseline_predicted": [
+        3,
+        5,
+        9,
+        11,
+        13,
+        15,
+        17,
+        19,
+        37,
+        48,
+        56,
+        63
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "obama_2011_complete_return",
+      "notes": "obama_2011_complete_return.pdf",
+      "f1": 0.42857142857142855,
+      "false_splits": 3,
+      "predicted": [
+        0,
+        4,
+        6,
+        11,
+        13,
+        16,
+        27,
+        33,
+        42
+      ],
+      "baseline_predicted": [
+        0,
+        4,
+        6,
+        11,
+        13,
+        16,
+        27,
+        33,
+        42
+      ],
+      "false_ocr_pages": []
+    },
+    {
+      "name": "obama_2013_complete_return",
+      "notes": "obama_2013_complete_return.pdf",
+      "f1": 0.46153846153846156,
+      "false_splits": 1,
+      "predicted": [
+        7,
+        10,
+        12,
+        20,
+        21,
+        34,
+        40
+      ],
+      "baseline_predicted": [
+        7,
+        10,
+        12,
+        20,
+        21,
+        34,
+        40
+      ],
+      "false_ocr_pages": []
+    }
+  ],
+  "ocr_cache": {
+    "pages_used": 429,
+    "pages_missing": 0,
+    "pages_truncated": 0,
+    "engines": {
+      "lighton-mlx:lightonai/LightOnOCR-3-1B@23d544085c886bbdace647bcfab91203299417e2": 429
+    }
+  }
+}

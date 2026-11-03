@@ -100,17 +100,12 @@ class Pipeline:
                     yield Event.block_emitted(block)
 
                 backend = self.config.decision_backend
-                decide_render = (
-                    lazy_render
-                    if backend is not None and decision_backend_passes_images(backend)
-                    else None
-                )
                 signal = detector.observe(
                     classified,
                     blocks,
                     scorer=self.config.scorer,
                     decision_backend=backend,
-                    render=decide_render,
+                    render=_decision_render(backend, lazy_render),
                 )
                 if signal is not None:
                     yield Event.boundary_proposed(
@@ -118,6 +113,10 @@ class Pipeline:
                     )
                 obs = PageObs(classified.index, signal, detector.last_page_number,
                               detector.last_page_total)
+                _observe_confirmer(
+                    self.config.confirmer, classified, blocks, lazy_render,
+                    detector.last_page_number, detector.last_page_total,
+                )
                 pending[classified.index] = (blocks, obs)
                 for decision in splitter.push(obs):
                     yield from self._apply(packet, state, decision, *pending.pop(decision.page), tagger)
@@ -191,6 +190,22 @@ class Pipeline:
         doc.extras[PACKET_FLAGS_KEY] = prior_dicts + [flag.model_dump() for flag in fresh]
         packet.documents.append(doc)
         return doc
+
+
+def _decision_render(backend, lazy_render):
+    if backend is not None and decision_backend_passes_images(backend):
+        return lazy_render
+    return None
+
+
+def _observe_confirmer(confirmer, classified, blocks, render, page_number, page_total) -> None:
+    """Duck-typed page hook. Missing ``observe_page`` leaves stub confirmers alone."""
+    if confirmer is None:
+        return
+    hook = getattr(confirmer, "observe_page", None)
+    if hook is None:
+        return
+    hook(classified, blocks, render, page_number, page_total)
 
 
 def _lazy_lines(source: PdfPageSource, index: int):

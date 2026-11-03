@@ -79,6 +79,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="JSON decision backend config for parse (optional; load errors exit 2)",
     )
+    parse.add_argument(
+        "--confirm-config",
+        default=None,
+        help="JSON mid-band confirmer (optional; off by default; load errors exit 2)",
+    )
 
     viz = sub.add_parser("viz", help="write a self-contained HTML review of a parse trace")
     viz.add_argument("trace", help="JSONL from packet parse --trace")
@@ -113,6 +118,11 @@ def main(argv: list[str] | None = None) -> int:
         "--boundary-weights",
         default=None,
         help="JSON logistic boundary weights for eval (optional; load errors exit 2)",
+    )
+    ev.add_argument(
+        "--confirm-config",
+        default=None,
+        help="JSON mid-band confirmer (optional; off by default; load errors exit 2)",
     )
     ev.add_argument(
         "--ocr-cache",
@@ -233,6 +243,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _parse_pipeline_config(args) -> PipelineConfig | None:
+    config = _parse_backend_config(args)
+    if config is None or not _attach_confirmer(config, getattr(args, "confirm_config", None)):
+        return None
+    return config
+
+
+def _parse_backend_config(args) -> PipelineConfig | None:
     from packet.boundary_model import BoundaryWeightsError, load_logistic_scorer
     from packet.decision import DecisionBackendError, load_decision_config
     from packet.pipeline import PipelineConfig
@@ -257,6 +274,36 @@ def _parse_pipeline_config(args) -> PipelineConfig | None:
             print(f"packet: {exc}", file=sys.stderr)
             return None
     return config
+
+
+_CONFIRM_FAILED = object()
+
+
+def _load_confirmer(path: str | None):
+    """Return a confirmer, None when the flag is omitted, or ``_CONFIRM_FAILED``.
+
+    An omitted path returns before ``packet.confirm`` is imported.
+    """
+    if not path:
+        return None
+    from packet.boundary_model import BoundaryWeightsError
+    from packet.confirm import load_confirm_config
+    from packet.decision import DecisionBackendError
+
+    try:
+        return load_confirm_config(Path(path))
+    except (DecisionBackendError, BoundaryWeightsError) as exc:
+        print(f"packet: {exc}", file=sys.stderr)
+        return _CONFIRM_FAILED
+
+
+def _attach_confirmer(config: PipelineConfig, path: str | None) -> bool:
+    confirmer = _load_confirmer(path)
+    if confirmer is _CONFIRM_FAILED:
+        return False
+    if confirmer is not None:
+        config.confirmer = confirmer
+    return True
 
 
 def _timing_decision_fields(config: PipelineConfig) -> dict:
@@ -647,6 +694,7 @@ class _EvalRun:
     gold_totals: tuple | None = None
     holdout_baseline: object = None
     holdout_scorer: object = None
+    scorer_fn: object = None
     ocr_stats: object = None
 
 
@@ -677,21 +725,45 @@ def _eval_politax(args, ev, pipe, viz_kw) -> _EvalRun:
     run = _EvalRun(results=[])
     run.gold_totals = politax.corpus_gold_label_totals(m)
     run.census = politax.text_layer_census(fixtures, subjects=subjects)
-    native_viz = viz_kw if not args.ocr_cache and not args.boundary_weights else {}
+    native_viz = _native_politax_viz(args, viz_kw)
     native_heur_results = [ev.run_fixture(fx, Pipeline(), **native_viz) for fx in fixtures]
     run.holdout_baseline = compute_holdout_baseline(m, fixtures, native_heur_results)
-    if args.ocr_cache:
-        from packet.eval.politax_ocr_eval import run_with_ocr_cache
-        from packet.eval.politax_split import holdout_results
-
-        run.results, run.ocr_stats = run_with_ocr_cache(m, fixtures, data, **viz_kw)
-        run.macro_results = holdout_results(m, fixtures, run.results)
-    elif args.boundary_weights:
-        run.results = [ev.run_fixture(fx, pipe, **viz_kw) for fx in fixtures]
-        run.holdout_scorer = holdout_scorecard(m, fixtures, run.results)
-    else:
-        run.results = native_heur_results
+    run.scorer_fn = holdout_scorecard
+    _fill_politax_results(args, ev, pipe, viz_kw, m, fixtures, data, run, native_heur_results)
     return run
+
+
+def _native_politax_viz(args, viz_kw) -> dict:
+    if args.ocr_cache or args.boundary_weights or args.confirm_config:
+        return {}
+    return viz_kw
+
+
+def _fill_politax_results(args, ev, pipe, viz_kw, m, fixtures, data, run, native) -> None:
+    if args.ocr_cache:
+        _fill_politax_ocr(args, pipe, viz_kw, m, fixtures, data, run)
+        return
+    if args.boundary_weights or args.confirm_config:
+        _fill_politax_pipe(args, ev, pipe, viz_kw, m, fixtures, run)
+        return
+    run.results = native
+
+
+def _fill_politax_ocr(args, pipe, viz_kw, m, fixtures, data, run) -> None:
+    from packet.eval.politax_ocr_eval import run_with_ocr_cache
+    from packet.eval.politax_split import holdout_results
+
+    ocr_config = pipe.config if args.confirm_config else None
+    run.results, run.ocr_stats = run_with_ocr_cache(
+        m, fixtures, data, config=ocr_config, **viz_kw
+    )
+    run.macro_results = holdout_results(m, fixtures, run.results)
+
+
+def _fill_politax_pipe(args, ev, pipe, viz_kw, m, fixtures, run) -> None:
+    run.results = [ev.run_fixture(fx, pipe, **viz_kw) for fx in fixtures]
+    if args.boundary_weights:
+        run.holdout_scorer = run.scorer_fn(m, fixtures, run.results)
 
 
 def _eval_collect(args, ev, pipe, root, viz_kw) -> _EvalRun:
@@ -825,6 +897,8 @@ def _cmd_eval(args) -> int:
         return 2
     pipe = _pipeline_for_boundary_weights(args.boundary_weights)
     if pipe is None:
+        return 2
+    if not _attach_confirmer(pipe.config, args.confirm_config):
         return 2
     run = _eval_collect(args, ev, pipe, root, viz_kw)
     if viz_dir is not None:

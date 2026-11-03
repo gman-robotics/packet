@@ -19,20 +19,28 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from packet.boundary_model import featurize_from_facts
 from packet.decision import (
     DecisionBackendError,
     DecisionCapabilities,
     DecisionRequest,
     DecisionResult,
     extract_sentence_probability,
-    format_default_message,
-    format_features_message,
+    message_for_request,
+    record_unparseable,
+)
+from packet.decision_config import (
+    config_images,
+    config_positive_int,
+    config_send_images,
+    config_str,
+    require_pillow,
 )
 
 INPUT_MODES = ("default", "features", "page_text")
-MAX_STRIKES = 3
+_LABEL = "transformers backend"
 _PLAIN_NUMBER = re.compile(r"\d*\.?\d+")
+_TEMPLATE_REQUIRED = "transformers backend images require a processor chat template"
+_PROCESSOR_REJECTED = "transformers backend images: processor rejected the page"
 DEFAULT_MAX_CHARS = 4000
 DEFAULT_MAX_OUTPUT = 16
 _MISSING_IMAGE = object()
@@ -67,17 +75,7 @@ class _HFRunner:
 
     def generate(self, prompt: str) -> str:
         tok = self.tokenizer
-        if getattr(tok, "chat_template", None):
-            text = tok.apply_chat_template(
-                [
-                    {"role": "system", "content": INSTRUCTION},
-                    {"role": "user", "content": prompt},
-                ],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-        else:
-            text = INSTRUCTION + "\n\n" + prompt
+        text = _text_prompt(tok, prompt)
         inputs = tok(text, return_tensors="pt").to(self.device)
         pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
         with self._torch.inference_mode():
@@ -87,31 +85,21 @@ class _HFRunner:
                 do_sample=False,
                 pad_token_id=pad_id,
             )
-        new_tokens = out[0][inputs["input_ids"].shape[1] :]
-        return tok.decode(new_tokens, skip_special_tokens=True)
+        return _decode_completion(self.model, tok, out, inputs["input_ids"].shape[1])
 
 
 class _HFVisionRunner:
     """Greedy image-text generation with one image part (real weights)."""
 
     def __init__(self, model: str, revision: str, device: str, max_output: int):
-        try:
-            from transformers import AutoModelForImageTextToText, AutoProcessor
-        except ImportError as exc:
-            raise DecisionBackendError(
-                "transformers backend images require AutoModelForImageTextToText"
-            ) from exc
+        torch = _import_vision_torch()
+        model_cls, processor_cls = _import_vision_classes()
         _require_pillow()
-        try:
-            import torch  # lazy: the first import of the stack
-        except ImportError as exc:
-            raise DecisionBackendError("transformers backend images require torch") from exc
-
         self._torch = torch
-        self.processor = AutoProcessor.from_pretrained(
+        self.processor = processor_cls.from_pretrained(
             model, revision=revision, trust_remote_code=False
         )
-        self.model = AutoModelForImageTextToText.from_pretrained(
+        self.model = model_cls.from_pretrained(
             model, revision=revision, trust_remote_code=False
         )
         self.model.to(device)
@@ -121,25 +109,8 @@ class _HFVisionRunner:
 
     def generate(self, prompt: str, image: Any = None) -> str:
         proc = self.processor
-        if getattr(proc, "chat_template", None):
-            text = proc.apply_chat_template(
-                [
-                    {"role": "system", "content": INSTRUCTION},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image"},
-                            {"type": "text", "text": prompt},
-                        ],
-                    },
-                ],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-        else:
-            text = INSTRUCTION + "\n\n" + prompt
-        inputs = proc(text=text, images=image, return_tensors="pt")
-        inputs = inputs.to(self.device)
+        text = _vision_prompt(proc, prompt)
+        inputs = _vision_inputs(proc, text, image, self.device)
         tok = getattr(proc, "tokenizer", proc)
         pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
         with self._torch.inference_mode():
@@ -149,15 +120,83 @@ class _HFVisionRunner:
                 do_sample=False,
                 pad_token_id=pad_id,
             )
-        new_tokens = out[0][inputs["input_ids"].shape[1] :]
-        return tok.decode(new_tokens, skip_special_tokens=True)
+        return _decode_completion(self.model, tok, out, inputs["input_ids"].shape[1])
 
 
-def _require_pillow() -> None:
+def _completion_row(model: Any, row: Any, prompt_len: int) -> Any:
+    config = getattr(model, "config", None)
+    if getattr(config, "is_encoder_decoder", False):
+        return row
+    if len(row) > prompt_len:
+        return row[prompt_len:]
+    return row
+
+
+def _decode_completion(model: Any, tokenizer: Any, out: Any, prompt_len: int) -> str:
+    return tokenizer.decode(_completion_row(model, out[0], prompt_len), skip_special_tokens=True)
+
+
+def _text_prompt(tokenizer: Any, prompt: str) -> str:
+    if getattr(tokenizer, "chat_template", None):
+        return tokenizer.apply_chat_template(
+            [
+                {"role": "system", "content": INSTRUCTION},
+                {"role": "user", "content": prompt},
+            ],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    return INSTRUCTION + "\n\n" + prompt
+
+
+def _vision_prompt(processor: Any, prompt: str) -> str:
+    if not getattr(processor, "chat_template", None):
+        raise DecisionBackendError(_TEMPLATE_REQUIRED)
     try:
-        __import__("PIL.Image")
+        return processor.apply_chat_template(
+            [
+                {"role": "system", "content": INSTRUCTION},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image"},
+                        {"type": "text", "text": prompt},
+                    ],
+                },
+            ],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise DecisionBackendError(_PROCESSOR_REJECTED) from exc
+
+
+def _vision_inputs(processor: Any, text: str, image: Any, device: str) -> Any:
+    try:
+        inputs = processor(text=text, images=image, return_tensors="pt")
+    except (TypeError, ValueError) as exc:
+        raise DecisionBackendError(_PROCESSOR_REJECTED) from exc
+    return inputs.to(device)
+
+
+def _import_vision_torch() -> Any:
+    try:
+        import torch
     except ImportError as exc:
-        raise DecisionBackendError("transformers backend images require Pillow") from exc
+        raise DecisionBackendError("transformers backend images require torch") from exc
+    return torch
+
+
+def _import_vision_classes() -> tuple[Any, Any]:
+    try:
+        from transformers import AutoModelForImageTextToText, AutoProcessor
+    except ImportError as exc:
+        raise DecisionBackendError(
+            "transformers backend images require AutoModelForImageTextToText"
+        ) from exc
+    return AutoModelForImageTextToText, AutoProcessor
+
+
 
 
 def load_transformers_runner(
@@ -283,28 +322,21 @@ class TransformersDecisionBackend:
     def _images_on(self) -> bool:
         return self.send_images and self.capabilities.images
 
-    def _optional_image(self, render: Callable[[], Any] | None) -> Any:
-        if not self._images_on():
-            return _MISSING_IMAGE
-        if render is None:
+    def _reject_missing_render(self, render: Callable[[], Any] | None) -> None:
+        if self._images_on() and render is None:
             raise DecisionBackendError(
                 "transformers backend: render thunk required when images are enabled"
             )
+
+    def _image_argument(self, render: Callable[[], Any] | None) -> Any:
+        if not self._images_on():
+            return _MISSING_IMAGE
         return render()
 
     def build_message(self, request: DecisionRequest) -> str:
-        mode = self.input_mode  # the config's ``input`` selects the payload
-        if mode == "page_text":
-            fact = request.facts[request.page_index]
-            return str(fact.get("text") or "")[: self.max_chars]
-        features = featurize_from_facts(request.facts, request.page_index)
-        if mode == "features":
-            return format_features_message(features)
-        return format_default_message(
-            features=features,
-            fact=request.facts[request.page_index],
-            blocks=request.blocks,
-            ref=request.ref,
+        # The config's ``input`` selects the payload.
+        return message_for_request(
+            request, input_mode=self.input_mode, max_chars=self.max_chars
         )
 
     def decide(
@@ -313,29 +345,15 @@ class TransformersDecisionBackend:
         *,
         render: Callable[[], Any] | None = None,
     ) -> DecisionResult:
+        self._reject_missing_render(render)
         runner = self._get_runner()
-        image = self._optional_image(render)
+        image = self._image_argument(render)
         prompt = self.build_message(request)
         output = _run_generate(runner, prompt, image)
         self.last_output = output
-        result = parse_output(output)
-        if result is not None:
-            return result
-        if len(self.strikes) + 1 >= MAX_STRIKES:
-            raise DecisionBackendError(
-                f"transformers backend: unparseable output on page {request.page_index} "
-                f"(strike {MAX_STRIKES})"
-            )
-        self.strikes.append({"page": request.page_index, "reason": "unparseable"})
-        self.degraded_pages.append(request.page_index)
-        return DecisionResult(probability=None, scores=None, label=None)
+        return parse_or_strike("transformers", output, request.page_index, self.strikes, self.degraded_pages)
 
 
-def _require_str(data: dict[str, Any], key: str) -> str:
-    value = data.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise DecisionBackendError(f"transformers backend requires non-empty {key!r}")
-    return value
 
 
 def _run_generate(runner: TransformersRunner, prompt: str, image: Any) -> str:
@@ -344,43 +362,21 @@ def _run_generate(runner: TransformersRunner, prompt: str, image: Any) -> str:
     return runner.generate(prompt, image)
 
 
-def _strict_bool(value: Any, key: str) -> bool:
-    if not isinstance(value, bool):
-        raise DecisionBackendError(f"transformers backend {key!r} must be a bool")
-    return value
 
 
-def _images_capability(data: dict[str, Any]) -> bool:
-    if "capabilities" not in data:
-        return False
-    caps = data["capabilities"]
-    if not isinstance(caps, dict):
-        raise DecisionBackendError("transformers backend capabilities must be an object")
-    if "images" not in caps:
-        return False
-    return _strict_bool(caps["images"], "capabilities.images")
 
 
-def _send_images_flag(data: dict[str, Any]) -> bool:
-    if "send_images" not in data:
-        return False
-    return _strict_bool(data["send_images"], "send_images")
 
 
-def _positive_int(data: dict[str, Any], key: str, default: int) -> int:
-    value = data.get(key, default)
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise DecisionBackendError(f"transformers backend {key!r} must be a positive integer")
-    return value
 
 
 def build_transformers_backend(data: dict[str, Any]) -> TransformersDecisionBackend:
     """Validate a ``backend: transformers`` config. Imports nothing heavy."""
-    model = _require_str(data, "model")
-    revision = _require_str(data, "revision")
+    model = config_str(data, "model", _LABEL)
+    revision = config_str(data, "revision", _LABEL)
     device = "cpu"
     if "device" in data:
-        device = _require_str(data, "device")
+        device = config_str(data, "device", _LABEL)
     input_mode = data.get("input", "default")
     if input_mode not in INPUT_MODES:
         raise DecisionBackendError(f"transformers backend: unknown input {input_mode!r}")
@@ -389,8 +385,22 @@ def build_transformers_backend(data: dict[str, Any]) -> TransformersDecisionBack
         revision=revision,
         device=device,
         input_mode=input_mode,
-        max_chars=_positive_int(data, "max_chars", DEFAULT_MAX_CHARS),
-        max_output=_positive_int(data, "max_output", DEFAULT_MAX_OUTPUT),
-        capabilities=DecisionCapabilities(images=_images_capability(data)),
-        send_images=_send_images_flag(data),
+        max_chars=config_positive_int(data, "max_chars", DEFAULT_MAX_CHARS, _LABEL),
+        max_output=config_positive_int(data, "max_output", DEFAULT_MAX_OUTPUT, _LABEL),
+        capabilities=DecisionCapabilities(images=config_images(data, _LABEL)),
+        send_images=config_send_images(data, _LABEL),
     )
+
+
+def _require_pillow() -> None:
+    require_pillow("transformers backend images require Pillow")
+
+
+def parse_or_strike(
+    kind: str, output: str, page_index: int, strikes: Any, degraded_pages: list[int]
+) -> DecisionResult:
+    """Parsed result, or one unparseable strike (third raises ``DecisionBudgetExhausted``)."""
+    parsed = parse_output(output)
+    if parsed is not None:
+        return parsed
+    return record_unparseable(kind, page_index, strikes, degraded_pages)

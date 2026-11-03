@@ -1,0 +1,36 @@
+{
+  "set": "politax",
+  "subset": "train",
+  "bands": [
+    {
+      "low": 0.35,
+      "high": 0.74,
+      "macro_f1": 0.11307105521845821,
+      "false_splits": 23,
+      "baseline_false_splits": 41,
+      "eligible": true
+    },
+    {
+      "low": 0.45,
+      "high": 0.74,
+      "macro_f1": 0.11307105521845821,
+      "false_splits": 23,
+      "baseline_false_splits": 41,
+      "eligible": true
+    },
+    {
+      "low": 0.5,
+      "high": 0.65,
+      "macro_f1": 0.23152006856788432,
+      "false_splits": 41,
+      "baseline_false_splits": 41,
+      "eligible": true
+    }
+  ],
+  "best_eligible": {
+    "low": 0.5,
+    "high": 0.65,
+    "macro_f1": 0.23152006856788432
+  },
+  "holdout": "not run by this script"
+}

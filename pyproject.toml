@@ -47,4 +47,5 @@ markers = [
   "needs_gpu: test needs GPU hardware",
   "needs_models: test needs real model weights (e.g. PACKET_REAL_SCAN_PDF)",
   "needs_ocr_extras: test needs optional OCR extras (Pillow / ocr-mlx / ocr-paddle)",
+  "needs_mlx: opt-in MLX VLM smoke; also requires PACKET_MLX_CONFIRM=1",
 ]

@@ -15,6 +15,7 @@ import pytest
 from packet.classify import HeuristicClassifier
 from packet.decision import (
     DecisionBackendError,
+    DecisionBudgetExhausted,
     DecisionCapabilities,
     DecisionRequest,
     load_decision_config,
@@ -333,6 +334,7 @@ def test_third_strike_raises_without_body():
     assert backend.degraded_pages == expected["degraded_pages"]
     with pytest.raises(DecisionBackendError) as err:
         backend.decide(_page1_request(expected["raises_on_page"]))
+    assert isinstance(err.value, DecisionBudgetExhausted)
     msg = str(err.value)
     for needle in expected["error_contains"]:
         assert needle in msg
@@ -650,8 +652,11 @@ def test_building_images_backend_imports_neither_torch_nor_transformers(tmp_path
 
 def test_missing_vision_class_is_decision_backend_error(monkeypatch):
     import builtins
+    import sys
+    import types
 
     real = builtins.__import__
+    monkeypatch.setitem(sys.modules, "torch", types.ModuleType("torch"))
 
     def fake(name, *args, **kwargs):
         fromlist = kwargs.get("fromlist", ())
@@ -675,6 +680,7 @@ def test_missing_pillow_is_decision_backend_error(monkeypatch):
     fake_tf = types.ModuleType("transformers")
     fake_tf.AutoModelForImageTextToText = object
     fake_tf.AutoProcessor = object
+    monkeypatch.setitem(sys.modules, "torch", types.ModuleType("torch"))
 
     def fake(name, *args, **kwargs):
         if name == "PIL" or name.startswith("PIL."):
@@ -834,6 +840,23 @@ def test_decide_loads_runner_before_render(monkeypatch):
     with pytest.raises(DecisionBackendError, match="AutoModelForImageTextToText"):
         backend.decide(_page1_request(), render=thunk)
     assert order == ["load"]
+
+
+def test_missing_render_raises_before_loader(monkeypatch):
+    import packet.decision_transformers as dt
+
+    def spy(*_args, **_kwargs):
+        raise AssertionError("loader called")
+
+    monkeypatch.setattr(dt, "load_transformers_runner", spy)
+    backend = TransformersDecisionBackend(
+        model="m",
+        revision="r",
+        send_images=True,
+        capabilities=DecisionCapabilities(images=True),
+    )
+    with pytest.raises(DecisionBackendError, match="render thunk required"):
+        backend.decide(_page1_request(), render=None)
 
 
 def test_send_images_true_capabilities_omitted_stays_text_only(tmp_path, monkeypatch):
@@ -1008,39 +1031,31 @@ def _vision_runner(chat_template):
     return runner
 
 
-@pytest.mark.parametrize("chat_template", ["{{ tpl }}", None])
-def test_vision_runner_generate_sends_one_image_and_decodes_new_tokens(chat_template):
+def test_vision_runner_generate_sends_one_image_and_decodes_new_tokens():
     from packet.decision_transformers import INSTRUCTION
 
     image = object()
-    runner = _vision_runner(chat_template)
+    runner = _vision_runner("{{ tpl }}")
     runner.device = "unit-device"
     assert runner.generate("facts", image) == "9|4"
-    if chat_template:
-        assert len(runner.processor.calls) == 2
-        kind, messages, kwargs = runner.processor.calls[0]
-        assert kind == "chat"
-        assert kwargs == {"tokenize": False, "add_generation_prompt": True}
-        assert messages == [
-            {"role": "system", "content": INSTRUCTION},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": "facts"},
-                ],
-            },
-        ]
-        call_kind, call_kw = runner.processor.calls[1]
-        assert call_kind == "call"
-        assert call_kw["images"] is image
-        assert call_kw == {"text": "rendered-chat", "images": image, "return_tensors": "pt"}
-    else:
-        plain = INSTRUCTION + "\n\n" + "facts"
-        assert runner.processor.calls == [
-            ("call", {"text": plain, "images": image, "return_tensors": "pt"}),
-        ]
-        assert runner.processor.calls[0][1]["images"] is image
+    assert len(runner.processor.calls) == 2
+    kind, messages, kwargs = runner.processor.calls[0]
+    assert kind == "chat"
+    assert kwargs == {"tokenize": False, "add_generation_prompt": True}
+    assert messages == [
+        {"role": "system", "content": INSTRUCTION},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": "facts"},
+            ],
+        },
+    ]
+    call_kind, call_kw = runner.processor.calls[1]
+    assert call_kind == "call"
+    assert call_kw["images"] is image
+    assert call_kw == {"text": "rendered-chat", "images": image, "return_tensors": "pt"}
     sent = runner.processor.last_inputs
     assert sent.moved_to == "unit-device"
     kw = runner.model.kwargs
@@ -1052,6 +1067,73 @@ def test_vision_runner_generate_sends_one_image_and_decodes_new_tokens(chat_temp
     assert kw["image_sizes"] is sent["image_sizes"]
     assert kw["image_sizes"] == [[8, 9]]
     assert all(value is not image for value in kw.values())
+
+
+def test_vision_runner_without_chat_template_errors_before_processor():
+    runner = _vision_runner(None)
+    with pytest.raises(DecisionBackendError, match="chat template"):
+        runner.generate("facts", object())
+    assert runner.processor.calls == []
+
+
+def test_vision_chat_template_type_error_is_decision_backend_error():
+    class _BadTemplate(_FakeProcessor):
+        def apply_chat_template(self, messages, **kwargs):
+            raise TypeError("bad template")
+
+    runner = _vision_runner("{{ tpl }}")
+    runner.processor = _BadTemplate("{{ tpl }}")
+    with pytest.raises(DecisionBackendError, match="processor rejected the page") as err:
+        runner.generate("facts", object())
+    assert isinstance(err.value.__cause__, TypeError)
+
+
+def test_vision_processor_rejection_is_decision_backend_error():
+    class _BadProcessor(_FakeProcessor):
+        def __call__(self, **kwargs):
+            raise ValueError("size mismatch")
+
+    runner = _vision_runner("{{ tpl }}")
+    runner.processor = _BadProcessor("{{ tpl }}")
+    with pytest.raises(DecisionBackendError, match="processor rejected the page") as err:
+        runner.generate("facts", object())
+    assert isinstance(err.value.__cause__, ValueError)
+
+
+def test_encoder_decoder_decodes_whole_row_and_score_parses():
+    from types import SimpleNamespace
+
+    from packet.decision_transformers import parse_output
+
+    class _ScoreTok(_FakeTok):
+        def decode(self, tokens, skip_special_tokens):
+            assert skip_special_tokens is True
+            assert list(tokens) == [0, 8]
+            return "0.8"
+
+    class _EncDec(_FakeVisionModel):
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(is_encoder_decoder=True)
+
+        def generate(self, **kwargs):
+            self.kwargs = kwargs
+            return [[0, 8]]
+
+    runner = _vision_runner("{{ tpl }}")
+    runner.model = _EncDec()
+    runner.processor.tokenizer = _ScoreTok()
+    assert runner.generate("facts", object()) == "0.8"
+    parsed = parse_output("0.8")
+    assert parsed is not None and parsed.probability == pytest.approx(0.8)
+
+
+def test_decoder_only_config_still_trims_prompt_tokens():
+    from types import SimpleNamespace
+
+    runner = _vision_runner("{{ tpl }}")
+    runner.model.config = SimpleNamespace(is_encoder_decoder=False)
+    assert runner.generate("facts", object()) == "9|4"
 
 
 def test_vision_from_pretrained_passes_revision_and_disables_remote_code(monkeypatch):

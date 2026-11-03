@@ -17,7 +17,7 @@ Method: poteto-mode architecture review. `/architect` sketches the types. `blast
 - Page 0 never gets a signal (`src/packet/boundary.py:171-172`). Its decision depends on its page number. If page 0 has a page number, the splitter decides it `no_signal` with `split=False` (`src/packet/lookahead.py:84-85`). If it has none, `_drain` can decide it `implied_page_one` with `split=True` when a later page in the window shows it was page 1 (`lookahead.py:86-91`; DESIGN.md:182-186 calls an unnumbered first page the common reset). Either way the first document starts at page 0: it is opened by `Pipeline.stream`, and a split on page 0 closes nothing because the close needs `state.blocks`. `_apply` closes a document only when `decision.split and state.blocks` (`src/packet/pipeline.py:137`). The open tail is always closed at `src/packet/pipeline.py:120-125`.
 - Eval floors: the 0.41 PoliTax floor is `OCR_CACHE_FLOORS` for `packet eval --set politax --ocr-cache` (`src/packet/eval/run.py:24`). Plain native-text PoliTax floors are `(0.0, 0.0)` (`run.py:19`). No CLI output prints a false-split count. It can be derived as `len(predicted) - matched` from `BoundaryScore` (`src/packet/eval/metrics.py:9-17`).
 - Fail modes: DESIGN.md "Remaining fail modes": false split on a mid-document title, false merge when signals under-fire, flush-at-EOF with no confidence check, no undo.
-- Mid-band VLM confirm window: DESIGN.md "Next" item 4. Not built.
+- Mid-band VLM confirm window: the boundary seam is in tree and off by default (`PipelineConfig.confirmer`, `BackendConfirmer`, `--confirm-config`). Bands and the trump train files are in `bench/t7_confirm/README.md`. Holdout, the wiki page, and Tom's OK before any default are not done. Draft wiki path after the run: `docs/plans/t7-confirm-results.md`.
 
 ## Item 1: decision trace (prerequisite for items 2, 4 and 5)
 
@@ -96,7 +96,7 @@ The visualizer and the review path need data the pipeline throws away today. Do 
 
 ### 4a. Mid-band VLM confirm pass
 
-- **Current state:** `_decide_mid` (`lookahead.py:150-167`) first reads page-number evidence. With none in the window it compares confidence to `fallback` (`lookahead.py:166-167`), which `Pipeline` sets from `boundary_min_confidence` = 0.55 (`pipeline.py:26`). DESIGN.md "Next" item 4 plans a 3-page VLM confirm window.
+- **Current state:** The boundary seam is in tree and off by default. `_decide_mid` still reads page-number evidence first, then calls `confirmer.confirm` only for `fallback_eager` and `fallback_below`. `None` keeps that rule. `PipelineConfig.confirmer` defaults to `None`. `--confirm-config` loads `BackendConfirmer`. Bands and the trump train files are in `bench/t7_confirm/README.md`. Holdout, the wiki page, and Tom's OK before any default are not done. Draft wiki path after the local run: `docs/plans/t7-confirm-results.md`.
 - **Shape:**
   ```python
   class Confirmer(Protocol):
@@ -105,8 +105,8 @@ The visualizer and the review path need data the pipeline throws away today. Do 
   ```
   Called only where `_decide_mid` would return `fallback_eager` or `fallback_below`. `None` keeps today's rule. New reasons: `confirmed_split`, `confirmed_continue`.
 - **Blast radius:** `lookahead.py` reasons (item 1 tests); latency per mid-band page; the 0.74 cap stays upstream and is untouched.
-- **Done when:** with `confirmer=None`, decisions are identical to `main` on all eval sets. With a stub confirmer, only fallback pages change.
-- **Proof:** replay test over the `boundary_decided` trace. `packet eval --set politax --ocr-cache` holdout macro F1 at or above the 0.41 `OCR_CACHE_FLOORS` floor (`run.py:24`), and false splits (`len(predicted) - matched`, summed) not higher than `main`, before any default change. Wiki results first.
+- **Done when:** with `confirmer=None`, decisions match a default pipeline. With a confirmer, only fallback pages change. The holdout bar is still open: macro F1 at least 0.41 and false splits (`len(predicted) - matched`, summed) at or under the confirmer-off baseline, then Tom's OK before any default.
+- **Proof:** `bench/t7_confirm/run.py` trains on the trump files only and does not launch holdout. The wiki draft `docs/plans/t7-confirm-results.md` is written after that run.
 - **Size:** M. Depends on item 1 and a decision backend that passes images.
 
 ### 4b. Section-assembly repair pass
@@ -148,7 +148,7 @@ Each unit merges alone and keeps every eval number identical to `main` unless it
 4. **U4 eval review path** (item 5 hook and checks). Proof: checks fire only on their fixtures.
 5. **U5 heading repair + DESIGN.md/README fix** (item 4b, adds `heading_rank_repaired`). Proof: golden trees; changed-tree list. Needs U2 for `Flag`.
 6. **U6 mid-band confirm seam** (item 4a, `confirmer=None`). Proof: identical decisions on all sets.
-7. **U7 confirm experiment** (item 4a with a real model). Proof: PoliTax holdout ≥ 0.41, no more false splits, wiki results, Tom's OK before any default.
+7. **U7 confirm experiment** (item 4a with a real model). The seam stays off by default. Bands and the trump train files are in `bench/t7_confirm/README.md`. Holdout, the wiki page, and Tom's OK before any default are not done. Draft wiki path after the run: `docs/plans/t7-confirm-results.md`.
 8. **U8 few-shot adapter** (item 3). Proof: tree-hash contract; grounding 100 percent on stub.
 
 U3 can start after U1, in parallel with U2. U5 depends on U2. U6 depends only on U1.
@@ -163,7 +163,7 @@ U3 can start after U1, in parallel with U2. U5 depends on U2. U6 depends only on
 | T4 | Packet: `packet eval --viz-dir` + metric-blind review checks + `stripped-numbers` fixture | eval/run.py hook, three checks, fixtures | S | T3 |
 | T5 | Packet: heading rank repair pass + DESIGN.md/README correction | assemble.py `repair_ranks`, flag, golden trees | S-M | T2 |
 | T6 | Packet: mid-band `Confirmer` seam in look-ahead (off) | lookahead.py, PipelineConfig, replay test | M | T1 |
-| T7 | Packet: mid-band VLM confirm experiment | bench run, PoliTax train/dev, holdout once, wiki page | M | T6, decision backend images |
+| T7 | Packet: mid-band VLM confirm experiment | `bench/t7_confirm` (off by default; trump train files in the README). Holdout, wiki, and any default change are not done | M | T6, decision backend images |
 | T8 | Packet: few-shot schema-constrained domain adapter (opt-in) | domain_fewshot.py, contract test, stub backend | M | decision backend structured output |
 
 ## Skip, and why

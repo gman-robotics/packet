@@ -86,10 +86,12 @@ and drives the fail-closed behavior below.
   `HeuristicClassifier().classify(...)` and returns the same char-count
   result. It does not call pdf-inspector for layout/classification. Treat
   it as a placeholder seam, not a working integration.
-- **Mid-band VLM confirm window**: **not implemented.** The 3-page VLM
-  confirmation window described for boundaries (see below) and any
-  VLM-based reclassification of mid-confidence pages are both future
-  work. No VLM classifier exists in this codebase today.
+- **Mid-band VLM confirm window**: the boundary seam is in tree and off
+  by default (`PipelineConfig.confirmer` is `None`; `BackendConfirmer`
+  and `--confirm-config` turn it on). The 0.74 cap is unchanged. Bands
+  and the trump train set are in `bench/t7_confirm/README.md`. Holdout
+  and the wiki write-up wait on the local run. VLM reclassification of
+  mid-confidence pages is still future work.
 - **`--force-inspect` CLI flag**: `packet inspect` / `packet parse
   --force-inspect` sends every page, text pages included, through OCR.
 - **OCR and the escalate policy** (`src/packet/backends.py`): the CLI
@@ -401,10 +403,14 @@ The hard checklist lives in
 3. ~~Scan backend on routed pages only~~ (shipped: LightOnOCR-3-1B default, PaddleOCR-VL-1.6 fallback; wire
    `PaddleExtractor`, currently `NotImplementedError`), so `SCAN` pages
    stop returning empty results
-4. Mid-band VLM confirm window (3-page) for both classification and
-   boundary confirmation. Seam: `TransformersDecisionBackend` takes one
+4. Mid-band boundary confirm seam landed, off by default
+   (`PipelineConfig.confirmer`, `BackendConfirmer`, `--confirm-config`).
+   The 0.74 cap is unchanged. Bands and the trump train set are in
+   `bench/t7_confirm/README.md`. Holdout and the wiki write-up wait on
+   the local run. Classification re-check is still future work.
+   `TransformersDecisionBackend` and `MlxVlmDecisionBackend` take one
    page image when `send_images` and `capabilities.images` are both true
-   (both default false). The confirm window is still open.
+   (both default false).
 5. ~~`--force-inspect` CLI flag~~ (shipped)
 6. ~~**Look-ahead commit for boundaries**~~ (shipped, signed off by Tom
    2026-10-13; page-number evidence only) — defer `_close_document` until
