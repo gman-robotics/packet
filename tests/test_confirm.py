@@ -425,3 +425,19 @@ def test_confirm_config_task_and_equal_band(tmp_path):
     path.write_text(json.dumps({"low": 0.5, "high": 0.5, "decision": decision}))
     conf = load_confirm_config(path)
     assert conf.low == conf.high == 0.5
+
+
+def test_decision_render_only_for_backend_that_takes_images():
+    from types import SimpleNamespace
+
+    from packet.pipeline import _decision_render
+
+    def thunk():
+        return None
+
+    no_send = SimpleNamespace(send_images=False, capabilities=SimpleNamespace(images=True))
+    send = SimpleNamespace(send_images=True, capabilities=SimpleNamespace(images=True))
+    assert _decision_render(None, thunk) is None
+    assert _decision_render(no_send, thunk) is None
+    assert _decision_render(send, thunk) is thunk
+

@@ -97,7 +97,7 @@ def test_run_source_has_no_mlx_import_and_uses_the_ocr_cache_split():
 
 def test_write_config_emits_one_band_without_loading(tmp_path, capsys):
     mod = _load()
-    path = tmp_path / "nested" / "confirm.json"
+    path = tmp_path / "nested" / "deep" / "confirm.json"
     assert mod.main(["--set", "politax", "--write-config", str(path)]) == 0
     body = json.loads(path.read_text())
     assert body == {
@@ -117,7 +117,7 @@ def test_write_config_emits_one_band_without_loading(tmp_path, capsys):
     narrow = json.loads(other.read_text())
     assert narrow["low"] == 0.50
     assert narrow["high"] == 0.65
-    again = tmp_path / "nested" / "again.json"
+    again = tmp_path / "nested" / "deep" / "again.json"
     assert mod.main(["--write-config", str(again)]) == 0
     assert path.read_text().endswith("\n")
     assert again.read_text().endswith("\n")
@@ -408,7 +408,8 @@ def test_best_eligible_emit_and_paths(tmp_path, capsys):
     assert mod._result_path(_ns(out=tmp_path), "builtin", 0.5, 0.65).name == "builtin-na-0.50-0.65.json"
     payload = {"set": "s", "subset": "t", "low": 0.1, "high": 0.2, "macro_f1": 0.5,
                "false_splits": 1, "eligible": True}
-    written = tmp_path / "x" / "p.json"
+    written = tmp_path / "x" / "y" / "p.json"
+    mod._emit(written, payload)
     mod._emit(written, payload)
     assert written.read_text().endswith("\n")
     out = capsys.readouterr().out
@@ -499,3 +500,14 @@ def test_run_writes_summary_only_for_several_bands(tmp_path, monkeypatch):
     assert mod.main(["--set", "builtin", "--dir", str(tmp_path / "fx"), "--out", str(out),
                      "--low", "0.4", "--high", "0.6"]) == 0
     assert sorted(p.name for p in out.iterdir()) == ["builtin-na-0.40-0.60.json"]
+
+
+def test_evaluate_picks_fixture_loader_by_set(monkeypatch):
+    mod = _load()
+    monkeypatch.setattr(mod, "_builtin_fixtures", lambda args: ["builtin"])
+    monkeypatch.setattr(mod, "_dlnet_fixtures", lambda args: ["dlnet"])
+    monkeypatch.setattr(mod, "_plain_rows", lambda fixtures: list(fixtures))
+    monkeypatch.setattr(mod, "_score_many", lambda fixtures, pipe, confirmer: (list(fixtures), 0, []))
+    for set_name, want in (("builtin", ["builtin"]), ("dlnet-whole", ["dlnet"])):
+        got, base, confirmed, degraded, stats, _wall = mod._evaluate(_ns(set=set_name), set_name, None)
+        assert (got, base, confirmed, degraded, stats) == (want, want, 0, [], None)
