@@ -69,6 +69,8 @@ The visualizer and the review path need data the pipeline throws away today. Do 
 
 ## Item 3: few-shot, schema-constrained domain adapters (lesson 3)
 
+Status (GMA-463): opt-in `src/packet/domain_fewshot.py`. Off unless a caller passes the adapter. Completion is a local `StructuredCompletion` protocol and a test stub. `DecisionBackend.decide` stays the boundary and confirm probability call. Fixtures are trimmed trump train trees. Holdout is unused.
+
 - **Current state:** only `NoOpDomain`. The `DomainAdapter` contract (DESIGN.md "Domain adapters") already says adapters run on `document_closed`, add `type_hint` and `extras`, and never delete sections or blocks.
 - **Shape:**
   ```python
@@ -164,7 +166,7 @@ U3 can start after U1, in parallel with U2. U5 depends on U2. U6 depends only on
 | T5 | Packet: heading rank repair pass + DESIGN.md/README correction | assemble.py `repair_ranks`, flag, golden trees | S-M | T2 |
 | T6 | Packet: mid-band `Confirmer` seam in look-ahead (off) | lookahead.py, PipelineConfig, replay test | M | T1 |
 | T7 | Packet: mid-band VLM confirm experiment | `bench/t7_confirm` (off by default; trump train files in the README). Holdout, wiki, and any default change are not done | M | T6, decision backend images |
-| T8 | Packet: few-shot schema-constrained domain adapter (opt-in) | domain_fewshot.py, contract test, stub backend | M | decision backend structured output |
+| T8 | Packet: few-shot schema-constrained domain adapter (opt-in) | domain_fewshot.py, contract test, stub backend | M | boundary `structured_output` flag is not an extraction task; the stub lives in the test |
 
 ## Skip, and why
 
