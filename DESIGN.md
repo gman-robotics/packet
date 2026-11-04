@@ -89,9 +89,11 @@ and drives the fail-closed behavior below.
 - **Mid-band VLM confirm window**: the boundary seam is in tree and off
   by default (`PipelineConfig.confirmer` is `None`; `BackendConfirmer`
   and `--confirm-config` turn it on). The 0.74 cap is unchanged. Bands
-  and the trump train set are in `bench/t7_confirm/README.md`. Holdout
-  and the wiki write-up wait on the local run. VLM reclassification of
-  mid-confidence pages is still future work.
+  and the trump train set are in `bench/t7_confirm/README.md`. The
+  holdout pass is done (band [0.50, 0.65]): macro F1 0.4159 and 19
+  false splits, both equal to the baseline, and 0 decision changes.
+  Results are in `docs/plans/t7-confirm-results.md`. VLM
+  reclassification of mid-confidence pages is still future work.
 - **`--force-inspect` CLI flag**: `packet inspect` / `packet parse
   --force-inspect` sends every page, text pages included, through OCR.
 - **OCR and the escalate policy** (`src/packet/backends.py`): the CLI
@@ -412,8 +414,10 @@ The hard checklist lives in
 4. Mid-band boundary confirm seam landed, off by default
    (`PipelineConfig.confirmer`, `BackendConfirmer`, `--confirm-config`).
    The 0.74 cap is unchanged. Bands and the trump train set are in
-   `bench/t7_confirm/README.md`. Holdout and the wiki write-up wait on
-   the local run. Classification re-check is still future work.
+   `bench/t7_confirm/README.md`. Holdout pass done: macro F1 0.4159,
+   19 false splits, 0 decision changes (results in
+   `docs/plans/t7-confirm-results.md`). Classification re-check is still
+   future work.
    `TransformersDecisionBackend` and `MlxVlmDecisionBackend` take one
    page image when `send_images` and `capabilities.images` are both true
    (both default false).

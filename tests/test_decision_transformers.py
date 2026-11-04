@@ -1108,7 +1108,7 @@ def test_encoder_decoder_decodes_whole_row_and_score_parses():
     class _ScoreTok(_FakeTok):
         def decode(self, tokens, skip_special_tokens):
             assert skip_special_tokens is True
-            assert list(tokens) == [0, 8]
+            assert list(tokens) == [0, 8, 5]  # whole row, prompt prefix kept
             return "0.8"
 
     class _EncDec(_FakeVisionModel):
@@ -1118,7 +1118,7 @@ def test_encoder_decoder_decodes_whole_row_and_score_parses():
 
         def generate(self, **kwargs):
             self.kwargs = kwargs
-            return [[0, 8]]
+            return [[0, 8, 5]]  # longer than the 2-token prompt
 
     runner = _vision_runner("{{ tpl }}")
     runner.model = _EncDec()

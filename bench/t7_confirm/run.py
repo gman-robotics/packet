@@ -70,6 +70,8 @@ def _set_error(args) -> str | None:
         return "--set politax needs --subset train or --subset holdout"
     if args.set != "politax" and args.subset is not None:
         return "--subset is only for --set politax"
+    if args.subset == "holdout" and args.low is None:
+        return "--subset holdout needs one explicit band: pass --low and --high"
     return None
 
 
