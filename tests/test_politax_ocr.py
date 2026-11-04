@@ -756,10 +756,10 @@ def test_only_looped_recognizes_only_the_looped_page(monkeypatch, corpus, capsys
     argv = ["politax-ocr", "--data-dir", str(data), "--max-tokens", "4096"]
     assert cli.main(argv) == 0
     plans, _ = po.plan_pages(corpus[1], data)
-    # A 1600-char block repeated 20 times (32000 chars). The loop ratio drops
-    # under the threshold only once --loop-window-chars covers the whole
-    # repeated page (32000), not once the window passes the 1600-char period.
-    # A 2000-char window still does not fire.
+    # A 1600-char block repeated 20 times (32000 chars). Passing the 1600-char
+    # period is not enough: the window's zlib ratio drops under 0.02 only once
+    # it spans most of the page (about 25000+ chars). 1500 and 2000 do not
+    # fire; the test widens the window to the full page length.
     long_loop = _prose(1600)[:1600] * 20
     window = str(len(long_loop))
     _mark(data, plans[0], long_loop)
