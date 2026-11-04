@@ -323,7 +323,8 @@ def test_band_and_set_errors_cover_each_branch():
     assert mod._band_error(_ns(low=0.5, high=0.5)) is None
     assert "low must" in mod._band_error(_ns(low=0.6, high=0.5))
     assert mod._set_error(_ns(set="politax", subset="train")) is None
-    assert mod._set_error(_ns(set="politax", subset="holdout")) is None
+    assert mod._set_error(_ns(set="politax", subset="holdout", low=0.5, high=0.65)) is None
+    assert "explicit band" in mod._set_error(_ns(set="politax", subset="holdout"))
     assert "needs" in mod._set_error(_ns(set="politax"))
     assert mod._set_error(_ns(set="builtin")) is None
     assert "only for" in mod._set_error(_ns(set="dlnet-whole", subset="train"))

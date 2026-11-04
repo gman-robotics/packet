@@ -2,9 +2,9 @@
 
 Opt-in only. `PipelineConfig.confirmer` stays `None` unless this harness, or
 `--confirm-config`, passes a `BackendConfirmer`. The 0.74 cap is untouched.
-This directory does not download a model and does not contain results.
-`docs/plans/t7-confirm-results.md` is written after a local run, for Morgan or
-Piper to copy into tmg-wiki. That wiki checkout is not on this Mac.
+This directory does not download a model. The local run is done, and
+`docs/plans/t7-confirm-results.md` has the results, including the single holdout pass
+(band [0.50, 0.65]): macro F1 0.4159, 19 false splits, 0 decision changes.
 
 ## Model
 
@@ -107,7 +107,8 @@ HF_HUB_OFFLINE=1 PYTHONPATH=src \
   --set politax --subset holdout --low LOW --high HIGH
 ```
 
-The script does not launch holdout by itself. A summary JSON records
+The script does not launch holdout by itself. `--subset holdout` needs one
+explicit band (`--low` and `--high`); without them it exits 2. A summary JSON records
 `best_eligible` and `"holdout": "not run by this script"`.
 
 Done when holdout macro F1 is at least 0.41 and holdout false splits are less
