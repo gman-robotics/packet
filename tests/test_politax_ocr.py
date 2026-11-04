@@ -756,8 +756,10 @@ def test_only_looped_recognizes_only_the_looped_page(monkeypatch, corpus, capsys
     argv = ["politax-ocr", "--data-dir", str(data), "--max-tokens", "4096"]
     assert cli.main(argv) == 0
     plans, _ = po.plan_pages(corpus[1], data)
-    # The loop period (1600 chars) is longer than the default 1500-char window,
-    # so this page fires only when --loop-window-chars widens the window.
+    # A 1600-char block repeated 20 times (32000 chars). Passing the 1600-char
+    # period is not enough: the window's zlib ratio drops under 0.02 only once
+    # it spans most of the page (about 25000+ chars). 1500 and 2000 do not
+    # fire; the test widens the window to the full page length.
     long_loop = _prose(1600)[:1600] * 20
     window = str(len(long_loop))
     _mark(data, plans[0], long_loop)
@@ -765,6 +767,8 @@ def test_only_looped_recognizes_only_the_looped_page(monkeypatch, corpus, capsys
     capsys.readouterr()
     seen.clear()
     assert cli.main(argv + ["--only-looped", "--dry-run"]) == 0
+    assert "only-looped: 0 of 5 pages" in capsys.readouterr().out
+    assert cli.main(argv + ["--only-looped", "--loop-window-chars", "2000", "--dry-run"]) == 0
     assert "only-looped: 0 of 5 pages" in capsys.readouterr().out
     assert cli.main(argv + ["--only-looped", "--loop-window-chars", window, "--dry-run"]) == 0
     assert "only-looped: 1 of 5 pages" in capsys.readouterr().out
