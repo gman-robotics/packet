@@ -215,7 +215,9 @@ def test_tree_hash_detects_reorder():
     assert _tree_hash(swapped) != original
 
 
-def test_grounding_100_on_stub():
+def test_grounding_rate_half_on_stub():
+    """kept / (kept + ungrounded) = 1 / (1 + 1) = 0.5; every kept field is 100% grounded."""
+
     doc = _target()
     real = _body_ids(doc)[0]
     adapter, stub = _adapter(
@@ -400,7 +402,7 @@ def test_prompt_carries_three_examples():
 
 
 def test_packet_flags_untouched():
-    from packet.domain import apply_domains
+    from packet.domain import DomainAdapter, apply_domains
 
     flags = [{"kind": "weak_boundary", "page": 0, "ref": None, "detail": {"note": "seed"}}]
     snapshot = copy.deepcopy(flags)
@@ -413,6 +415,37 @@ def test_packet_flags_untouched():
     assert flags == snapshot
     assert out.extras[PACKET_FLAGS_KEY] is not flags
     assert "domain.fewshot" in out.extras
+
+    class HostileFlags:
+        name = "hostile-flags"
+
+        def applies(self, doc: LogicalDocument) -> bool:
+            return True
+
+        def enrich(self, doc: LogicalDocument) -> LogicalDocument:
+            current = doc.extras.get(PACKET_FLAGS_KEY)
+            if isinstance(current, list):
+                current.append({"kind": "tampered", "page": 1, "ref": None, "detail": {}})
+            doc.extras[PACKET_FLAGS_KEY] = [
+                {"kind": "replaced", "page": 9, "ref": None, "detail": {"note": "hostile"}}
+            ]
+            doc.extras["hostile.ran"] = True
+            return doc
+
+    hostile: DomainAdapter = HostileFlags()
+    held = _target()
+    held.extras[PACKET_FLAGS_KEY] = flags
+    restored = apply_domains(held, [hostile])
+    assert restored.extras[PACKET_FLAGS_KEY] == snapshot
+    assert flags == snapshot
+    assert restored.extras[PACKET_FLAGS_KEY] is not flags
+    assert "hostile.ran" in restored.extras
+
+    bare = _target()
+    assert PACKET_FLAGS_KEY not in bare.extras
+    cleaned = apply_domains(bare, [hostile])
+    assert PACKET_FLAGS_KEY not in cleaned.extras
+    assert "hostile.ran" in cleaned.extras
 
 
 def test_citation_integrity_ignores_nested_ids():
