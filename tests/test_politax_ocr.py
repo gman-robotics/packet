@@ -756,13 +756,20 @@ def test_only_looped_recognizes_only_the_looped_page(monkeypatch, corpus, capsys
     argv = ["politax-ocr", "--data-dir", str(data), "--max-tokens", "4096"]
     assert cli.main(argv) == 0
     plans, _ = po.plan_pages(corpus[1], data)
-    _mark(data, plans[0], "a" * 3000)    # long loop
+    # The loop period (1600 chars) is longer than the default 1500-char window,
+    # so this page fires only when --loop-window-chars widens the window.
+    long_loop = _prose(1600)[:1600] * 20
+    window = str(len(long_loop))
+    _mark(data, plans[0], long_loop)
     _mark(data, plans[1], _prose(3000))  # dense page, truncated but no loop
+    capsys.readouterr()
     seen.clear()
-    assert cli.main(argv + ["--only-looped", "--loop-window-chars", "2000", "--dry-run"]) == 0
+    assert cli.main(argv + ["--only-looped", "--dry-run"]) == 0
+    assert "only-looped: 0 of 5 pages" in capsys.readouterr().out
+    assert cli.main(argv + ["--only-looped", "--loop-window-chars", window, "--dry-run"]) == 0
     assert "only-looped: 1 of 5 pages" in capsys.readouterr().out
     assert seen == []
-    assert cli.main(argv + ["--only-looped", "--loop-window-chars", "2000"]) == 0
+    assert cli.main(argv + ["--only-looped", "--loop-window-chars", window]) == 0
     assert [img for img, _ in seen] == [(plans[0].file, plans[0].index)]
     assert json.loads(po.record_path(data, plans[0].pdf_sha256, plans[0].index)
                       .read_text())["raw"] == "ok"
