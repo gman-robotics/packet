@@ -1,0 +1,51 @@
+{
+  "subject": "trump",
+  "source_file": "trump_business_2015_LFB Acquisition LLC 2015.pdf",
+  "document": {
+    "id": "lfb2015",
+    "title": "LFB Acquisition LLC 2015",
+    "page_start": 1,
+    "page_end": 1,
+    "sections": [
+      {
+        "id": "lfb2015-s1",
+        "heading": "Form 1065",
+        "level": 1,
+        "page_start": 1,
+        "page_end": 1,
+        "blocks": [
+          {
+            "id": "lfb2015-b1",
+            "page": 1,
+            "kind": "paragraph",
+            "text": "Form 1065"
+          },
+          {
+            "id": "lfb2015-b2",
+            "page": 1,
+            "kind": "paragraph",
+            "text": "LFB Acquisition LLC tax year 2015"
+          }
+        ]
+      }
+    ],
+    "furniture": [
+      {
+        "id": "lfb2015-h1",
+        "page": 1,
+        "kind": "header",
+        "text": "LFB Acquisition LLC"
+      }
+    ]
+  },
+  "output": {
+    "form_name": {
+      "value": "Form 1065",
+      "source_block_ids": ["lfb2015-b1"]
+    },
+    "tax_year": {
+      "value": "2015",
+      "source_block_ids": ["lfb2015-b2"]
+    }
+  }
+}

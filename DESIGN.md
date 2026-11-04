@@ -341,6 +341,12 @@ come first. Add `type_hint` and other `extras`. Examples that do
 - paper abstract / citation graph
 - medical intake forms
 
+`FewShotAdapter` (`src/packet/domain_fewshot.py`) is opt-in and stays off
+unless a caller passes it. It writes `type_hint` only when given one and the
+document has none, and it writes `extras["domain.fewshot"]`. Every stored
+field has `source_block_ids`. Ungrounded fields are dropped. It does not
+change sections, blocks, or `packet.flags`.
+
 ## Backend adapters
 
 Same rule. Docling, pdf-inspector, PaddleOCR-VL, Marker, Firecrawl `/parse`

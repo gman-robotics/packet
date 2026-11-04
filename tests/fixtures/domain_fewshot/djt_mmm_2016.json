@@ -1,0 +1,51 @@
+{
+  "subject": "trump",
+  "source_file": "trump_business_2016_DJT Holdings Managing Member LLC 2016.pdf",
+  "document": {
+    "id": "djt2016",
+    "title": "DJT Holdings Managing Member LLC 2016",
+    "page_start": 1,
+    "page_end": 1,
+    "sections": [
+      {
+        "id": "djt2016-s1",
+        "heading": "Form 1065",
+        "level": 1,
+        "page_start": 1,
+        "page_end": 1,
+        "blocks": [
+          {
+            "id": "djt2016-b1",
+            "page": 1,
+            "kind": "paragraph",
+            "text": "Form 1065"
+          },
+          {
+            "id": "djt2016-b2",
+            "page": 1,
+            "kind": "paragraph",
+            "text": "DJT Holdings Managing Member LLC tax year 2016"
+          }
+        ]
+      }
+    ],
+    "furniture": [
+      {
+        "id": "djt2016-h1",
+        "page": 1,
+        "kind": "header",
+        "text": "DJT Holdings Managing Member LLC"
+      }
+    ]
+  },
+  "output": {
+    "form_name": {
+      "value": "Form 1065",
+      "source_block_ids": ["djt2016-b1"]
+    },
+    "tax_year": {
+      "value": "2016",
+      "source_block_ids": ["djt2016-b2"]
+    }
+  }
+}
